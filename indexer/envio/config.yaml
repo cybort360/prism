@@ -1,0 +1,32 @@
+name: prism-indexer
+description: >-
+  Indexes Prism's real Monad activity — payments, claims, and relevant AUSD transfers — into a
+  queryable GraphQL API the Prism backend consumes for reconciled historical activity. The chain
+  stays canonical; Envio provides indexed, queryable history and product activity, never financial
+  truth on its own.
+# Monad testnet (chainId 10143) / mainnet (143). Envio HyperSync/HyperIndex support Monad with full
+# history from block 0. Set the deployed router/vault addresses below (see indexer/envio/README.md).
+networks:
+  - id: 10143
+    start_block: 0
+    contracts:
+      - name: PrismPaymentRouter
+        address:
+          - "0x0000000000000000000000000000000000000000" # <- deployed PrismPaymentRouter
+        handler: src/EventHandlers.ts
+        events:
+          - event: "PaymentSettled(bytes32 indexed paymentId, address indexed payer, address indexed recipient, uint256 amount, bytes32 requestId, bytes32 resolutionHash)"
+      - name: PrismClaimVault
+        address:
+          - "0x0000000000000000000000000000000000000000" # <- deployed PrismClaimVault
+        handler: src/EventHandlers.ts
+        events:
+          - event: "ClaimFunded(bytes32 indexed claimId, address indexed sender, uint256 amount, uint256 expiry, bytes32 recipientReference)"
+          - event: "ClaimCollected(bytes32 indexed claimId, address indexed recipient, uint256 amount)"
+          - event: "ClaimRefunded(bytes32 indexed claimId, address indexed sender, uint256 amount)"
+      - name: AUSD
+        address:
+          - "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC" # Agora AUSD (Monad testnet)
+        handler: src/EventHandlers.ts
+        events:
+          - event: "Transfer(address indexed from, address indexed to, uint256 value)"

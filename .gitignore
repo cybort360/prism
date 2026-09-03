@@ -1,0 +1,18 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+coverage/
+backend/data/*.json
+contracts/lib/
+contracts/cache/
+contracts/out/
+ios/*.xcodeproj/project.xcworkspace/xcuserdata/
+ios/*.xcworkspace/xcuserdata/
+ios/Prism.xcodeproj/
+ios/build/
+DerivedData/
+contracts/lib/forge-std/
+# Mera bridge build artifact (produced by ios/MeraBridge/web `npm run build`)
+ios/Prism/Resources/MeraWeb/mera-bridge.js

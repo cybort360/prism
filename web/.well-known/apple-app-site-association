@@ -1,0 +1,16 @@
+{
+  "webcredentials": {
+    "apps": ["TEAMID.com.prism.mobile"]
+  },
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAMID.com.prism.mobile"],
+        "components": [
+          { "/": "/pay/*", "comment": "Prism payment links resolve to a Prism identity, never a raw address" }
+        ]
+      }
+    ]
+  },
+  "appclips": { "apps": [] }
+}

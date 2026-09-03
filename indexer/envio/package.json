@@ -1,0 +1,13 @@
+{
+  "name": "prism-envio-indexer",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "codegen": "envio codegen",
+    "dev": "envio dev",
+    "start": "envio start"
+  },
+  "devDependencies": {
+    "envio": "^2"
+  }
+}

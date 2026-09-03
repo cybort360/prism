@@ -1,0 +1,90 @@
+name: Prism
+options:
+  bundleIdPrefix: com.prism
+  deploymentTarget:
+    iOS: "18.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    PRISM_API_BASE_URL: "http://127.0.0.1:8787"
+targets:
+  Prism:
+    type: application
+    platform: iOS
+    sources:
+      - path: Prism
+        excludes:
+          - Resources/Info.plist
+      - path: MeraBridge
+        excludes:
+          - web
+    resources:
+      - path: Prism/Resources/Assets.xcassets
+      - path: Prism/Resources/Fonts
+      - path: Prism/Resources/MeraWeb
+    info:
+      path: Prism/Resources/Info.plist
+      properties:
+        # A launch screen is required for the app to render at native full-screen resolution
+        # (without it iOS letterboxes the app in a scaled compatibility window).
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # Privacy usage strings — omitting these makes iOS terminate the app on first access (TCC).
+        NSContactsUsageDescription: "Prism uses Contacts so you can pay people you already know. Your address book is never uploaded."
+        NSCameraUsageDescription: "Prism uses the camera to scan a Prism QR code so you can pay someone."
+        NSFaceIDUsageDescription: "Prism uses Face ID to approve payments on this device."
+    # Associated Domains for Mera passkeys (webcredentials) and universal links (applinks).
+    # Replace prism.example with your real deployment domain and host the AASA file at
+    # https://<domain>/.well-known/apple-app-site-association (see web/ and docs/PASSKEY_SETUP.md).
+    entitlements:
+      path: Prism/Prism.entitlements
+      properties:
+        com.apple.developer.associated-domains:
+          - webcredentials:prism.example
+          - applinks:prism.example
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.prism.mobile
+        PRODUCT_NAME: Prism
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  PrismTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: PrismTests
+    dependencies:
+      - target: Prism
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.prism.mobile.tests
+        GENERATE_INFOPLIST_FILE: YES
+  PrismUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: PrismUITests
+    dependencies:
+      - target: Prism
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.prism.mobile.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Prism
+schemes:
+  Prism:
+    build:
+      targets:
+        Prism: all
+        PrismTests: [test]
+        PrismUITests: [test]
+    test:
+      targets:
+        - PrismTests
+        - PrismUITests
+    run:
+      config: Debug

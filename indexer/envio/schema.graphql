@@ -1,0 +1,63 @@
+# Entities Prism queries for Activity, receipts, the proof dashboard, payment finality/indexing
+# state, claim history, and sender/recipient history.
+
+type Payment {
+  id: ID! # paymentId (bytes32)
+  payer: String!
+  recipient: String!
+  amount: BigInt!
+  requestId: String! # 0x0…0 when the payment does not fulfil a request
+  resolutionHash: String!
+  txHash: String!
+  blockNumber: Int!
+  timestamp: Int!
+}
+
+type Claim {
+  id: ID! # claimId (bytes32)
+  status: String! # Funded | Claimed | Refunded
+  sender: String!
+  recipient: String
+  amount: BigInt!
+  expiry: Int
+  recipientReference: String
+  fundedTx: String
+  resolvedTx: String
+  fundedAt: Int
+  resolvedAt: Int
+}
+
+# One row per account per event, so a single account's sent/received history is a simple query.
+type AccountActivity {
+  id: ID! # `${txHash}-${logIndex}-${account}`
+  account: String!
+  counterparty: String
+  direction: String! # sent | received
+  kind: String! # payment | claim_fund | claim_collect | claim_refund | transfer
+  amount: BigInt!
+  ref: String # paymentId or claimId
+  txHash: String!
+  blockNumber: Int!
+  timestamp: Int!
+}
+
+# On-chain proof that a payment fulfilled a request (requestId is the opaque Prism request id).
+type RequestSettlement {
+  id: ID! # requestId (bytes32)
+  paymentId: String!
+  payer: String!
+  recipient: String!
+  amount: BigInt!
+  txHash: String!
+  timestamp: Int!
+}
+
+# AUSD transfers that touch the Prism router or claim vault (deposits / forwards / releases).
+type VaultTransfer {
+  id: ID! # `${txHash}-${logIndex}`
+  from: String!
+  to: String!
+  value: BigInt!
+  txHash: String!
+  timestamp: Int!
+}
