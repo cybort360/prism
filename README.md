@@ -27,6 +27,10 @@ phone / @handle / QR / payment link
   authorization builder + verifier, MON-funded relayer, claim authorizer.
 - `contracts/` — `PrismPaymentRouter`, `PrismClaimVault`, `IERC3009`, a faithful `MockAUSD`, and
   Foundry tests.
+- `indexer/envio/` — Envio HyperIndex config + handlers that index real Monad activity into the
+  GraphQL API the backend reads for reconciled history.
+- `web/.well-known/` — the `apple-app-site-association` file that must be hosted at the
+  relying-party domain for device passkeys and `/pay/*` payment links.
 
 Mera is the single consumer signing layer. The old Secure-Enclave-P256 / ERC-4337 path is archived
 under `archive/` and is not active alongside Mera. See `docs/PRD_ADDENDUM_v1.1.md`.
@@ -57,11 +61,15 @@ under `archive/` and is not active alongside Mera. See `docs/PRD_ADDENDUM_v1.1.m
 ### Contracts
 
 ```bash
+curl -L https://foundry.paradigm.xyz | bash && foundryup   # first time only: installs forge
 cd contracts
-forge install foundry-rs/forge-std --no-git    # first time only
+forge install foundry-rs/forge-std --no-git                # first time only
 cp .env.example .env
 forge test
 ```
+
+30 tests across unit, fuzz, privacy, and invariant suites. The vault invariant run (256 runs / 128k calls)
+takes ~2 minutes — that is expected, not a hang.
 
 ### Backend
 
@@ -76,21 +84,38 @@ Twilio Verify, the relayer, the claim authorizer, and the Envio endpoint are act
 environment variables. Without them the server runs explicit dev adapters and never claims a real
 OTP or on-chain settlement occurred.
 
-Run tests: `node --test test/*.test.js`.
+Run tests: `node --test test/*.test.js` (39 tests).
 
 ### iOS
 
 ```bash
-cd ios
+cd ios/MeraBridge/web
+npm install
+npm run build            # → ios/Prism/Resources/MeraWeb/mera-bridge.js (git-ignored, required)
+
+cd ../..                 # ios/
 brew install xcodegen
-xcodegen generate
-open Prism.xcodeproj
+./bootstrap.sh --open    # xcodegen generate + open Prism.xcodeproj
 ```
 
-For real device passkeys, build the Mera bridge bundle and configure the relying-party domain — see
-`ios/MeraBridge/web/BUILD.md`. On the simulator the app uses a clearly-labeled dev bridge. Set
+The Mera bundle is a build artifact and is not committed, so a fresh clone must run the `npm run
+build` step above or the bridge has nothing to load. For real device passkeys also configure the
+relying-party domain and host `web/.well-known/apple-app-site-association` at it, replacing the
+`TEAMID` placeholder with your Apple Team ID — see `ios/MeraBridge/web/BUILD.md` and
+`docs/PASSKEY_SETUP.md`. On the simulator the app uses a clearly-labeled dev bridge. Set
 `PRISM_API_BASE_URL` (default `http://127.0.0.1:8787`). Add the F5.6 font per
 `ios/Prism/Resources/FONT_SETUP.md` (intentionally not bundled).
+
+### Indexer (Envio)
+
+```bash
+cd indexer/envio
+export PRISM_PAYMENT_ROUTER=0x... PRISM_CLAIM_VAULT=0x...   # also set them in config.yaml
+npx envio dev            # codegen + local indexer + GraphQL at http://localhost:8080/v1/graphql
+```
+
+Then point the backend at it with `ENVIO_GRAPHQL_URL`. See `indexer/envio/README.md` and
+`docs/ENVIO_INTEGRATION.md`.
 
 ### Everything
 
@@ -98,11 +123,57 @@ For real device passkeys, build the Mera bridge bundle and configure the relying
 make test        # backend + contracts + iOS
 ```
 
+`make test-ios` needs macOS with Xcode and xcodegen; on Linux run `make test-backend` and
+`make test-contracts`.
+
+## Proof status
+
+A hostile audit (`proof/`) was run against this codebase on 2026-09-03. Every row is either backed
+by an executed check or marked blocked with the reason — nothing here is a "works" claim.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Contract suite green | **PROVEN** — 30 tests, 0 failed | `forge test` |
+| Deep fuzzing | **PROVEN** — 3 properties × 10,000 runs | `forge test --fuzz-runs 10000` |
+| Vault invariants | **PROVEN** — 256 runs / 128k calls, 3 invariants | `PrismVaultInvariant` |
+| Backend suite green | **PROVEN** — 39 tests, 0 failed | `node --test test/*.test.js` |
+| AUSD EIP-712 domain is `Agora Dollar`/`1` | **PROVEN on live chain** | `proof/AGORA_AUSD_PROOF.md` |
+| Live AUSD exposes the `(v,r,s)` ERC-3009 API Prism calls | **PROVEN on live chain** | `proof/AGORA_AUSD_PROOF.md` |
+| `@category-labs/mera` is real and used officially | **PROVEN** (npm registry + source) | `proof/MERA_PROOF.md` |
+| No phone in calldata / events / storage | **PROVEN** | `contracts/test/PrismPrivacy.t.sol` |
+| No raw phone persisted or logged | **PROVEN after fix** | `proof/PRIVACY_PROOF.md` |
+| Mutations MUT-01…MUT-16 rejected | **PROVEN** (2 caveats) | `proof/SECURITY_PROOF.md` |
+| Payer with MON = 0 can pay | **PROVEN locally**, not on testnet | `proof/ZERO_MON_PROOF.md` |
+| Contracts deployed to Monad testnet | **BLOCKED** — no funded key, faucet gated, AUSD mint role-gated | `proof/TESTNET_DEPLOYMENT.md` |
+| End-to-end payment on Monad | **BLOCKED** — no tx exists | `proof/PAYMENT_PROOF.md` |
+| Claim / refund on Monad | **BLOCKED** | `proof/CLAIM_PROOF.md`, `proof/REFUND_PROOF.md` |
+| Cross-border demonstration | **BLOCKED** (and there is no FX — AUSD both ends) | `proof/CROSS_BORDER_PROOF.md` |
+| Envio indexing real events | **BLOCKED** — config verified by topic0, never run | `proof/ENVIO_PROOF.md` |
+| Alchemy live path | **BLOCKED** — no API key, no request made | `proof/ALCHEMY_PROOF.md` |
+| iOS app compiles | **PROVEN by CI** — it did not, until fixed in this branch | `proof/SECURITY_PROOF.md` (Finding 7) |
+| iOS unit tests | **PASS in CI** — 2 tests | `proof/EVIDENCE_MANIFEST.json` |
+| Mera bundle builds against the published lib | **PROVEN by CI** | `proof/MERA_PROOF.md` |
+| Mera bridge derives an account the backend accepts (simulator) | **PROVEN by CI** | `proof/MERA_PROOF.md` |
+| Backend AUSD domain integrity check passes live | **PROVEN by CI** | `proof/AGORA_AUSD_PROOF.md` |
+| iOS onboarding UI test (launch → Mera account → phone → OTP → past onboarding) | **PASSES in CI** | `proof/MERA_PROOF.md` |
+| iOS passkey, Face ID, Contacts, QR, universal links | **BLOCKED** — no device; never executed | `proof/MERA_PROOF.md` |
+| Latency figures | **NONE** — instrumented, never measured | `proof/PAYMENT_PROOF.md` |
+
+Open findings: one HIGH (`bind_account` proof is replayable — `proof/poc/bind-replay.mjs`) and four
+MEDIUM. Two HIGH were found and fixed during the audit (blind re-broadcast on a lost relayer
+response; and the iOS app not compiling at all), plus a CI configuration defect that made every
+Keychain write fail. CI is green on all four checks. See `proof/SECURITY_PROOF.md` and
+`proof/EVIDENCE_MANIFEST.json`.
+
 ## Documentation
 
-- `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/THREAT_MODEL.md`
-- `docs/SPONSOR_MATRIX.md` (Agora / Mera / Envio / Alchemy mapping)
-- `docs/PRD_ADDENDUM_v1.1.md`, `docs/RESEARCH_NOTES.md`, `docs/FORGE_PROOF_PLAN.md`
+- Design: `docs/ARCHITECTURE.md`, `docs/IOS_ARCHITECTURE.md`, `docs/PRD_ADDENDUM_v1.1.md`,
+  `docs/RESEARCH_NOTES.md`
+- Security: `docs/SECURITY.md`, `docs/THREAT_MODEL.md`, `docs/FORGE_PROOF_PLAN.md`
+- Integrations: `docs/SPONSOR_MATRIX.md` (Agora / Mera / Envio / Alchemy mapping),
+  `docs/MERA_INTEGRATION.md`, `docs/ENVIO_INTEGRATION.md`, `docs/ALCHEMY_INTEGRATION.md`,
+  `docs/PASSKEY_SETUP.md`
+- Operations: `docs/OBSERVABILITY.md`
 
 ## External credentials still required for a live demo
 
@@ -113,10 +184,12 @@ Everything below is an external service/secret — there are no remaining archit
 | Alchemy Monad API key | Production RPC (reads, receipts, relaying) | `MONAD_RPC_URL` |
 | Alchemy Gas Manager policy | Production gas sponsorship (relayer alternative) | infra / `docs/SPONSOR_MATRIX.md` |
 | Relayer private key (MON-funded) | Submits gasless AUSD transfers | `RELAYER_PRIVATE_KEY` |
-| Claim authorizer key (secp256k1, KMS/HSM) | Authorizes pre-user claim collection | `CLAIM_AUTHORIZER_PRIVATE_KEY` / `CLAIM_AUTHORIZER_ADDRESS` |
+| Claim authorizer key (secp256k1, KMS/HSM) | Authorizes pre-user claim collection | `CLAIM_AUTHORIZER_PRIVATE_KEY` (backend) / `CLAIM_AUTHORIZER_ADDRESS` (contracts) |
 | Deployed router + vault addresses | On-chain payment surface | `PRISM_PAYMENT_ROUTER`, `PRISM_CLAIM_VAULT` |
 | Twilio Verify (SID/token/service) | Real SMS OTP | `TWILIO_*` |
-| Envio HyperIndex deployment | Activity/reconciliation indexing | `ENVIO_GRAPHQL_URL`, `envio/` |
+| Alchemy webhook signing key | Verifies `POST /v1/webhooks/alchemy` HMAC | `ALCHEMY_WEBHOOK_SIGNING_KEY` |
+| Envio HyperIndex deployment | Activity/reconciliation indexing | `ENVIO_GRAPHQL_URL`, `indexer/envio/` |
 | Mera web bundle + RP domain | Device passkeys (official Mera lib) | `ios/MeraBridge/web/BUILD.md` |
 | Backend secrets (32-byte / 64-hex) | Sessions, resolver pepper, encryption | `SESSION_SECRET`, `RESOLVER_PEPPER`, `DATA_ENCRYPTION_KEY`, `SERVICE_KEY_ENCRYPTION_KEY` |
 | F5.6 font | Display typeface | `ios/Prism/Resources/FONT_SETUP.md` |
+| Apple Team ID + RP domain | Passkeys and `/pay/*` universal links | `web/.well-known/apple-app-site-association` |

@@ -31,6 +31,10 @@ targets:
         # (without it iOS letterboxes the app in a scaled compatibility window).
         UILaunchScreen: {}
         UIApplicationSupportsIndirectInputEvents: true
+        # The dev/CI backend is plain HTTP on loopback. This permits local networking only; it does
+        # not relax TLS for any remote host, so production traffic stays ATS-protected.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         # Privacy usage strings — omitting these makes iOS terminate the app on first access (TCC).

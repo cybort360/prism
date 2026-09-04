@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+
+      # The backend reads configuration from process.env only — it never loads a .env file —
+      # so the suite runs on config.js defaults with no secrets provisioned.
+      - name: Test
+        run: node --test test/*.test.js
+
+  contracts:
+    name: Contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      # contracts/lib is git-ignored, so the dependency is fetched per run.
+      - name: Install forge-std
+        run: forge install foundry-rs/forge-std --no-git
+
+      # The vault invariant suite (256 runs / 128k calls) dominates the ~2.5 min runtime.
+      - name: Test
+        run: forge test -vv
+
+  ios:
+    name: iOS
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ios/MeraBridge/web/package-lock.json
+
+      # mera-bridge.js is a git-ignored build artifact; XcodeGen ships MeraWeb/ as an app
+      # resource, so the bundle has to exist before the project is generated.
+      - name: Build Mera bridge bundle
+        working-directory: ios/MeraBridge/web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      # OnboardingFlowUITests drives the real onboarding flow against a real backend. Without one
+      # the UI test cannot pass, so CI starts the dev backend the app already defaults to
+      # (PRISM_API_BASE_URL http://127.0.0.1:8787). Dev adapters only: no Twilio, no relayer.
+      - name: Start dev backend
+        working-directory: backend
+        run: |
+          npm ci
+          # nohup + detach so the server survives the end of this step's shell.
+          STORE_PATH=./data/ci-store.json nohup node src/server.js > "$RUNNER_TEMP/backend.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/health >/dev/null 2>&1; then
+              echo "backend up:"; curl -sS http://127.0.0.1:8787/health; echo; exit 0
+            fi
+            sleep 1
+          done
+          echo "backend failed to start; log:"; cat "$RUNNER_TEMP/backend.log"; exit 1
+
+      - name: Resolve simulator destination
+        id: sim
+        run: echo "destination=$(./scripts/ios-destination.sh)" >> "$GITHUB_OUTPUT"
+
+      # Simulator builds need no *real* signing identity (project.yml leaves DEVELOPMENT_TEAM
+      # empty), but they do need ad-hoc signing: with CODE_SIGNING_ALLOWED=NO the app is built
+      # without entitlements, so it has no application-identifier and every Keychain write fails
+      # with errSecMissingEntitlement. Onboarding stores the PIN and the dev signer seed in the
+      # Keychain, so it cannot complete. Keep CODE_SIGNING_REQUIRED=NO and let the simulator's
+      # default ad-hoc identity ("-") apply the entitlements.
+      - name: Test
+        id: xcodebuild
+        working-directory: ios
+        run: |
+          xcodebuild -project Prism.xcodeproj -scheme Prism -sdk iphonesimulator \
+            -destination '${{ steps.sim.outputs.destination }}' \
+            CODE_SIGNING_REQUIRED=NO \
+            test
+
+      - name: Backend log
+        if: failure() && steps.xcodebuild.outcome == 'failure'
+        run: cat "$RUNNER_TEMP/backend.log" || true
