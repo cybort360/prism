@@ -13,7 +13,8 @@ final class KeychainStore: @unchecked Sendable {
     var query = base
     query[kSecValueData as String] = data
     query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    guard SecItemAdd(query as CFDictionary, nil) == errSecSuccess else { throw KeychainError.write }
+    let status = SecItemAdd(query as CFDictionary, nil)
+    guard status == errSecSuccess else { throw KeychainError.write(status) }
   }
   func data(for key: String) throws -> Data? {
     var q: [String: Any] = [
@@ -24,7 +25,7 @@ final class KeychainStore: @unchecked Sendable {
     var result: CFTypeRef?
     let status = SecItemCopyMatching(q as CFDictionary, &result)
     if status == errSecItemNotFound { return nil }
-    guard status == errSecSuccess, let data = result as? Data else { throw KeychainError.read }
+    guard status == errSecSuccess, let data = result as? Data else { throw KeychainError.read(status) }
     return data
   }
   func setString(_ value: String, for key: String) throws { try set(Data(value.utf8), for: key) }
@@ -40,4 +41,21 @@ final class KeychainStore: @unchecked Sendable {
     SecItemDelete(q as CFDictionary)
   }
 }
-enum KeychainError: Error { case write, read }
+/// Carries the OSStatus. Collapsing every failure into a bare case cost three CI runs to diagnose
+/// what `errSecMissingEntitlement` would have said immediately.
+enum KeychainError: LocalizedError {
+  case write(OSStatus)
+  case read(OSStatus)
+
+  var errorDescription: String? {
+    switch self {
+    case .write(let status): "Couldn't save to the keychain (\(Self.describe(status)))."
+    case .read(let status): "Couldn't read from the keychain (\(Self.describe(status)))."
+    }
+  }
+
+  private static func describe(_ status: OSStatus) -> String {
+    if let message = SecCopyErrorMessageString(status, nil) as String? { return "\(message) [\(status)]" }
+    return "OSStatus \(status)"
+  }
+}

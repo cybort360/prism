@@ -107,14 +107,19 @@ jobs:
         id: sim
         run: echo "destination=$(./scripts/ios-destination.sh)" >> "$GITHUB_OUTPUT"
 
-      # Simulator builds need no signing identity; project.yml leaves DEVELOPMENT_TEAM empty.
+      # Simulator builds need no *real* signing identity (project.yml leaves DEVELOPMENT_TEAM
+      # empty), but they do need ad-hoc signing: with CODE_SIGNING_ALLOWED=NO the app is built
+      # without entitlements, so it has no application-identifier and every Keychain write fails
+      # with errSecMissingEntitlement. Onboarding stores the PIN and the dev signer seed in the
+      # Keychain, so it cannot complete. Keep CODE_SIGNING_REQUIRED=NO and let the simulator's
+      # default ad-hoc identity ("-") apply the entitlements.
       - name: Test
         id: xcodebuild
         working-directory: ios
         run: |
           xcodebuild -project Prism.xcodeproj -scheme Prism -sdk iphonesimulator \
             -destination '${{ steps.sim.outputs.destination }}' \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
             test
 
       - name: Backend log

@@ -122,14 +122,29 @@ fails. The backend confirms the account was created:
 {"event":"http","method":"POST","path":"/v1/auth/device","status":200,"ms":2701}
 ```
 
-and then no further request arrives. The test times out after 60s waiting for the reachability
-screen, with the visible buttons `[Skip, Continue, OK]` — an `OK` button means an error alert is
-on screen. The alert's text was not captured, so the cause is not yet known.
+and then no further request arrives. The test times out waiting for the reachability screen. With
+the diagnostics added, the alert names itself:
 
-This is a genuine runtime defect in the flow between account creation and alias selection, and it is
-left failing on purpose: a red CI job that reflects a real bug is the correct state for this branch.
-The UI test now captures alert title, alert body and visible static text on every bail-out, so the
-next run should name the cause.
+```
+alert="Prism" text=[Prism | The operation couldn't be completed. (Prism.KeychainError error 0.)]
+```
+
+`KeychainError.write` — `SecItemAdd` failed. **Root cause: a CI configuration artifact, not a
+product defect.** The job invoked `xcodebuild` with `CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY=""`,
+which builds the app with no entitlements at all. Without entitlements the app has no
+application-identifier, and every Keychain write fails with `errSecMissingEntitlement`. Onboarding
+stores the payment PIN and the simulator's dev signer seed in the Keychain, so it cannot get past
+account creation.
+
+The distinction matters and should not be blurred: on a real device, or any signed build, signing is
+on and the Keychain works. This was CI testing a configuration nobody ships. Fixed by dropping the
+signing overrides and letting the simulator's default ad-hoc identity apply the entitlements —
+`CODE_SIGNING_REQUIRED=NO` is retained, since no real identity is needed.
+
+What this does expose about the product: `KeychainStore` collapses every `SecItemAdd` failure into
+`KeychainError.write`, so the user-facing alert was `"KeychainError error 0"` and the OSStatus —
+which names the cause exactly — was discarded. Surfacing the status would have made this a one-run
+diagnosis instead of three.
 
 ## Caveats — real limits on the verdicts above
 

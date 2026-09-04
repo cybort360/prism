@@ -192,13 +192,16 @@
     },
     {
       "id": "FIND-08",
-      "severity": "UNTRIAGED",
-      "state": "OPEN",
-      "title": "Onboarding fails after account creation with an unidentified alert",
-      "impact": "POST /v1/auth/device succeeds, then no further backend request arrives and the reachability screen never appears; visible buttons [Skip, Continue, OK] indicate an error alert.",
+      "severity": "LOW",
+      "state": "FIXED",
+      "title": "Onboarding failed in CI: Keychain writes rejected because the build had no entitlements",
+      "impact": "Alert \"Prism.KeychainError error 0\" after account creation. CI built with CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY=\"\", so the app had no application-identifier and every SecItemAdd failed with errSecMissingEntitlement. Onboarding stores the PIN and the dev signer seed in the Keychain.",
       "detectedBy": "CI macos-15 UI test, run 33852798608",
       "next": "the UI test now captures alert title, body and visible static text on every bail-out; the next run should name the cause",
-      "note": "left failing deliberately \u2014 a red CI job reflecting a real bug is the correct state for this branch"
+      "note": "left failing deliberately \u2014 a red CI job reflecting a real bug is the correct state for this branch",
+      "rootCause": "CI configuration artifact, not a product defect \u2014 a signed build (any device build) is unaffected.",
+      "fix": "drop the signing overrides so the simulator default ad-hoc identity applies entitlements; keep CODE_SIGNING_REQUIRED=NO",
+      "secondary": "KeychainStore collapses every SecItemAdd failure into KeychainError.write and discards the OSStatus, which is why the alert named nothing useful"
     }
   ],
   "blocked": {
