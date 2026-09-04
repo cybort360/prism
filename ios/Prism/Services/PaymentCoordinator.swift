@@ -63,7 +63,7 @@ final class PaymentCoordinator: ObservableObject {
   /// Local human approval gate. Face ID (fallback to PIN handled by the sheet) or the payment PIN.
   private func localApproval(pin: String?, useFaceID: Bool) async throws {
     if useFaceID {
-      _ = try await BiometricService().authenticate()
+      try await BiometricService().authenticate()
     } else {
       guard let pin, try PINService.shared.verify(pin) else { throw PaymentError.badPIN }
     }

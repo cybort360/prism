@@ -146,7 +146,7 @@ struct OnboardingFlow: View {
 
   private func enableFaceID() async {
     do {
-      _ = try await BiometricService().authenticate(reason: "Enable Face ID for Prism payments")
+      try await BiometricService().authenticate(reason: "Enable Face ID for Prism payments")
       UserDefaults.standard.set(true, forKey: "payments.faceID")
       step = .ready
     } catch { self.error = error.localizedDescription }
