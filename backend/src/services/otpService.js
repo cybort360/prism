@@ -1,4 +1,4 @@
-import { normalizeE164 } from '../lib/crypto.js';
+import { normalizeE164, phoneLookupKey } from '../lib/crypto.js';
 import { consumeRateLimit } from '../lib/rateLimit.js';
 
 export class OtpService {
@@ -7,7 +7,9 @@ export class OtpService {
   async start(phone, requesterKey = 'unknown') {
     phone = normalizeE164(phone);
     consumeRateLimit(this.store, `otp-start:${requesterKey}`, { limit: 8, windowMs: 60 * 60_000 });
-    consumeRateLimit(this.store, `otp-phone:${phone}`, { limit: 5, windowMs: 60 * 60_000 });
+    // The per-phone throttle is keyed by the peppered HMAC, never the raw E.164 — this key is
+    // persisted in the datastore, and a raw number here would be plaintext PII at rest.
+    consumeRateLimit(this.store, `otp-phone:${phoneLookupKey(phone, this.config.resolverPepper)}`, { limit: 5, windowMs: 60 * 60_000 });
 
     if (!this.config.twilio.accountSid) return { status: 'pending', channel: 'dev' };
     const url = `https://verify.twilio.com/v2/Services/${this.config.twilio.verifyServiceSid}/Verifications`;
