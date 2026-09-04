@@ -151,7 +151,11 @@ by an executed check or marked blocked with the reason — nothing here is a "wo
 | Envio indexing real events | **BLOCKED** — config verified by topic0, never run | `proof/ENVIO_PROOF.md` |
 | Alchemy live path | **BLOCKED** — no API key, no request made | `proof/ALCHEMY_PROOF.md` |
 | iOS app compiles | **PROVEN by CI** — it did not, until fixed in this branch | `proof/SECURITY_PROOF.md` (Finding 7) |
+| iOS unit tests | **PASS in CI** — 2 tests | `proof/EVIDENCE_MANIFEST.json` |
 | Mera bundle builds against the published lib | **PROVEN by CI** | `proof/MERA_PROOF.md` |
+| Mera bridge derives an account the backend accepts (simulator) | **PROVEN by CI** | `proof/MERA_PROOF.md` |
+| Backend AUSD domain integrity check passes live | **PROVEN by CI** | `proof/AGORA_AUSD_PROOF.md` |
+| iOS onboarding UI test | **FAILING** — real defect after account creation | `proof/SECURITY_PROOF.md` (Finding 8) |
 | iOS passkey, Face ID, Contacts, QR, universal links | **BLOCKED** — no device; never executed | `proof/MERA_PROOF.md` |
 | Latency figures | **NONE** — instrumented, never measured | `proof/PAYMENT_PROOF.md` |
 

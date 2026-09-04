@@ -113,6 +113,24 @@ worth taking from it.
 Fixed: `@MainActor` on `PrismHaptics`, and `authenticate` returns `Void` (neither caller used the
 context — the gate is the throw). Verified by CI, not locally.
 
+### Finding 8 — onboarding fails after account creation (OPEN, needs diagnosis)
+
+With the app compiling and CI running a dev backend, the onboarding UI test gets further but still
+fails. The backend confirms the account was created:
+
+```
+{"event":"http","method":"POST","path":"/v1/auth/device","status":200,"ms":2701}
+```
+
+and then no further request arrives. The test times out after 60s waiting for the reachability
+screen, with the visible buttons `[Skip, Continue, OK]` — an `OK` button means an error alert is
+on screen. The alert's text was not captured, so the cause is not yet known.
+
+This is a genuine runtime defect in the flow between account creation and alias selection, and it is
+left failing on purpose: a red CI job that reflects a real bug is the correct state for this branch.
+The UI test now captures alert title, alert body and visible static text on every bail-out, so the
+next run should name the cause.
+
 ## Caveats — real limits on the verdicts above
 
 - **MUT-13 is per-identity, not global.** The 60/hour ceiling is keyed on `requesterPrismId`; there
@@ -130,10 +148,13 @@ context — the gate is the throw). Verified by CI, not locally.
   of that key drains every funded claim. `aliasVersion` is inside the signed struct but is never
   compared to any on-chain value, so it is an off-chain freshness assertion, not an on-chain
   guarantee. The KMS/HSM requirement in `docs/SECURITY.md` is load-bearing, not advisory.
-- **Everything iOS is static review plus a CI build.** No macOS, Xcode, simulator, or device exists
-  in this environment; the only iOS signal is GitHub Actions' `macos-15` job. MUT-14's UI gate and
-  MUT-15's `.sent` binding were read and now compile, but have never been *executed* — no simulator
-  run and no device run has been observed by this audit.
+- **Everything iOS is static review plus CI.** No macOS, Xcode, simulator, or device exists in this
+  environment; the only iOS signal is GitHub Actions' `macos-15` job. That job now proves the app
+  builds, that both unit tests pass, that the app launches and renders onboarding on a simulator,
+  and that the Mera bridge derives an account and produces a signature the backend accepts. It does
+  **not** prove MUT-14's UI gate or MUT-15's `.sent` binding, which are further into the flow than
+  the UI test currently reaches, and it proves nothing about passkeys or Face ID, which need real
+  hardware.
 
 ## Non-vacuity
 

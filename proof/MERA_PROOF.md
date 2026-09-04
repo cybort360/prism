@@ -58,12 +58,13 @@ and no physical iPhone in this environment (Linux/WSL2). Specifically unproven:
 
 | Item | Status |
 |---|---|
+| Mera account creation via the WebView bridge (simulator) | **PROVEN by CI** — see below |
 | Real passkey creation on device | **never run** |
 | PRF output → EVM address derivation on device | **never run** |
 | Face ID gate before signing | **never run** |
 | A real Mera signature verifying against the router / AUSD | **never run** |
 | `mera-bridge.js` bundle even builds | **PROVEN by CI** — see below |
-| WKWebView bridge round-trip | **never run** |
+| WKWebView bridge round-trip (simulator, dev signer) | **PROVEN by CI** — see below |
 
 ### Resolved by CI (GitHub Actions run 33850618242, macos-15)
 
@@ -75,12 +76,29 @@ four entry points had been renamed between versions it would fail at build time.
 XcodeGen, and the job proceeded to Swift compilation. So the four official entry points named above
 exist in the published package and esbuild resolves them. That assumption is now a result.
 
-The same run also exposed that **the Swift app itself did not compile** — five Swift 6 strict
+A later run (33852798608), once the app compiled and CI started a dev backend, went considerably
+further: the app launched on a simulator, ran the onboarding flow, and the backend logged
+
+```
+{"event":"http","method":"POST","path":"/v1/auth/device","status":200,"ms":2701}
+```
+
+`POST /v1/auth/device` returns 200 only after `IdentityService._assertAccountControl` recovers a
+valid `bind_account` signature for the submitted address. So on the simulator the WKWebView bridge
+loaded, the Mera bundle ran, an EVM account was derived, a message was signed, and the signature
+verified server-side — the whole bridge round-trip, end to end. The dev-seeded signer is the one
+exercised there, not a passkey, so this proves the *bridge and signature plumbing*, not WebAuthn.
+
+The same earlier run had exposed that **the Swift app itself did not compile** — five Swift 6 strict
 concurrency errors in `PrismHaptics.swift`, `PaymentCoordinator.swift` and `OnboardingFlow.swift`,
 meaning the Face ID gate and the MUT-15 `.sent` binding reviewed in this audit were sitting in
 files that did not build. Fixed in this branch; see `SECURITY_PROOF.md` → Finding 7.
 
 ## To prove it
+
+What remains unproven is specifically the *device* path — passkey creation, the PRF output, and
+Face ID — plus a passing UI test: the onboarding flow still fails after account creation with an
+unidentified alert (see `SECURITY_PROOF.md` → Finding 8).
 
 ```bash
 cd ios/MeraBridge/web && npm ci && npm run build   # proves the API surface matches

@@ -93,6 +93,22 @@ it does not silently no-op on a bad authorization.
   test AUSD must come from Agora's faucet/treasury. See `TESTNET_DEPLOYMENT.md`.
 - The mainnet token (`0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a`) was **not** probed; only testnet.
 
+## Independent corroboration from CI
+
+The domain check above was made with `cast` from a developer machine. It was then confirmed a second
+time, through entirely different code, by the backend's own startup integrity check running on a
+GitHub Actions macOS runner (run 33852798608):
+
+```
+{"event":"integrity.chainId","ok":true,"onchain":10143,"configured":10143}
+{"event":"integrity.ausdDomain","ok":true}
+```
+
+`verifyAusdDomain()` reads `DOMAIN_SEPARATOR()` from the live token over JSON-RPC and recomputes it
+from `AUSD_DOMAIN` locally with viem. Two independent implementations (Foundry `cast` + `keccak`,
+and viem in Node), from two different machines, agree that the configured domain is the token's real
+one. The check is also proven to *run* rather than merely exist.
+
 ## Reproduce
 
 ```bash

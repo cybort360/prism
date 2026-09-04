@@ -38,12 +38,13 @@
       "failed": 0
     },
     "ios_unit": {
-      "status": "NOT_OBSERVED",
-      "reason": "no macOS locally; CI compiles the app but this audit has not observed a passing simulator test run"
+      "status": "PASS_IN_CI",
+      "tests": 2,
+      "detail": "MoneyTests.testAtomicConversion, MoneyTests.testZeroIsNotPayable \u2014 run 33852798608"
     },
     "ios_ui": {
-      "status": "NOT_OBSERVED",
-      "reason": "same"
+      "status": "FAIL_IN_CI",
+      "reason": "onboarding fails after account creation with an unidentified alert; see FIND-08"
     },
     "swiftlint_swiftformat": {
       "status": "NOT_RUN",
@@ -116,6 +117,20 @@
       "status": "PROVEN",
       "independentReadback": "CI macos-15 job completed `npm run build` and XcodeGen before reaching Swift compilation",
       "evidence": "proof/MERA_PROOF.md"
+    },
+    {
+      "claim": "The backend's runtime AUSD domain integrity check passes against the live token",
+      "status": "PROVEN",
+      "independentReadback": "CI run 33852798608 backend log: integrity.chainId ok:true onchain:10143; integrity.ausdDomain ok:true",
+      "note": "corroborates the cast-based domain proof through a second, independent implementation (viem in Node) on a different machine",
+      "evidence": "proof/AGORA_AUSD_PROOF.md"
+    },
+    {
+      "claim": "The WKWebView Mera bridge derives an account and produces a signature the backend accepts (simulator)",
+      "status": "PROVEN",
+      "independentReadback": "CI run 33852798608: POST /v1/auth/device -> 200, which requires a valid bind_account signature for the submitted address",
+      "limitation": "exercises the dev-seeded signer, not a passkey; proves the bridge and signature plumbing, not WebAuthn",
+      "evidence": "proof/MERA_PROOF.md"
     }
   ],
   "findings": [
@@ -174,6 +189,16 @@
       "impact": "Five Swift 6 strict-concurrency errors under SWIFT_VERSION 6.0 in PrismHaptics.swift, PaymentCoordinator.swift and OnboardingFlow.swift. The Face ID gate and the MUT-15 `.sent` binding reviewed by this audit were in files that did not build.",
       "detectedBy": "CI macos-15 job, after the audit branch was pushed \u2014 not reproducible locally (Linux)",
       "fix": "@MainActor on PrismHaptics (UIKit feedback generators are main-actor isolated); BiometricService.authenticate returns Void instead of the non-Sendable LAContext, which neither caller used"
+    },
+    {
+      "id": "FIND-08",
+      "severity": "UNTRIAGED",
+      "state": "OPEN",
+      "title": "Onboarding fails after account creation with an unidentified alert",
+      "impact": "POST /v1/auth/device succeeds, then no further backend request arrives and the reachability screen never appears; visible buttons [Skip, Continue, OK] indicate an error alert.",
+      "detectedBy": "CI macos-15 UI test, run 33852798608",
+      "next": "the UI test now captures alert title, body and visible static text on every bail-out; the next run should name the cause",
+      "note": "left failing deliberately \u2014 a red CI job reflecting a real bug is the correct state for this branch"
     }
   ],
   "blocked": {
