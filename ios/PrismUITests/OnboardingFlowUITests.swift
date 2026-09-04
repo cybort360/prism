@@ -1,10 +1,17 @@
 import XCTest
 
 /// Drives the real onboarding flow (real WKWebView Mera bridge + backend) and captures the exact
-/// error at the OTP step. Requires the dev backend running on 127.0.0.1:8787.
+/// error at the OTP step. Requires the dev backend running on 127.0.0.1:8787 — CI starts one in the
+/// iOS job before invoking xcodebuild.
+///
+/// `@MainActor` on the test method: every XCUI API (`XCUIApplication`, `buttons`, `tap()`, …) is
+/// main-actor isolated under Swift 6, so a nonisolated test body cannot touch any of them. The
+/// annotation goes on the method rather than the type so the `setUp()` override keeps XCTestCase's
+/// own nonisolated isolation.
 final class OnboardingFlowUITests: XCTestCase {
   override func setUp() { continueAfterFailure = true }
 
+  @MainActor
   func testPhoneOnboardingReachesHome() throws {
     let app = XCUIApplication()
     app.launchArguments = ["--uitest-reset"]

@@ -86,15 +86,37 @@ jobs:
         working-directory: ios
         run: xcodegen generate
 
+      # OnboardingFlowUITests drives the real onboarding flow against a real backend. Without one
+      # the UI test cannot pass, so CI starts the dev backend the app already defaults to
+      # (PRISM_API_BASE_URL http://127.0.0.1:8787). Dev adapters only: no Twilio, no relayer.
+      - name: Start dev backend
+        working-directory: backend
+        run: |
+          npm ci
+          # nohup + detach so the server survives the end of this step's shell.
+          STORE_PATH=./data/ci-store.json nohup node src/server.js > "$RUNNER_TEMP/backend.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/health >/dev/null 2>&1; then
+              echo "backend up:"; curl -sS http://127.0.0.1:8787/health; echo; exit 0
+            fi
+            sleep 1
+          done
+          echo "backend failed to start; log:"; cat "$RUNNER_TEMP/backend.log"; exit 1
+
       - name: Resolve simulator destination
         id: sim
         run: echo "destination=$(./scripts/ios-destination.sh)" >> "$GITHUB_OUTPUT"
 
       # Simulator builds need no signing identity; project.yml leaves DEVELOPMENT_TEAM empty.
       - name: Test
+        id: xcodebuild
         working-directory: ios
         run: |
           xcodebuild -project Prism.xcodeproj -scheme Prism -sdk iphonesimulator \
             -destination '${{ steps.sim.outputs.destination }}' \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             test
+
+      - name: Backend log
+        if: failure() && steps.xcodebuild.outcome == 'failure'
+        run: cat "$RUNNER_TEMP/backend.log" || true
