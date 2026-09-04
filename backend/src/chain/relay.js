@@ -28,6 +28,7 @@ const VAULT_ABI = [
     type: 'function', name: 'fundClaim', stateMutability: 'nonpayable', outputs: [],
     inputs: [
       { name: 'claimId', type: 'bytes32' }, { name: 'recipientReference', type: 'bytes32' }, { name: 'sender', type: 'address' },
+      { name: 'token', type: 'address' },
       { name: 'amount', type: 'uint256' }, { name: 'expiry', type: 'uint256' }, { name: 'validAfter', type: 'uint256' },
       { name: 'validBefore', type: 'uint256' }, { name: 'nonce', type: 'bytes32' },
       { name: 'v', type: 'uint8' }, { name: 'r', type: 'bytes32' }, { name: 's', type: 'bytes32' }
@@ -64,9 +65,9 @@ async function simulateAndWrite({ address, abi, functionName, args }) {
   return chainProvider().writeContract(request);
 }
 
-export async function relaySettle({ env, prismSignature, ausdSignature }) {
+export async function relaySettle({ env, prismSignature, tokenSignature }) {
   assertAllowedToken(env.token);
-  const { v, r, s } = splitSignature(ausdSignature);
+  const { v, r, s } = splitSignature(tokenSignature);
   const tuple = {
     paymentId: env.paymentId, payer: getAddress(env.payer), recipient: getAddress(env.recipient),
     token: getAddress(env.token), amount: BigInt(env.amount), requestId: env.requestId,
@@ -75,11 +76,12 @@ export async function relaySettle({ env, prismSignature, ausdSignature }) {
   return simulateAndWrite({ address: config.chain.paymentRouter, abi: ROUTER_ABI, functionName: 'settle', args: [tuple, prismSignature, v, r, s] });
 }
 
-export async function relayFundClaim({ claimId, recipientReference, sender, amount, expiry, validAfter, validBefore, nonce, signature }) {
+export async function relayFundClaim({ claimId, recipientReference, sender, token, amount, expiry, validAfter, validBefore, nonce, signature }) {
+  assertAllowedToken(token);
   const { v, r, s } = splitSignature(signature);
   return simulateAndWrite({
     address: config.chain.claimVault, abi: VAULT_ABI, functionName: 'fundClaim',
-    args: [claimId, recipientReference, getAddress(sender), BigInt(amount), BigInt(expiry), BigInt(validAfter), BigInt(validBefore), nonce, v, r, s]
+    args: [claimId, recipientReference, getAddress(sender), getAddress(token), BigInt(amount), BigInt(expiry), BigInt(validAfter), BigInt(validBefore), nonce, v, r, s]
   });
 }
 

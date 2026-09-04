@@ -27,11 +27,12 @@ contract PrismFuzzTest is Test {
 
     function setUp() public {
         ausd = new MockAUSD();
-        router = new PrismPaymentRouter(address(ausd));
+        MockAUSD usdc = new MockAUSD();
+        router = new PrismPaymentRouter(address(ausd), address(usdc));
         payer = vm.addr(payerPk);
         recipient = vm.addr(recipientPk);
         authorizer = vm.addr(authorizerPk);
-        vault = new PrismClaimVault(address(this), address(ausd), authorizer);
+        vault = new PrismClaimVault(address(this), address(ausd), address(usdc), authorizer);
         ausd.mint(payer, type(uint128).max);
     }
 
@@ -98,12 +99,12 @@ contract PrismFuzzTest is Test {
 
         // fund
         ausd.mint(payer, amount);
-        bytes32 nonce = vault.fundingNonce(claimId, ref, amount, payer);
+        bytes32 nonce = vault.fundingNonce(claimId, ref, address(ausd), amount, payer);
         uint256 vb = block.timestamp + 300;
         bytes32 fsh = keccak256(abi.encode(RECEIVE_TYPEHASH, payer, address(vault), amount, uint256(0), vb, nonce));
         (uint8 fv, bytes32 fr, bytes32 fs) = vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", ausd.DOMAIN_SEPARATOR(), fsh)));
         vm.prank(relayer);
-        vault.fundClaim(claimId, ref, payer, amount, expiry, 0, vb, nonce, fv, fr, fs);
+        vault.fundClaim(claimId, ref, payer, address(ausd), amount, expiry, 0, vb, nonce, fv, fr, fs);
         assertEq(ausd.balanceOf(address(vault)), amount);
 
         // claim

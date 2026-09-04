@@ -12,24 +12,43 @@ function bigintEnv(name, fallback) {
   return BigInt(value);
 }
 
-// Verified against Agora's live contract deployments (docs.agora.finance) on 2026-09-02.
-// The backend re-verifies the on-chain EIP-712 domain separator at runtime before it will
-// relay, so these constants can never silently drift from the real token.
-export const AUSD_KNOWN = {
-  143: '0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a',    // Monad mainnet
-  10143: '0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC'   // Monad testnet
+// Canonical Monad deployments from Agora and Circle. The backend re-verifies every configured
+// EIP-712 domain against the live contract before relaying in production.
+export const STABLECOIN_KNOWN = {
+  AUSD: {
+    name: 'Agora Dollar', decimals: 6, domain: { name: 'Agora Dollar', version: '1' },
+    addresses: {
+      143: '0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a',
+      10143: '0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC'
+    }
+  },
+  USDC: {
+    name: 'USD Coin', decimals: 6, domain: { name: 'USDC', version: '2' },
+    addresses: {
+      143: '0x754704Bc059F8C67012fEd69BC8A327a5aafb603',
+      10143: '0x534b2f3A21130d7a60830c2Df862319e593943A3'
+    }
+  }
 };
-export const AUSD_DOMAIN = { name: 'Agora Dollar', version: '1' };
-export const AUSD_DECIMALS = 6;
+
+export const AUSD_KNOWN = STABLECOIN_KNOWN.AUSD.addresses;
+export const AUSD_DOMAIN = STABLECOIN_KNOWN.AUSD.domain;
+export const AUSD_DECIMALS = STABLECOIN_KNOWN.AUSD.decimals;
 
 const chainId = BigInt(env('MONAD_CHAIN_ID', '10143'));
-function resolveAusd() {
-  const override = env('AUSD_ADDRESS');
+function resolveStablecoin(symbol) {
+  const definition = STABLECOIN_KNOWN[symbol];
+  const override = env(`${symbol}_ADDRESS`);
   if (override) return override;
-  const known = AUSD_KNOWN[Number(chainId)];
+  const known = definition.addresses[Number(chainId)];
   if (known) return known;
-  throw new Error(`AUSD_ADDRESS required for unknown chainId ${chainId}`);
+  throw new Error(`${symbol}_ADDRESS required for unknown chainId ${chainId}`);
 }
+
+const stablecoins = Object.fromEntries(Object.entries(STABLECOIN_KNOWN).map(([symbol, definition]) => [
+  symbol,
+  { symbol, name: definition.name, address: resolveStablecoin(symbol), decimals: definition.decimals, domain: definition.domain }
+]));
 
 export const config = {
   port: Number(env('PORT', '8787')),
@@ -42,7 +61,7 @@ export const config = {
   serviceKeyEncryptionKeyHex: requiredHex32('SERVICE_KEY_ENCRYPTION_KEY', '22'.repeat(32)),
   devOtpCode: env('DEV_OTP_CODE', '123456'),
   limits: {
-    // 10,000 AUSD at 6 decimals for normal transfers; 1,000 AUSD for pre-user claims.
+    // 10,000 stablecoin units for normal transfers, 1,000 for pre-user claims.
     maxPaymentAtomic: bigintEnv('MAX_PAYMENT_ATOMIC', '10000000000'),
     maxClaimAtomic: bigintEnv('MAX_CLAIM_ATOMIC', '1000000000')
   },
@@ -55,12 +74,14 @@ export const config = {
     // Production RPC is Alchemy's Monad endpoint; falls back to the public node.
     rpcUrl: env('MONAD_RPC_URL', 'https://testnet-rpc.monad.xyz/'),
     chainId,
-    ausd: resolveAusd(),
+    tokens: stablecoins,
+    ausd: stablecoins.AUSD.address,
+    usdc: stablecoins.USDC.address,
     ausdDomain: AUSD_DOMAIN,
     ausdDecimals: AUSD_DECIMALS,
     paymentRouter: env('PRISM_PAYMENT_ROUTER'),
     claimVault: env('PRISM_CLAIM_VAULT'),
-    // MON-funded relayer that submits gasless AUSD transfers so users can hold MON = 0.
+    // MON-funded relayer that submits gasless ERC-3009 transfers so users can hold MON = 0.
     // Production alternative: Alchemy Gas Manager sponsorship.
     relayerPrivateKey: env('RELAYER_PRIVATE_KEY'),
     // Isolated secp256k1 key that authorizes pre-user claim collection (KMS/HSM in production).
@@ -80,7 +101,20 @@ export const config = {
 // Stored lowercased; compared case-insensitively at the call site.
 config.chain.contractAllowlist = [config.chain.paymentRouter, config.chain.claimVault]
   .filter(Boolean).map((a) => a.toLowerCase());
-config.chain.tokenAllowlist = [config.chain.ausd].filter(Boolean).map((a) => a.toLowerCase());
+config.chain.tokenAllowlist = Object.values(config.chain.tokens).map(token => token.address.toLowerCase());
+
+export function supportedToken(value = 'AUSD') {
+  const needle = String(value).toLowerCase();
+  const token = Object.values(config.chain.tokens).find(candidate =>
+    candidate.symbol.toLowerCase() === needle || candidate.address.toLowerCase() === needle
+  );
+  if (!token) {
+    const error = new Error('unsupported token');
+    error.statusCode = 400;
+    throw error;
+  }
+  return token;
+}
 
 export function assertSafeConfig() {
   if (config.nodeEnv !== 'production') return;

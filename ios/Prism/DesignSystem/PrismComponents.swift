@@ -266,6 +266,33 @@ struct PrismTopBar: View {
   }
 }
 
+struct PrismSheetHeader: View {
+  let title: String
+  let subtitle: String
+  let close: () -> Void
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 16) {
+      VStack(alignment: .leading, spacing: 6) {
+        Text(title)
+          .font(PrismTheme.display(34))
+          .tracking(-0.7)
+          .lineLimit(1)
+          .minimumScaleFactor(0.82)
+        Text(subtitle)
+          .font(PrismTheme.body(13))
+          .foregroundStyle(PrismTheme.muted)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+
+      PrismHeaderIconButton(icon: "xmark", action: close)
+        .padding(.top, 2)
+    }
+    .padding(.horizontal, 28)
+    .padding(.top, 22)
+  }
+}
+
 struct ErrorBanner: View {
   let message: String
   var body: some View {

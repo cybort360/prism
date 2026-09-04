@@ -48,10 +48,11 @@ contract PrismPrivacyTest is Test {
 
     function setUp() public {
         ausd = new MockAUSD();
-        router = new PrismPaymentRouter(address(ausd));
+        MockAUSD usdc = new MockAUSD();
+        router = new PrismPaymentRouter(address(ausd), address(usdc));
         payer = vm.addr(payerPk);
         recipient = vm.addr(recipientPk);
-        vault = new PrismClaimVault(address(this), address(ausd), vm.addr(authorizerPk));
+        vault = new PrismClaimVault(address(this), address(ausd), address(usdc), vm.addr(authorizerPk));
         ausd.mint(payer, 1_000e6);
         vm.warp(1_800_000_000);
     }
@@ -143,7 +144,7 @@ contract PrismPrivacyTest is Test {
         uint256 amount = 20e6;
         uint256 expiry = block.timestamp + 7 days;
         uint256 validBefore = block.timestamp + 300;
-        bytes32 nonce = vault.fundingNonce(claimId, recipientReference, amount, payer);
+        bytes32 nonce = vault.fundingNonce(claimId, recipientReference, address(ausd), amount, payer);
 
         bytes32 structHash =
             keccak256(abi.encode(RECEIVE_TYPEHASH, payer, address(vault), amount, uint256(0), validBefore, nonce));
@@ -152,14 +153,16 @@ contract PrismPrivacyTest is Test {
 
         bytes memory fundCalldata = abi.encodeCall(
             PrismClaimVault.fundClaim,
-            (claimId, recipientReference, payer, amount, expiry, 0, validBefore, nonce, v, r, s)
+            (claimId, recipientReference, payer, address(ausd), amount, expiry, 0, validBefore, nonce, v, r, s)
         );
         _assertNoPhone(fundCalldata, "fundClaim calldata");
 
         vm.recordLogs();
         vm.record();
         vm.prank(relayer);
-        vault.fundClaim(claimId, recipientReference, payer, amount, expiry, 0, validBefore, nonce, v, r, s);
+        vault.fundClaim(
+            claimId, recipientReference, payer, address(ausd), amount, expiry, 0, validBefore, nonce, v, r, s
+        );
         _scanLogs("fundClaim");
         _scanStorage(address(vault), "vault");
 

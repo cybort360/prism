@@ -13,7 +13,7 @@ Every required negative/security property maps to a passing test. `cd contracts 
 | Expired payment rejected | `testExpiredPaymentRejected` | `block.timestamp >= validBefore` → `Expired` |
 | Replay rejected | `testReplayRejected` | `paymentUsed[paymentId]` + AUSD `authorizationState` |
 | paymentId reuse rejected | `testPaymentIdReuseRejected` | fresh nonce, same paymentId → `PaymentAlreadyUsed` |
-| Non-AUSD token rejected | `testNonAUSDTokenRejected` | `env.token != ausd` → `WrongToken` |
+| Unsupported token rejected | `testUnsupportedTokenRejected` | Router allowlist check returns `WrongToken` |
 | No phone-derived value on-chain | `testResolutionHashIsOpaqueMetadata` | resolutionHash/requestId are opaque Prism refs, emitted verbatim |
 
 The relayer can never redirect or resize a payment: recipient and amount are bound into **both** the

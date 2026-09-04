@@ -6,7 +6,11 @@ import { RequestService } from '../src/services/requestService.js';
 import { meraAccount, PK_A, PK_B } from './helpers.js';
 
 const AUSD = '0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC'; // Monad testnet AUSD
-const config = { limits: { maxPaymentAtomic: 10_000_000_000n }, chain: { ausd: AUSD } };
+const USDC = '0x534b2f3A21130d7a60830c2Df862319e593943A3';
+const config = {
+  limits: { maxPaymentAtomic: 10_000_000_000n },
+  chain: { ausd: AUSD, tokens: { AUSD: { symbol: 'AUSD', address: AUSD }, USDC: { symbol: 'USDC', address: USDC } } }
+};
 function fixture() {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prism-')), 'store.json');
   const store = new JsonStore(file);
@@ -43,4 +47,13 @@ test('request payment is bound to payer recipient amount and token', async () =>
   assert.equal(service.assertPayable({ requestId: draft.request.requestId, payerPrismId: 'b', recipientPrismId: 'a', amountAtomic: '15000000', token: AUSD }).requestId, draft.request.requestId);
   assert.throws(() => service.assertPayable({ requestId: draft.request.requestId, payerPrismId: 'b', recipientPrismId: 'a', amountAtomic: '16000000', token: AUSD }), /amount/);
   assert.throws(() => service.assertPayable({ requestId: draft.request.requestId, payerPrismId: 'a', recipientPrismId: 'a', amountAtomic: '15000000', token: AUSD }), /payer/);
+});
+
+test('USDC request is stored with its canonical token and rejects AUSD settlement', async () => {
+  const { a, service } = fixture();
+  const draft = service.draft({ requesterPrismId: 'a', payerPrismId: 'b', amountAtomic: '15000000', token: 'USDC', memo: 'Dinner' });
+  assert.equal(draft.request.token.toLowerCase(), USDC.toLowerCase());
+  assert.equal(draft.request.tokenSymbol, 'USDC');
+  await service.commit({ requesterPrismId: 'a', requestId: draft.request.requestId, signature: await a.signMessage(draft.signable) });
+  assert.throws(() => service.assertPayable({ requestId: draft.request.requestId, payerPrismId: 'b', recipientPrismId: 'a', amountAtomic: '15000000', token: AUSD }), /token/);
 });

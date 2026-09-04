@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ProfileView: View {
   @EnvironmentObject private var model: AppModel
@@ -9,6 +10,7 @@ struct ProfileView: View {
   @State private var showReachability = false
   @State private var showEditProfile = false
   @State private var showProof = false
+  @State private var showAdvanced = false
   @State private var error: String?
 
   var body: some View {
@@ -98,6 +100,10 @@ struct ProfileView: View {
         section("Account") {
           row("checkmark.seal", "Signing", "Secured by passkey", nil)
           divider
+          settingsButton { showAdvanced = true } content: {
+            row("key.horizontal", "Advanced", "Wallet details", nil)
+          }
+          divider
           row("arrow.triangle.2.circlepath", "Reachability updates", "\(model.identity?.aliasVersion ?? 0)", nil)
         }
 
@@ -129,8 +135,14 @@ struct ProfileView: View {
     .sheet(isPresented: $showRecovery) { RecoveryView() }
     .sheet(isPresented: $showReachability) { ReachabilityEditorView() }
     .sheet(isPresented: $showEditProfile) { ProfileNameEditorView() }
+    .sheet(isPresented: $showAdvanced) { AdvancedAccountView() }
     #if DEBUG
     .sheet(isPresented: $showProof) { ProofView() }
+    .onAppear {
+      if ProcessInfo.processInfo.arguments.contains("--uitest-advanced-account") {
+        showAdvanced = true
+      }
+    }
     #endif
     .prismScreen()
   }
@@ -218,6 +230,185 @@ struct ProfileView: View {
       model.updateIdentity(identity)
     } catch {
       self.error = error.localizedDescription
+    }
+  }
+}
+
+private struct AdvancedAccountView: View {
+  @EnvironmentObject private var model: AppModel
+  @Environment(\.dismiss) private var dismiss
+  @State private var copied = false
+  @State private var network = "Loading…"
+
+  private var address: String? {
+    model.identity?.accountAddress ?? model.identity?.account
+  }
+
+  var body: some View {
+    ScrollView(showsIndicators: false) {
+      VStack(alignment: .leading, spacing: 0) {
+        PrismTopBar(title: "Advanced account", back: { dismiss() })
+          .padding(.top, 10)
+
+        Text("Wallet details")
+          .font(PrismTheme.display(40))
+          .tracking(-0.8)
+          .padding(.top, 28)
+
+        Text("Technical account information for receiving funds, verification, and support checks.")
+          .font(PrismTheme.body(14))
+          .foregroundStyle(PrismTheme.muted)
+          .lineSpacing(2)
+          .padding(.top, 11)
+
+        detailGroup("Public account") {
+          VStack(alignment: .leading, spacing: 12) {
+            detailLabel("Wallet address")
+            Text(address ?? "Account unavailable")
+              .font(PrismTheme.mono(12))
+              .foregroundStyle(PrismTheme.ink)
+              .textSelection(.enabled)
+              .fixedSize(horizontal: false, vertical: true)
+              .accessibilityLabel("Wallet address")
+
+            HStack(spacing: 10) {
+              PrismSecondaryButton(
+                title: copied ? "Address copied" : "Copy address",
+                icon: copied ? "checkmark" : "doc.on.doc"
+              ) { copyAddress() }
+
+              if let address {
+                ShareLink(item: address) {
+                  Label("Share", systemImage: "square.and.arrow.up")
+                    .font(PrismTheme.body(15, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(PrismTheme.ink)
+                .background(PrismTheme.paper)
+                .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+                .overlay(
+                  RoundedRectangle(cornerRadius: 17, style: .continuous)
+                    .stroke(PrismTheme.line, lineWidth: 0.7)
+                )
+              }
+            }
+          }
+        }
+
+        detailGroup("Account details") {
+          detailRow("Network", value: network)
+          Divider().overlay(PrismTheme.line)
+          detailRow("Account type", value: accountType)
+          Divider().overlay(PrismTheme.line)
+          detailRow("Signing key", value: signingKeyStatus)
+          Divider().overlay(PrismTheme.line)
+          detailRow("Secret phrase", value: "Not used")
+        }
+
+        PrismCard(padding: 17) {
+          HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "lock.shield.fill")
+              .foregroundStyle(PrismTheme.mintDeep)
+            Text(securityExplanation)
+              .font(PrismTheme.body(12.5))
+              .foregroundStyle(PrismTheme.muted)
+              .lineSpacing(2)
+          }
+        }
+        .padding(.top, 24)
+      }
+      .padding(.horizontal, 22)
+      .padding(.bottom, 30)
+    }
+    .task { await loadNetwork() }
+    .prismScreen()
+  }
+
+  private var accountType: String {
+    #if targetEnvironment(simulator)
+      "Development EVM account"
+    #else
+      "Mera passkey account"
+    #endif
+  }
+
+  private var signingKeyStatus: String {
+    #if targetEnvironment(simulator)
+      "Simulator protected"
+    #else
+      "Passkey protected"
+    #endif
+  }
+
+  private var securityExplanation: String {
+    #if targetEnvironment(simulator)
+      "This simulator uses a development signer for testnet. Prism does not display or export its test seed. Device builds use a Mera passkey instead."
+    #else
+      "Prism does not receive or export your signing secret. Your Mera passkey restores the same account, so there is no recovery phrase to store or share."
+    #endif
+  }
+
+  private func detailGroup<Content: View>(
+    _ title: String,
+    @ViewBuilder content: () -> Content
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 10) {
+      PrismSectionLabel(text: title)
+      VStack(alignment: .leading, spacing: 0) { content() }
+        .padding(17)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PrismTheme.paper)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+          RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .stroke(PrismTheme.line, lineWidth: 0.6)
+        )
+        .prismCardShadow()
+    }
+    .padding(.top, 25)
+  }
+
+  private func detailLabel(_ text: String) -> some View {
+    Text(text)
+      .font(PrismTheme.body(12, weight: .semibold))
+      .foregroundStyle(PrismTheme.muted)
+  }
+
+  private func detailRow(_ label: String, value: String) -> some View {
+    HStack(spacing: 16) {
+      Text(label)
+        .font(PrismTheme.body(13.5, weight: .medium))
+      Spacer()
+      Text(value)
+        .font(PrismTheme.body(12))
+        .foregroundStyle(PrismTheme.muted)
+        .multilineTextAlignment(.trailing)
+    }
+    .padding(.vertical, 14)
+  }
+
+  private func copyAddress() {
+    guard let address else { return }
+    UIPasteboard.general.string = address
+    withAnimation { copied = true }
+    PrismHaptics.success()
+    Task {
+      try? await Task.sleep(for: .seconds(1.6))
+      withAnimation { copied = false }
+    }
+  }
+
+  private func loadNetwork() async {
+    guard let config = try? await PrismAPI.shared.config() else {
+      network = "Unavailable"
+      return
+    }
+    network = switch config.chainId {
+    case "143": "Monad Mainnet"
+    case "10143": "Monad Testnet"
+    default: "Chain \(config.chainId)"
     }
   }
 }

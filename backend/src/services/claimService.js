@@ -14,7 +14,7 @@ export class ClaimService {
     try { return claimAuthorizerAddress(); } catch { return null; }
   }
 
-  createPending({ senderPrismId, recipientPhoneLookupKey, amountAtomic, token, expirySeconds = 7 * 24 * 3600, memo = '' }) {
+  createPending({ senderPrismId, recipientPhoneLookupKey, amountAtomic, token, tokenSymbol, expirySeconds = 7 * 24 * 3600, memo = '' }) {
     if (!/^\d+$/.test(String(amountAtomic)) || BigInt(amountAtomic) <= 0n) throw new Error('claim amount must be positive');
     if (BigInt(amountAtomic) > this.config.limits.maxClaimAtomic) throw new Error('claim exceeds Prism pre-user limit');
     const boundedExpiry = Math.min(Math.max(Number(expirySeconds), 3600), 14 * 24 * 3600);
@@ -25,6 +25,7 @@ export class ClaimService {
       recipientPhoneLookupKey,
       amountAtomic: String(amountAtomic),
       token,
+      tokenSymbol,
       memo: String(memo ?? '').trim().slice(0, 120),
       expiry: Math.floor(Date.now() / 1000) + boundedExpiry,
       status: 'created',
@@ -157,6 +158,7 @@ function publicClaim(c) {
     senderPrismId: c.senderPrismId,
     amountAtomic: c.amountAtomic,
     token: c.token,
+    tokenSymbol: c.tokenSymbol ?? null,
     memo: c.memo ?? '',
     expiry: c.expiry,
     status: c.status,

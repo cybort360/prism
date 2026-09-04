@@ -23,7 +23,8 @@ final class AppModel: ObservableObject {
   @Published var onboardingComplete = false
 
   init() {
-    if ProcessInfo.processInfo.arguments.contains("--uitest-reset") {
+    let arguments = ProcessInfo.processInfo.arguments
+    if arguments.contains("--uitest-reset") {
       for key in ["session", "verifiedPhone", "pin.salt", "pin.digest", "pin.iterations", "mera.dev.seed"] {
         KeychainStore.shared.delete(key)
       }
@@ -32,6 +33,12 @@ final class AppModel: ObservableObject {
       }
     }
     onboardingComplete = UserDefaults.standard.bool(forKey: "onboarding.complete")
+
+    #if DEBUG
+      sendPickerPresented = arguments.contains("--uitest-send-picker")
+      requestPickerPresented = arguments.contains("--uitest-request-picker")
+      if arguments.contains("--uitest-advanced-account") { selectedTab = .profile }
+    #endif
   }
 
   var hasSession: Bool { (try? KeychainStore.shared.string(for: "session")) != nil }

@@ -20,12 +20,12 @@ final class PrismAPI: @unchecked Sendable {
   struct ResolvePhoneBody: Encodable { let phone: String }
   struct ResolveHandleBody: Encodable { let handle: String }
   struct ResolvePrismBody: Encodable { let prismId: String }
-  struct PreparePaymentBody: Encodable { let resolution: ResolutionResponse; let amountAtomic: String; let requestId: String?; let memo: String }
-  struct SubmitPaymentBody: Encodable { let paymentId: String; let prismSignature: String; let ausdSignature: String }
+  struct PreparePaymentBody: Encodable { let resolution: ResolutionResponse; let amountAtomic: String; let token: String; let requestId: String?; let memo: String }
+  struct SubmitPaymentBody: Encodable { let paymentId: String; let prismSignature: String; let tokenSignature: String }
   struct DraftRequestBody: Encodable { let payerPrismId: String; let amountAtomic: String; let token: String; let memo: String }
   struct CommitRequestBody: Encodable { let requestId: String; let signature: String }
   struct RequestStatusBody: Encodable { let requestId: String; let status: String }
-  struct PrepareClaimBody: Encodable { let recipientPhone: String; let amountAtomic: String; let expirySeconds: Int; let memo: String }
+  struct PrepareClaimBody: Encodable { let recipientPhone: String; let amountAtomic: String; let token: String; let expirySeconds: Int; let memo: String }
   struct FundClaimBody: Encodable { let signature: String }
   struct ClaimIntentBody: Encodable { let recipientIntentSignature: String }
 
@@ -71,6 +71,10 @@ final class PrismAPI: @unchecked Sendable {
 
   func me() async throws -> PrismIdentity { try await api.request("/v1/me") }
   func balance() async throws -> BalanceResponse { try await api.request("/v1/me/balance") }
+  func balances() async throws -> [TokenBalance] {
+    let response: BalancesResponse = try await api.request("/v1/me/balances")
+    return response.balances
+  }
 
   func startPhoneBinding(phone: String) async throws {
     let _: SimpleStatus = try await api.send("/v1/me/phone/start", body: OTPStartBody(phone: phone))
@@ -111,19 +115,19 @@ final class PrismAPI: @unchecked Sendable {
   func resolve(handle: String) async throws -> ResolutionResponse { try await api.send("/v1/resolve/handle", body: ResolveHandleBody(handle: handle)) }
   func resolve(prismId: String) async throws -> ResolutionResponse { try await api.send("/v1/resolve/prism", body: ResolvePrismBody(prismId: prismId)) }
 
-  // MARK: direct payments (Prism envelope + AUSD ERC-3009)
+  // MARK: direct payments (Prism envelope + ERC-3009 stablecoin)
 
-  func preparePayment(resolution: ResolutionResponse, amountAtomic: String, requestId: String? = nil, memo: String = "") async throws -> PreparedPayment {
-    try await api.send("/v1/payments/prepare", body: PreparePaymentBody(resolution: resolution, amountAtomic: amountAtomic, requestId: requestId, memo: memo))
+  func preparePayment(resolution: ResolutionResponse, amountAtomic: String, asset: Stablecoin, requestId: String? = nil, memo: String = "") async throws -> PreparedPayment {
+    try await api.send("/v1/payments/prepare", body: PreparePaymentBody(resolution: resolution, amountAtomic: amountAtomic, token: asset.rawValue, requestId: requestId, memo: memo))
   }
-  /// The Mera account signs BOTH the Prism envelope and the AUSD authorization; the relayer submits.
+  /// The Mera account signs the Prism envelope and token authorization, then the relayer submits.
   @MainActor
   func submitPayment(_ prepared: PreparedPayment) async throws -> OperationResult {
     try await mera.beginSession(.payments)
     let prismSignature = try await mera.signTypedDataHex(prepared.typedData.envelope.jsonData())
-    let ausdSignature = try await mera.signTypedDataHex(prepared.typedData.ausd.jsonData())
+    let tokenSignature = try await mera.signTypedDataHex(prepared.typedData.tokenAuthorization.jsonData())
     return try await api.send("/v1/payments/submit",
-      body: SubmitPaymentBody(paymentId: prepared.paymentId, prismSignature: prismSignature, ausdSignature: ausdSignature),
+      body: SubmitPaymentBody(paymentId: prepared.paymentId, prismSignature: prismSignature, tokenSignature: tokenSignature),
       idempotencyKey: prepared.paymentId)
   }
   func paymentStatus(_ id: String) async throws -> OperationStatus { try await api.request("/v1/payments/\(id)") }
@@ -146,8 +150,8 @@ final class PrismAPI: @unchecked Sendable {
   // MARK: claims (send before signup)
 
   func claims() async throws -> [ClaimRecord] { try await api.request("/v1/claims") }
-  func prepareClaim(phone: String, amountAtomic: String, memo: String = "") async throws -> PreparedClaim {
-    try await api.send("/v1/claims/prepare", body: PrepareClaimBody(recipientPhone: phone, amountAtomic: amountAtomic, expirySeconds: 604800, memo: memo))
+  func prepareClaim(phone: String, amountAtomic: String, asset: Stablecoin, memo: String = "") async throws -> PreparedClaim {
+    try await api.send("/v1/claims/prepare", body: PrepareClaimBody(recipientPhone: phone, amountAtomic: amountAtomic, token: asset.rawValue, expirySeconds: 604800, memo: memo))
   }
   @MainActor
   func fundClaim(_ prepared: PreparedClaim) async throws -> OperationResult {

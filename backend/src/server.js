@@ -14,7 +14,7 @@ import { ClaimService } from './services/claimService.js';
 import { PaymentService } from './services/paymentService.js';
 import { ActivityService } from './services/activityService.js';
 import { ProofService } from './services/proofService.js';
-import { ausdBalanceOf, claimAuthorizerAddress, relayerAccount, verifyChainId, verifyAusdDomain } from './chain/eth.js';
+import { ausdBalanceOf, claimAuthorizerAddress, relayerAccount, tokenBalanceOf, verifyChainId, verifyTokenDomain } from './chain/eth.js';
 import { chainProvider } from './providers/index.js';
 import { envioIndexer } from './indexers/index.js';
 import { verifyAlchemySignature, extractTxHashes } from './providers/alchemyWebhook.js';
@@ -27,7 +27,7 @@ const keyService = new KeyService(store, config);
 const identityService = new IdentityService({ store, config });
 const otpService = new OtpService({ config, store });
 const resolverService = new ResolverService({ store, config, keyService, identityService });
-const requestService = new RequestService({ store, identityService });
+const requestService = new RequestService({ store, identityService, config });
 const claimService = new ClaimService({ store, config, identityService });
 const paymentService = new PaymentService({ store, config, identityService, claimService, resolverService, requestService });
 const activityService = new ActivityService({ store, identityService });
@@ -64,7 +64,9 @@ route('GET', '/health', async () => ({ ok: true, chainId: config.chain.chainId.t
 route('GET', '/v1/config', async () => ({
   chainId: config.chain.chainId.toString(),
   ausd: config.chain.ausd,
+  usdc: config.chain.usdc,
   ausdDecimals: config.chain.ausdDecimals,
+  tokens: Object.values(config.chain.tokens).map(publicToken),
   paymentRouter: config.chain.paymentRouter || null,
   claimVault: config.chain.claimVault || null,
   resolverPublicKey: resolverService.publicKey(),
@@ -92,6 +94,19 @@ route('GET', '/v1/me/balance', async ({ user }) => {
   const amount = await ausdBalanceOf(identity.accountAddress);
   return { token: config.chain.ausd, amountAtomic: amount.toString(), decimals: config.chain.ausdDecimals };
 }, true);
+route('GET', '/v1/me/balances', async ({ user }) => {
+  const identity = identityService.get(user.prismId);
+  const tokens = Object.values(config.chain.tokens);
+  const amounts = identity?.accountAddress
+    ? await Promise.all(tokens.map(token => tokenBalanceOf(token.symbol, identity.accountAddress)))
+    : tokens.map(() => 0n);
+  return {
+    balances: tokens.map((token, index) => ({
+      ...publicToken(token),
+      amountAtomic: amounts[index].toString()
+    }))
+  };
+}, true);
 route('POST', '/v1/me/handle', async ({ user, body }) => identityService.publicView(await identityService.setHandleAuthorized(user.prismId, body.handle, body.accountSignature)), true);
 route('POST', '/v1/me/phone/start', async ({ user, body, ip }) => otpService.start(body.phone, `${user.prismId}:${ip}`), true);
 route('POST', '/v1/me/phone/check', async ({ user, body, ip }) => {
@@ -114,23 +129,24 @@ route('POST', '/v1/requests/commit', async ({ user, body }) => requestService.co
 route('GET', '/v1/requests', async ({ user }) => requestService.listFor(user.prismId), true);
 route('POST', '/v1/requests/status', async ({ user, body }) => requestService.setStatus(body.requestId, body.status, user.prismId), true);
 
-// --- direct payments (Prism envelope + AUSD ERC-3009) -----------------------
+// --- direct payments (Prism envelope + supported ERC-3009 stablecoin) -------
 route('POST', '/v1/payments/prepare', async ({ user, body }) => {
   rateLimit(`pay-prepare:${user.prismId}`, 60);
-  return paymentService.preparePayment({ senderPrismId: user.prismId, resolution: body.resolution, amountAtomic: body.amountAtomic, requestId: body.requestId ?? null, memo: body.memo ?? '' });
+  return paymentService.preparePayment({ senderPrismId: user.prismId, resolution: body.resolution, amountAtomic: body.amountAtomic, token: body.token ?? 'AUSD', requestId: body.requestId ?? null, memo: body.memo ?? '' });
 }, true);
 route('POST', '/v1/payments/submit', async ({ user, body, idempotencyKey }) => {
   rateLimit(`pay-submit:${user.prismId}`, 60);
-  requireHex(body.paymentId, 'paymentId'); requireSig(body.prismSignature, 'prismSignature'); requireSig(body.ausdSignature, 'ausdSignature');
+  const tokenSignature = body.tokenSignature ?? body.ausdSignature;
+  requireHex(body.paymentId, 'paymentId'); requireSig(body.prismSignature, 'prismSignature'); requireSig(tokenSignature, 'tokenSignature');
   return withIdempotency(store, { scope: 'pay-submit', key: idempotencyKey, actor: user.prismId }, () =>
-    paymentService.submitPayment({ paymentId: body.paymentId, prismSignature: body.prismSignature, ausdSignature: body.ausdSignature, actorPrismId: user.prismId }));
+    paymentService.submitPayment({ paymentId: body.paymentId, prismSignature: body.prismSignature, tokenSignature, actorPrismId: user.prismId }));
 }, true);
 route('GET', '/v1/payments/:id', async ({ user, params }) => paymentService.reconcile(params.id, user.prismId), true);
 
 // --- claims (send before signup) --------------------------------------------
 route('POST', '/v1/claims/prepare', async ({ user, body }) => {
   rateLimit(`claim-prepare:${user.prismId}`, 30);
-  return paymentService.prepareClaim({ senderPrismId: user.prismId, recipientPhone: body.recipientPhone, amountAtomic: body.amountAtomic, expirySeconds: body.expirySeconds ?? undefined, memo: body.memo ?? '' });
+  return paymentService.prepareClaim({ senderPrismId: user.prismId, recipientPhone: body.recipientPhone, amountAtomic: body.amountAtomic, token: body.token ?? 'AUSD', expirySeconds: body.expirySeconds ?? undefined, memo: body.memo ?? '' });
 }, true);
 route('GET', '/v1/claims', async ({ user }) => claimService.listFor(identityService.get(user.prismId)), true);
 route('GET', '/v1/claims/eligible', async ({ user }) => claimService.eligibleClaimsFor(identityService.get(user.prismId)), true);
@@ -220,16 +236,16 @@ server.listen(config.port, async () => {
   await startupIntegrityChecks();
 });
 
-// Fail closed in production if the RPC chainId or AUSD domain drift from configuration.
+// Fail closed in production if the RPC chainId or token domains drift from configuration.
 async function startupIntegrityChecks() {
   try {
     const cid = await verifyChainId();
     if (!cid.ok) throw new Error(`chainId mismatch: RPC ${cid.onchain} != configured ${cid.configured}`);
     logger.info('integrity.chainId', cid);
-    if (config.chain.ausd) {
-      const dom = await verifyAusdDomain();
-      logger.info('integrity.ausdDomain', { ok: dom.ok });
-      if (!dom.ok) throw new Error('AUSD EIP-712 domain does not match on-chain DOMAIN_SEPARATOR');
+    for (const token of Object.values(config.chain.tokens)) {
+      const domain = await verifyTokenDomain(token.symbol);
+      logger.info('integrity.tokenDomain', { symbol: token.symbol, ok: domain.ok });
+      if (!domain.ok) throw new Error(`${token.symbol} EIP-712 domain does not match on-chain DOMAIN_SEPARATOR`);
     }
   } catch (e) {
     logger.error('integrity.failed', { error: e.message });
@@ -241,6 +257,7 @@ function rateLimit(key, limit) { consumeRateLimit(store, key, { limit, windowMs:
 function requireSig(v, name) { if (!/^0x[0-9a-fA-F]{130}$/.test(v ?? '')) throw httpError(400, `${name} must be a 65-byte hex signature`); }
 function requireHex(v, name) { if (!/^0x[0-9a-fA-F]{64}$/.test(v ?? '')) throw httpError(400, `${name} must be a 32-byte hex value`); }
 function safe(fn) { try { return fn(); } catch { return null; } }
+function publicToken(token) { return { symbol: token.symbol, name: token.name, address: token.address, decimals: token.decimals }; }
 function httpError(statusCode, message) { const error = new Error(message); error.statusCode = statusCode; return error; }
 function send(res, status, object) {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });

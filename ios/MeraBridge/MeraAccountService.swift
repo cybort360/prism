@@ -48,7 +48,7 @@ protocol MeraAccountService: AnyObject {
   func createAccount() async throws -> PrismMeraAccount
   /// Re-derive the account from an existing passkey (a passkey assertion prompt).
   func restoreAccount() async throws -> PrismMeraAccount
-  /// Sign an EIP-712 typed-data payload (JSON bytes) — used for AUSD ERC-3009 authorizations.
+  /// Sign an EIP-712 typed-data payload used for AUSD and USDC ERC-3009 authorizations.
   func signTypedData(_ typedData: Data) async throws -> Data
   /// Sign a personal message (EIP-191) — used for identity binding/mutation proofs.
   func signMessage(_ message: Data) async throws -> Data

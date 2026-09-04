@@ -5,6 +5,7 @@ type Payment {
   id: ID! # paymentId (bytes32)
   payer: String!
   recipient: String!
+  token: String!
   amount: BigInt!
   requestId: String! # 0x0…0 when the payment does not fulfil a request
   resolutionHash: String!
@@ -18,6 +19,7 @@ type Claim {
   status: String! # Funded | Claimed | Refunded
   sender: String!
   recipient: String
+  token: String!
   amount: BigInt!
   expiry: Int
   recipientReference: String
@@ -34,6 +36,7 @@ type AccountActivity {
   counterparty: String
   direction: String! # sent | received
   kind: String! # payment | claim_fund | claim_collect | claim_refund | transfer
+  token: String!
   amount: BigInt!
   ref: String # paymentId or claimId
   txHash: String!
@@ -47,16 +50,18 @@ type RequestSettlement {
   paymentId: String!
   payer: String!
   recipient: String!
+  token: String!
   amount: BigInt!
   txHash: String!
   timestamp: Int!
 }
 
-# AUSD transfers that touch the Prism router or claim vault (deposits / forwards / releases).
+# Supported-token transfers that touch the Prism router or claim vault.
 type VaultTransfer {
   id: ID! # `${txHash}-${logIndex}`
   from: String!
   to: String!
+  token: String!
   value: BigInt!
   txHash: String!
   timestamp: Int!

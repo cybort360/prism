@@ -13,15 +13,11 @@ struct PersonPickerView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      HStack {
-        Text(mode == .send ? "Send money" : "Request money")
-          .font(PrismTheme.display(35))
-          .tracking(-0.6)
-        Spacer()
-        PrismHeaderIconButton(icon: "xmark") { dismiss() }
-      }
-      .padding(.horizontal, 22)
-      .padding(.top, 10)
+      PrismSheetHeader(
+        title: mode == .send ? "Send money" : "Request money",
+        subtitle: mode == .send ? "Choose who you want to pay" : "Choose who to request from",
+        close: { dismiss() }
+      )
 
       HStack(spacing: 11) {
         Image(systemName: "magnifyingglass")
@@ -43,8 +39,8 @@ struct PersonPickerView: View {
       .background(PrismTheme.paper)
       .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
       .overlay(RoundedRectangle(cornerRadius: 17).stroke(PrismTheme.line, lineWidth: 0.6))
-      .padding(.horizontal, 22)
-      .padding(.top, 18)
+      .padding(.horizontal, 28)
+      .padding(.top, 22)
 
       ScrollView(showsIndicators: false) {
         LazyVStack(alignment: .leading, spacing: 0) {
@@ -106,7 +102,7 @@ struct PersonPickerView: View {
             Divider().overlay(PrismTheme.line)
           }
         }
-        .padding(.horizontal, 22)
+        .padding(.horizontal, 28)
         .padding(.bottom, 28)
       }
     }

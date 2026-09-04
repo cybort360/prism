@@ -52,11 +52,11 @@ contract VaultHandler is Test {
         bytes32 ref = keccak256(abi.encode("r", counter));
         counter++;
         uint256 expiry = block.timestamp + ttl;
-        bytes32 nonce = vault.fundingNonce(claimId, ref, amount, sender);
+        bytes32 nonce = vault.fundingNonce(claimId, ref, address(ausd), amount, sender);
         uint256 vb = block.timestamp + 300;
         bytes32 sh = keccak256(abi.encode(RECEIVE_TYPEHASH, sender, address(vault), amount, uint256(0), vb, nonce));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(senderPk, keccak256(abi.encodePacked("\x19\x01", ausd.DOMAIN_SEPARATOR(), sh)));
-        vault.fundClaim(claimId, ref, sender, amount, expiry, 0, vb, nonce, v, r, s);
+        vault.fundClaim(claimId, ref, sender, address(ausd), amount, expiry, 0, vb, nonce, v, r, s);
         locals.push(Local({claimId: claimId, amount: amount, expiry: expiry, status: 1}));
         outstandingFunded += amount;
         totalFunded += amount;
@@ -102,7 +102,8 @@ contract PrismVaultInvariantTest is StdInvariant, Test {
 
     function setUp() public {
         ausd = new MockAUSD();
-        vault = new PrismClaimVault(address(this), address(ausd), vm.addr(0xA07));
+        MockAUSD usdc = new MockAUSD();
+        vault = new PrismClaimVault(address(this), address(ausd), address(usdc), vm.addr(0xA07));
         handler = new VaultHandler(ausd, vault);
         targetContract(address(handler));
     }
@@ -124,7 +125,7 @@ contract PrismVaultInvariantTest is StdInvariant, Test {
         uint256 n = handler.localsLength();
         for (uint256 i; i < n; i++) {
             (bytes32 claimId,,, uint8 ghostStatus) = handler.locals(i);
-            (,,,,, PrismClaimVault.ClaimStatus onchain) = vault.claims(claimId);
+            (,,,,,, PrismClaimVault.ClaimStatus onchain) = vault.claims(claimId);
             if (ghostStatus == 2 || ghostStatus == 3) {
                 assertTrue(onchain != PrismClaimVault.ClaimStatus.Funded, "no regression to Funded");
             }

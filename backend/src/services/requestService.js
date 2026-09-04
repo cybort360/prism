@@ -3,8 +3,8 @@ import { canonicalJson } from '../lib/crypto.js';
 import { verifyAccountMessage } from '../chain/eth.js';
 
 function signable(r) {
-  const { requestId, requesterPrismId, payerPrismId, amountAtomic, token, memo, createdAt, expiresAt } = r;
-  return { requestId, requesterPrismId, payerPrismId, amountAtomic, token, memo, createdAt, expiresAt };
+  const { requestId, requesterPrismId, payerPrismId, amountAtomic, token, tokenSymbol, memo, createdAt, expiresAt } = r;
+  return { requestId, requesterPrismId, payerPrismId, amountAtomic, token, tokenSymbol, memo, createdAt, expiresAt };
 }
 
 function positiveAtomic(value) {
@@ -25,7 +25,7 @@ export class RequestService {
     if (requesterPrismId === payerPrismId) throw new Error('cannot request yourself');
     amountAtomic = positiveAtomic(amountAtomic);
     if (BigInt(amountAtomic) > this.config.limits.maxPaymentAtomic) throw new Error('amount exceeds Prism payment limit');
-    if (String(token).toLowerCase() !== this.config.chain.ausd.toLowerCase()) throw new Error('unsupported request token');
+    const stablecoin = this._token(token);
     memo = String(memo ?? '').trim().slice(0, 120);
     const expiry = expiresAt ? new Date(expiresAt) : new Date(Date.now() + 24 * 60 * 60_000);
     if (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= Date.now() || expiry.getTime() > Date.now() + 30 * 24 * 60 * 60_000) throw new Error('invalid request expiry');
@@ -35,7 +35,8 @@ export class RequestService {
       requesterPrismId,
       payerPrismId,
       amountAtomic,
-      token: this.config.chain.ausd,
+      token: stablecoin.address,
+      tokenSymbol: stablecoin.symbol,
       memo,
       createdAt: new Date().toISOString(),
       expiresAt: expiry.toISOString(),
@@ -43,6 +44,18 @@ export class RequestService {
     };
     this.store.mutate(data => { data.requests[request.requestId] = request; });
     return { request, signable: canonicalJson(signable(request)) };
+  }
+
+  _token(value) {
+    const configured = this.config.chain.tokens
+      ? Object.values(this.config.chain.tokens)
+      : [{ symbol: 'AUSD', address: this.config.chain.ausd }];
+    const needle = String(value ?? 'AUSD').toLowerCase();
+    const token = configured.find(candidate =>
+      candidate.symbol.toLowerCase() === needle || candidate.address.toLowerCase() === needle
+    );
+    if (!token) throw new Error('unsupported request token');
+    return token;
   }
 
   async commit({ requesterPrismId, requestId, signature }) {

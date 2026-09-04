@@ -7,7 +7,7 @@ enum AliasKind { case phone, handle }
 
 struct OnboardingFlow: View {
   @EnvironmentObject private var model: AppModel
-  @State private var step: OnboardingStep = .story
+  @State private var step: OnboardingStep
   @State private var phone = ""
   @State private var code = ""
   @State private var handle = ""
@@ -15,6 +15,27 @@ struct OnboardingFlow: View {
   @State private var error: String?
   @State private var firstAlias: AliasKind?
   @State private var addingSecond = false
+
+  init() {
+    #if DEBUG
+    let arguments = ProcessInfo.processInfo.arguments
+    let initialStep: OnboardingStep
+    if arguments.contains("--uitest-onboarding-alias") {
+      initialStep = .secondAlias
+    } else if arguments.contains("--uitest-onboarding-contacts") {
+      initialStep = .contacts
+    } else if arguments.contains("--uitest-onboarding-faceid") {
+      initialStep = .faceID
+    } else if arguments.contains("--uitest-onboarding-ready") {
+      initialStep = .ready
+    } else {
+      initialStep = .story
+    }
+    #else
+    let initialStep: OnboardingStep = .story
+    #endif
+    _step = State(initialValue: initialStep)
+  }
 
   var body: some View {
     ZStack {
@@ -208,7 +229,25 @@ private struct StoryStep: View {
   }
 }
 
-private enum StoryArt { case orbit, contacts, waiting, passkey }
+private enum StoryArt {
+  case orbit, contacts, waiting, passkey
+
+  var assetName: String {
+    switch self {
+    case .orbit: "OnboardingOrbit"
+    case .contacts: "OnboardingContacts"
+    case .waiting: "OnboardingEscrow"
+    case .passkey: "OnboardingPasskey"
+    }
+  }
+
+  var artworkScale: CGFloat {
+    switch self {
+    case .passkey: 1.12
+    default: 1
+    }
+  }
+}
 
 private struct StoryPage: View {
   let headline: String
@@ -218,14 +257,14 @@ private struct StoryPage: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       Spacer(minLength: 8)
-      Group {
-        switch art {
-        case .orbit: PaymentOrbit()
-        case .contacts: StoryGlyph(symbol: "person.2.fill")
-        case .waiting: StoryGlyph(symbol: "clock.badge.checkmark")
-        case .passkey: StoryGlyph(symbol: "faceid")
-        }
-      }
+      Image(art.assetName)
+        .resizable()
+        .interpolation(.high)
+        .antialiased(true)
+        .scaledToFit()
+        .scaleEffect(art.artworkScale)
+        .frame(height: 282)
+        .accessibilityHidden(true)
       .frame(maxWidth: .infinity)
 
       Spacer(minLength: 20)
@@ -250,18 +289,6 @@ private struct StoryPage: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("\(headline.replacingOccurrences(of: "\n", with: " ")) \(support)")
-  }
-}
-
-private struct StoryGlyph: View {
-  let symbol: String
-  var body: some View {
-    ZStack {
-      Circle().fill(PrismTheme.mintSoft).frame(width: 150, height: 150)
-      Circle().stroke(PrismTheme.mint.opacity(0.26), lineWidth: 1).frame(width: 184, height: 184)
-      Image(systemName: symbol).font(.system(size: 52, weight: .medium)).foregroundStyle(PrismTheme.mintDeep)
-    }
-    .frame(height: 210)
   }
 }
 
@@ -303,7 +330,8 @@ private struct SecondAliasStep: View {
   var body: some View {
     let addingHandle = firstAlias == .phone
     return CenteredMilestone(
-      icon: addingHandle ? "at" : "phone.fill",
+      art: "OnboardingAlias3D",
+      fallbackIcon: addingHandle ? "at" : "phone.fill",
       title: addingHandle ? "Add a public\n@handle too?" : "Add your phone\nnumber too?",
       message: addingHandle
         ? "A @handle lets people pay you without sharing your number. You can add one anytime."
@@ -316,72 +344,24 @@ private struct SecondAliasStep: View {
   }
 }
 
-private struct PaymentOrbit: View {
-  var body: some View {
-    ZStack {
-      Circle()
-        .stroke(PrismTheme.line, lineWidth: 1)
-        .frame(width: 248, height: 248)
-
-      Circle()
-        .stroke(PrismTheme.mint.opacity(0.34), style: StrokeStyle(lineWidth: 1.2, dash: [5, 8]))
-        .frame(width: 188, height: 188)
-        .rotationEffect(.degrees(-18))
-
-      RoundedRectangle(cornerRadius: 20, style: .continuous)
-        .fill(PrismTheme.paper)
-        .frame(width: 130, height: 84)
-        .overlay(
-          VStack(alignment: .leading, spacing: 5) {
-            Text("YOU SENT").font(PrismTheme.body(8.5, weight: .semibold)).tracking(1.2).foregroundStyle(PrismTheme.muted)
-            Text("$20.00").font(PrismTheme.display(26)).tracking(-0.7)
-            Text("to Tobi").font(PrismTheme.body(10.5)).foregroundStyle(PrismTheme.muted)
-          }
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(14)
-        )
-        .overlay(RoundedRectangle(cornerRadius: 20).stroke(PrismTheme.line, lineWidth: 0.6))
-        .prismCardShadow()
-        .rotationEffect(.degrees(-7))
-        .offset(x: 18, y: 4)
-
-      PrismAvatar(initials: "TB", size: 58, tone: PrismTheme.rose)
-        .offset(x: -106, y: -58)
-
-      PrismAvatar(initials: "OA", size: 62, highlighted: true, tone: PrismTheme.mintSoft)
-        .offset(x: 100, y: 73)
-
-      PrismMark(size: 48)
-        .offset(x: 94, y: -82)
-
-      Circle().fill(PrismTheme.mint).frame(width: 8, height: 8).offset(x: -82, y: 84)
-    }
-    .frame(height: 275)
-  }
-}
-
 private struct PrismMark: View {
   var size: CGFloat = 28
 
   var body: some View {
-    ZStack {
-      RoundedRectangle(cornerRadius: size * 0.18)
-        .fill(PrismTheme.mintDeep)
-        .frame(width: size * 0.72, height: size * 0.72)
-        .rotationEffect(.degrees(45))
-      RoundedRectangle(cornerRadius: size * 0.15)
-        .stroke(PrismTheme.mint, lineWidth: 2)
-        .frame(width: size * 0.48, height: size * 0.48)
-        .rotationEffect(.degrees(45))
-    }
+    Image("PrismLogo")
+      .resizable()
+      .interpolation(.high)
+      .antialiased(true)
+      .scaledToFit()
     .frame(width: size, height: size)
+    .accessibilityHidden(true)
   }
 }
 
 private struct PrismWordmark: View {
   var body: some View {
     HStack(spacing: 9) {
-      PrismMark(size: 21)
+      PrismMark(size: 23)
       Text("PRISM")
         .font(PrismTheme.body(13.5, weight: .semibold))
         .tracking(2.5)
@@ -686,7 +666,8 @@ private struct ContactsPermissionStep: View {
 
   var body: some View {
     CenteredMilestone(
-      icon: "person.crop.rectangle.stack",
+      art: "OnboardingContactsPermission3D",
+      fallbackIcon: "person.crop.rectangle.stack",
       title: "Find people\nyou know",
       message: "Prism uses Contacts to help you find people you already know. Your whole address book is never uploaded.",
       primary: "Allow Contacts",
@@ -784,7 +765,8 @@ private struct FaceIDStep: View {
 
   var body: some View {
     CenteredMilestone(
-      icon: "faceid",
+      art: "OnboardingFaceID3D",
+      fallbackIcon: "faceid",
       title: "Use Face ID for\nfaster payments",
       message: "Approve payments with a glance. Your payment PIN remains available as a fallback.",
       primary: "Enable Face ID",
@@ -800,7 +782,8 @@ private struct ReadyStep: View {
 
   var body: some View {
     CenteredMilestone(
-      icon: "checkmark",
+      art: "OnboardingReady3D",
+      fallbackIcon: "checkmark",
       title: "You’re ready.",
       message: "Your Prism is set up. Money can now move between people — starting with you.",
       primary: "Open Prism",
@@ -812,13 +795,22 @@ private struct ReadyStep: View {
 }
 
 private struct CenteredMilestone: View {
-  let icon: String
+  let art: String
+  let fallbackIcon: String
   let title: String
   let message: String
   let primary: String
   let primaryAction: () -> Void
   let secondary: String?
   let secondaryAction: () -> Void
+
+  private var usesFlatArtworkForQA: Bool {
+    #if DEBUG
+    ProcessInfo.processInfo.arguments.contains("--uitest-flat-milestone")
+    #else
+    false
+    #endif
+  }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -827,19 +819,30 @@ private struct CenteredMilestone: View {
 
       Spacer()
 
-      ZStack {
-        Circle().fill(PrismTheme.mintSoft).frame(width: 126, height: 126)
-        Circle().stroke(PrismTheme.mint.opacity(0.28), lineWidth: 1).frame(width: 150, height: 150)
-        Image(systemName: icon)
-          .font(.system(size: 37, weight: .medium))
-          .foregroundStyle(PrismTheme.mintDeep)
+      if usesFlatArtworkForQA {
+        ZStack {
+          Circle().fill(PrismTheme.mintSoft).frame(width: 126, height: 126)
+          Circle().stroke(PrismTheme.mint.opacity(0.28), lineWidth: 1).frame(width: 150, height: 150)
+          Image(systemName: fallbackIcon)
+            .font(.system(size: 37, weight: .medium))
+            .foregroundStyle(PrismTheme.mintDeep)
+        }
+        .accessibilityHidden(true)
+      } else {
+        Image(art)
+          .resizable()
+          .interpolation(.high)
+          .antialiased(true)
+          .scaledToFit()
+          .frame(width: 196, height: 196)
+          .accessibilityHidden(true)
       }
 
       Text(title)
         .font(PrismTheme.display(39))
         .tracking(-0.7)
         .multilineTextAlignment(.center)
-        .padding(.top, 34)
+        .padding(.top, usesFlatArtworkForQA ? 34 : 20)
 
       Text(message)
         .font(PrismTheme.body(14))

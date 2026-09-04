@@ -2,7 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
   @EnvironmentObject private var model: AppModel
-  @State private var balance: BalanceResponse?
+  @State private var balances: [TokenBalance] = []
   @State private var activity: [ActivityRecord] = []
   @State private var requests: [PaymentRequestRecord] = []
   @State private var claims: [ClaimRecord] = []
@@ -16,9 +16,26 @@ struct HomeView: View {
         header.padding(.bottom, 42)
         PrismSectionLabel(text: "Total balance")
         AmountText(
-          dollars: balance.map { Money.dollars(fromAtomic: $0.amountAtomic, decimals: $0.decimals) }
-            ?? "$0.00", size: 70
+          dollars: totalBalance, size: 70
         ).padding(.top, 6)
+        if !balances.isEmpty {
+          HStack(spacing: 8) {
+            ForEach(balances) { balance in
+              Text(Money.assetAmount(
+                fromAtomic: balance.amountAtomic,
+                symbol: balance.symbol,
+                decimals: balance.decimals
+              ))
+              .font(PrismTheme.body(10.5, weight: .semibold))
+              .foregroundStyle(PrismTheme.mintDeep)
+              .padding(.horizontal, 10)
+              .padding(.vertical, 6)
+              .background(PrismTheme.mintSoft)
+              .clipShape(Capsule())
+            }
+          }
+          .padding(.top, 10)
+        }
         if let metric = weeklyMetric {
           PrismMetricPill(text: metric.text, positive: metric.positive).padding(.top, 11)
         } else if loading {
@@ -37,10 +54,7 @@ struct HomeView: View {
   private var header: some View {
     HStack(spacing: 11) {
       PrismAvatar(initials: "OA", size: 42)
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Good morning,").font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted)
-        Text(displayName).font(PrismTheme.body(16, weight: .semibold))
-      }
+      Text("Hello, \(displayName)").font(PrismTheme.body(16, weight: .semibold))
       Spacer()
       Button {
         model.selectedTab = .activity
@@ -57,7 +71,7 @@ struct HomeView: View {
   }
   private var displayName: String {
     if let name = model.identity?.displayName?.split(separator: " ").first { return String(name) }
-    return model.identity?.handle?.replacingOccurrences(of: "@", with: "").capitalized ?? "there"
+    return model.identity?.handle?.replacingOccurrences(of: "@", with: "").capitalized ?? "User"
   }
   private var actions: some View {
     HStack(spacing: 10) {
@@ -80,7 +94,7 @@ struct HomeView: View {
           PrismAvatar(initials: "PR", size: 40)
           VStack(alignment: .leading, spacing: 3) {
             Text("Payment request").font(PrismTheme.body(11)).foregroundStyle(PrismTheme.muted)
-            Text("\(Money.dollars(fromAtomic:r.amountAtomic)) requested").font(
+            Text("\(Money.assetAmount(fromAtomic: r.amountAtomic, symbol: r.tokenSymbol)) requested").font(
               PrismTheme.body(15, weight: .semibold))
             if !r.memo.isEmpty {
               Text(r.memo).font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted)
@@ -95,7 +109,7 @@ struct HomeView: View {
               await reload()
             }
           }
-          PrismPrimaryButton(title: "Pay \(Money.dollars(fromAtomic:r.amountAtomic))") {
+          PrismPrimaryButton(title: "Pay \(Money.assetAmount(fromAtomic: r.amountAtomic, symbol: r.tokenSymbol))") {
             Task { await openRequest(r) }
           }
         }
@@ -112,7 +126,7 @@ struct HomeView: View {
             Image(systemName: "gift").foregroundStyle(PrismTheme.mintDeep))
           VStack(alignment: .leading, spacing: 3) {
             Text("You have money waiting").font(PrismTheme.body(14, weight: .semibold))
-            Text("\(Money.dollars(fromAtomic:c.amountAtomic)) ready to claim").font(
+            Text("\(Money.assetAmount(fromAtomic: c.amountAtomic, symbol: c.tokenSymbol)) ready to claim").font(
               PrismTheme.body(12)
             ).foregroundStyle(PrismTheme.muted)
           }
@@ -200,16 +214,28 @@ struct HomeView: View {
     return ((net >= 0 ? "+" : "−") + rendered + " this week", net >= 0)
   }
 
+  private var totalBalance: String {
+    var total = Decimal.zero
+    for balance in balances {
+      guard let raw = Decimal(string: balance.amountAtomic) else { continue }
+      var divisor = Decimal(1)
+      for _ in 0..<balance.decimals { divisor *= 10 }
+      total += raw / divisor
+    }
+    return NSDecimalNumber(decimal: total).doubleValue.formatted(
+      .currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))
+  }
+
 
   private func reload() async {
     loading = true
     defer { loading = false }
     do {
-      async let b = PrismAPI.shared.balance()
+      async let b = PrismAPI.shared.balances()
       async let a = PrismAPI.shared.activity()
       async let r = PrismAPI.shared.requests()
       async let c = PrismAPI.shared.eligibleClaims()
-      balance = try await b
+      balances = try await b
       activity = try await a
       requests = try await r
       claims = try await c
@@ -226,7 +252,12 @@ struct HomeView: View {
       let contact = ContactPerson(
         id: "request:\(r.requestId)", name: r.counterpartyNameFallback, phone: nil, initials: "PR",
         prismState: .onPrism(res))
-      model.presentSend = SendTarget(contact: contact, resolution: res, requestId: r.requestId)
+      model.presentSend = SendTarget(
+        contact: contact,
+        resolution: res,
+        requestId: r.requestId,
+        requestedAsset: Stablecoin.resolve(symbol: r.tokenSymbol, address: r.token)
+      )
     } catch { model.notify(error.localizedDescription) }
   }
 }
@@ -259,7 +290,7 @@ struct ActivityMiniRow: View {
       Spacer()
       VStack(alignment: .trailing, spacing: 3) {
         if let a = item.amountAtomic {
-          Text((item.direction == "incoming" ? "+" : "-") + Money.dollars(fromAtomic: a)).font(
+          Text((item.direction == "incoming" ? "+" : "-") + Money.assetAmount(fromAtomic: a, symbol: item.tokenSymbol)).font(
             PrismTheme.body(13, weight: .medium)
           ).foregroundStyle(item.direction == "incoming" ? PrismTheme.positive : PrismTheme.ink)
         }

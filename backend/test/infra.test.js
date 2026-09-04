@@ -34,7 +34,7 @@ function stack() {
   const keyService = new KeyService(store, config);
   const identityService = new IdentityService({ store, config });
   const resolverService = new ResolverService({ store, config, keyService, identityService });
-  const requestService = new RequestService({ store, identityService });
+  const requestService = new RequestService({ store, identityService, config });
   const claimService = new ClaimService({ store, config, identityService });
   const paymentService = new PaymentService({ store, config, identityService, claimService, resolverService, requestService });
   return { store, resolverService, paymentService };

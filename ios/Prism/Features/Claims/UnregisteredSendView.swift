@@ -7,6 +7,7 @@ struct UnregisteredSendView: View {
   @StateObject private var coordinator = PaymentCoordinator()
   @State private var amount = ""
   @State private var memo = ""
+  @State private var asset: Stablecoin = .ausd
   @State private var showAuth = false
   @State private var error: String?
 
@@ -27,6 +28,8 @@ struct UnregisteredSendView: View {
 
         Spacer().frame(height: 21)
         AmountText(dollars: displayAmount, size: 77)
+        StablecoinPicker(selection: $asset)
+          .padding(.top, 8)
 
         HStack(spacing: 9) {
           Image(systemName: "pencil").font(.system(size: 13)).foregroundStyle(PrismTheme.muted)
@@ -76,7 +79,7 @@ struct UnregisteredSendView: View {
       }
     }
     .sheet(isPresented: $showAuth) {
-      PaymentAuthorizationSheet(amount: displayAmount) { pin, face in
+      PaymentAuthorizationSheet(amount: "\(displayAmount) \(asset.rawValue)") { pin, face in
         Task { await fund(pin: pin, face: face) }
       }
     }
@@ -95,14 +98,14 @@ struct UnregisteredSendView: View {
 
   private func fund(pin: String?, face: Bool) async {
     guard let phone = contact.phone, let atomic else { return }
-    await coordinator.fundClaim(phone: phone, amountAtomic: atomic, memo: memo, pin: pin, useFaceID: face)
+    await coordinator.fundClaim(phone: phone, amountAtomic: atomic, asset: asset, memo: memo, pin: pin, useFaceID: face)
 
     switch coordinator.state {
     case .sent(let transactionHash):
       dismiss()
       model.presentReceipt = ReceiptPresentation(
         title: "Money waiting",
-        amount: displayAmount,
+        amount: "\(displayAmount) \(asset.rawValue)",
         subtitle: "Waiting for \(contact.name) to join and claim",
         transactionHash: transactionHash,
         status: "Waiting to be claimed"

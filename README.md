@@ -14,7 +14,7 @@ Core loop:
 phone / @handle / QR / payment link
         -> Prism Identity + protected alias resolver
         -> Mera passkey-derived account        (secp256k1 EOA from a passkey)
-        -> AUSD                                 (Agora Dollar, ERC-3009 gasless)
+        -> AUSD or USDC                         (ERC-3009 gasless)
         -> Prism payment router / claim vault   (relayer-submitted; recipient/amount bound in-signature)
         -> Monad                                (canonical settlement)
 ```
@@ -23,7 +23,7 @@ phone / @handle / QR / payment link
 - `ios/MeraBridge/` — the narrow `MeraAccountService` protocol and the WKWebView bridge that runs
   the **official** `@category-labs/mera` library. Prism never re-implements Mera's derivation or
   signing, and never rewrites the app in React Native.
-- `backend/` — protected alias resolver, OTP adapter, off-chain payment requests, AUSD ERC-3009
+- `backend/` — protected alias resolver, OTP adapter, off-chain requests, stablecoin ERC-3009
   authorization builder + verifier, MON-funded relayer, claim authorizer.
 - `contracts/` — `PrismPaymentRouter`, `PrismClaimVault`, `IERC3009`, a faithful `MockAUSD`, and
   Foundry tests.
@@ -40,9 +40,9 @@ under `archive/` and is not active alongside Mera. See `docs/PRD_ADDENDUM_v1.1.m
 1. Phone number is a private reachability alias — not a key, not an on-chain identifier.
 2. `@handle` is an optional public alias; QR / links resolve to a Prism identity, never a raw address.
 3. The **Mera passkey account** owns funds and is the spending authority.
-4. **AUSD** is the payment asset; **ERC-3009 gasless authorizations** are the direct-payment primitive.
-5. A user can hold AUSD > 0 and MON = 0 and still pay (relayer / Alchemy Gas Manager pays gas).
-6. The backend is never the canonical money ledger — Monad/AUSD state is canonical.
+4. **AUSD and USDC** are the payment assets; **ERC-3009 gasless authorizations** are the direct-payment primitive.
+5. A user can hold either supported asset and MON = 0 and still pay (relayer / Alchemy Gas Manager pays gas).
+6. The backend is never the canonical money ledger; Monad token state is canonical.
 7. No public phone→wallet registry and no `SHA(phone)`→wallet map.
 8. Pre-user claims use random claim IDs / references; no phone-derived value is emitted on-chain.
 9. Requests are off-chain until paid; the UI shows success only after an on-chain receipt reconciles.
@@ -55,6 +55,9 @@ under `archive/` and is not active alongside Mera. See `docs/PRD_ADDENDUM_v1.1.m
 - AUSD (verify against Agora docs; re-checked at runtime): testnet
   `0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC`, mainnet
   `0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a`. Domain `Agora Dollar` / `1`, 6 decimals.
+- USDC (verify against Circle docs; re-checked at runtime): testnet
+  `0x534b2f3A21130d7a60830c2Df862319e593943A3`, mainnet
+  `0x754704Bc059F8C67012fEd69BC8A327a5aafb603`. Domain `USDC` / `2`, 6 decimals.
 
 ## Quick start
 
@@ -68,7 +71,7 @@ cp .env.example .env
 forge test
 ```
 
-30 tests across unit, fuzz, privacy, and invariant suites. The vault invariant run (256 runs / 128k calls)
+36 tests across unit, fuzz, privacy, and invariant suites. The vault invariant run (256 runs / 128k calls)
 takes ~2 minutes — that is expected, not a hang.
 
 ### Backend
@@ -84,7 +87,7 @@ Twilio Verify, the relayer, the claim authorizer, and the Envio endpoint are act
 environment variables. Without them the server runs explicit dev adapters and never claims a real
 OTP or on-chain settlement occurred.
 
-Run tests: `node --test test/*.test.js` (39 tests).
+Run tests: `node --test test/*.test.js` (41 tests).
 
 ### iOS
 

@@ -30,6 +30,11 @@ struct RequestDetailView: View {
       AmountText(dollars: Money.dollars(fromAtomic: request.amountAtomic), size: 67)
         .padding(.top, 22)
 
+      Text(request.tokenSymbol ?? Stablecoin.resolve(symbol: nil, address: request.token).rawValue)
+        .font(PrismTheme.body(12, weight: .semibold))
+        .foregroundStyle(PrismTheme.mintDeep)
+        .padding(.top, 6)
+
       Text(request.memo.isEmpty ? "Payment request" : request.memo)
         .font(PrismTheme.body(14))
         .foregroundStyle(PrismTheme.muted)
@@ -79,7 +84,12 @@ struct RequestDetailView: View {
         prismState: .onPrism(resolution)
       )
       dismiss()
-      model.presentSend = SendTarget(contact: contact, resolution: resolution, requestId: request.requestId)
+      model.presentSend = SendTarget(
+        contact: contact,
+        resolution: resolution,
+        requestId: request.requestId,
+        requestedAsset: Stablecoin.resolve(symbol: request.tokenSymbol, address: request.token)
+      )
     } catch {
       self.error = error.localizedDescription
     }

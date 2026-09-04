@@ -5,10 +5,12 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {PrismPaymentRouter} from "../src/PrismPaymentRouter.sol";
 import {MockAUSD} from "../src/mocks/MockAUSD.sol";
+import {MockUSDC} from "../src/mocks/MockUSDC.sol";
 
 /// @notice Direct AUSD payment invariants on the Prism envelope + ERC-3009 gasless path.
 contract PrismPaymentRouterTest is Test {
     MockAUSD internal ausd;
+    MockUSDC internal usdc;
     PrismPaymentRouter internal router;
 
     uint256 internal payerPk = 0xA11CE;
@@ -21,7 +23,8 @@ contract PrismPaymentRouterTest is Test {
 
     function setUp() public {
         ausd = new MockAUSD();
-        router = new PrismPaymentRouter(address(ausd));
+        usdc = new MockUSDC();
+        router = new PrismPaymentRouter(address(ausd), address(usdc));
         payer = vm.addr(payerPk);
         ausd.mint(payer, 1_000e6);
     }
@@ -60,6 +63,17 @@ contract PrismPaymentRouterTest is Test {
         (v, r, s) = vm.sign(pk, digest);
     }
 
+    function _signUsdc(PrismPaymentRouter.PaymentEnvelope memory env, uint256 pk)
+        internal
+        view
+        returns (uint8 v, bytes32 r, bytes32 s)
+    {
+        bytes32 structHash =
+            keccak256(abi.encode(TRANSFER_TYPEHASH, env.payer, env.recipient, env.amount, uint256(0), env.validBefore, env.nonce));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), structHash));
+        (v, r, s) = vm.sign(pk, digest);
+    }
+
     function _settle(PrismPaymentRouter.PaymentEnvelope memory env) internal {
         bytes memory sig = _signEnvelope(env, payerPk);
         (uint8 v, bytes32 r, bytes32 s) = _signAusd(env, payerPk);
@@ -70,10 +84,23 @@ contract PrismPaymentRouterTest is Test {
     function testDirectPaymentSucceeds() public {
         PrismPaymentRouter.PaymentEnvelope memory env = _env(25e6, keccak256("req-1"), block.timestamp + 300, bytes32(uint256(1)));
         vm.expectEmit(true, true, true, true);
-        emit PrismPaymentRouter.PaymentSettled(env.paymentId, payer, recipient, 25e6, env.requestId, env.resolutionHash);
+        emit PrismPaymentRouter.PaymentSettled(env.paymentId, payer, recipient, address(ausd), 25e6, env.requestId, env.resolutionHash);
         _settle(env);
         assertEq(ausd.balanceOf(recipient), 25e6);
         assertEq(ausd.balanceOf(payer), 975e6);
+    }
+
+
+    function testUsdcPaymentSucceeds() public {
+        usdc.mint(payer, 100e6);
+        PrismPaymentRouter.PaymentEnvelope memory env = _env(20e6, keccak256("req-usdc"), block.timestamp + 300, bytes32(uint256(12)));
+        env.token = address(usdc);
+        bytes memory sig = _signEnvelope(env, payerPk);
+        (uint8 v, bytes32 r, bytes32 s) = _signUsdc(env, payerPk);
+        vm.prank(relayer);
+        router.settle(env, sig, v, r, s);
+        assertEq(usdc.balanceOf(recipient), 20e6);
+        assertEq(ausd.balanceOf(recipient), 0);
     }
 
     function testPayerOwnsZeroMon() public {
@@ -106,6 +133,16 @@ contract PrismPaymentRouterTest is Test {
         bytes memory sig = _signEnvelope(env, payerPk);
         (uint8 v, bytes32 r, bytes32 s) = _signAusd(env, payerPk);
         env.recipient = address(0xBAD);
+        vm.prank(relayer);
+        vm.expectRevert(PrismPaymentRouter.BadEnvelopeSignature.selector);
+        router.settle(env, sig, v, r, s);
+    }
+
+    function testModifiedTokenRejected() public {
+        PrismPaymentRouter.PaymentEnvelope memory env = _env(25e6, keccak256("req"), block.timestamp + 300, bytes32(uint256(13)));
+        bytes memory sig = _signEnvelope(env, payerPk);
+        (uint8 v, bytes32 r, bytes32 s) = _signAusd(env, payerPk);
+        env.token = address(usdc);
         vm.prank(relayer);
         vm.expectRevert(PrismPaymentRouter.BadEnvelopeSignature.selector);
         router.settle(env, sig, v, r, s);
@@ -155,7 +192,7 @@ contract PrismPaymentRouterTest is Test {
         router.settle(env2, sig, v, r, s);
     }
 
-    function testNonAUSDTokenRejected() public {
+    function testUnsupportedTokenRejected() public {
         PrismPaymentRouter.PaymentEnvelope memory env = _env(25e6, keccak256("req"), block.timestamp + 300, bytes32(uint256(10)));
         env.token = address(0xDEAD);
         bytes memory sig = _signEnvelope(env, payerPk); // signs the (wrong-token) envelope honestly
@@ -175,7 +212,9 @@ contract PrismPaymentRouterTest is Test {
         bool found;
         for (uint256 i; i < logs.length; i++) {
             if (logs[i].topics[0] == PrismPaymentRouter.PaymentSettled.selector) {
-                (,, bytes32 resolutionHash) = abi.decode(logs[i].data, (uint256, bytes32, bytes32));
+                (, uint256 emittedAmount,, bytes32 resolutionHash) =
+                    abi.decode(logs[i].data, (address, uint256, bytes32, bytes32));
+                assertEq(emittedAmount, env.amount);
                 assertEq(resolutionHash, env.resolutionHash);
                 found = true;
             }

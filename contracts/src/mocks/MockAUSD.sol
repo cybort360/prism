@@ -9,10 +9,10 @@ pragma solidity ^0.8.28;
 ///      Real AUSD: Monad mainnet 0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a (chainId 143),
 ///      Monad testnet 0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC (chainId 10143).
 contract MockAUSD {
-    string public constant name = "Agora Dollar";
-    string public constant symbol = "AUSD";
+    string public name = "Agora Dollar";
+    string public symbol = "AUSD";
     uint8 public constant decimals = 6;
-    string public constant version = "1";
+    string public version = "1";
 
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;

@@ -29,7 +29,7 @@ export const envioGraphqlIndexer = {
 
   async getPayment(paymentId) {
     const data = await query(
-      `query($id: String!) { Payment(where: {id: {_eq: $id}}) { id payer recipient amount requestId resolutionHash txHash blockNumber timestamp } }`,
+      `query($id: String!) { Payment(where: {id: {_eq: $id}}) { id payer recipient token amount requestId resolutionHash txHash blockNumber timestamp } }`,
       { id: paymentId }
     );
     return data?.Payment?.[0] ?? null;
@@ -42,7 +42,7 @@ export const envioGraphqlIndexer = {
 
   async getAccountActivity(account, limit = 50) {
     const data = await query(
-      `query($acct: String!, $limit: Int!) { AccountActivity(where: {account: {_ilike: $acct}}, order_by: {timestamp: desc}, limit: $limit) { id account counterparty direction kind amount ref txHash timestamp } }`,
+      `query($acct: String!, $limit: Int!) { AccountActivity(where: {account: {_ilike: $acct}}, order_by: {timestamp: desc}, limit: $limit) { id account counterparty direction kind token amount ref txHash timestamp } }`,
       { acct: account, limit }
     );
     return data?.AccountActivity ?? [];
@@ -50,7 +50,7 @@ export const envioGraphqlIndexer = {
 
   async getClaims(account) {
     const data = await query(
-      `query($acct: String!) { Claim(where: {_or: [{sender: {_ilike: $acct}}, {recipient: {_ilike: $acct}}]}, order_by: {fundedAt: desc}) { id status sender recipient amount expiry recipientReference fundedTx resolvedTx fundedAt resolvedAt } }`,
+      `query($acct: String!) { Claim(where: {_or: [{sender: {_ilike: $acct}}, {recipient: {_ilike: $acct}}]}, order_by: {fundedAt: desc}) { id status sender recipient token amount expiry recipientReference fundedTx resolvedTx fundedAt resolvedAt } }`,
       { acct: account }
     );
     return data?.Claim ?? [];
@@ -58,7 +58,7 @@ export const envioGraphqlIndexer = {
 
   async getRequestSettlement(requestId) {
     const data = await query(
-      `query($id: String!) { RequestSettlement(where: {id: {_eq: $id}}) { id paymentId payer recipient amount txHash timestamp } }`,
+      `query($id: String!) { RequestSettlement(where: {id: {_eq: $id}}) { id paymentId payer recipient token amount txHash timestamp } }`,
       { id: requestId }
     );
     return data?.RequestSettlement?.[0] ?? null;

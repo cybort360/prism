@@ -10,17 +10,16 @@ indexes nothing, so it was checked by hash rather than by eye:
 
 | Event | topic0 | In compiled ABI |
 |---|---|---|
-| `PaymentSettled(bytes32,address,address,uint256,bytes32,bytes32)` | `0xf916f88fd8baedabb3b5c456adb67845f6d09066a795a1c45ab1514b8e69e5ce` | yes (`PrismPaymentRouter`) |
-| `ClaimFunded(bytes32,address,uint256,uint256,bytes32)` | `0x32a5498fc7bbd5ecf5b79230918410d94e8cf9ecadcf67623dcaef7850d33762` | yes (`PrismClaimVault`) |
-| `ClaimCollected(bytes32,address,uint256)` | `0xa68c0592a52a5828ac22d322c52e76b82fbaefad1366f75b2c86ea8d0eab3408` | yes |
-| `ClaimRefunded(bytes32,address,uint256)` | `0x3ca63ba5011c703242c9100cc39d2231bc63c211b6b77985fce6ce8b66fbb46a` | yes |
-| `Transfer(address,address,uint256)` | `0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef` | AUSD (standard ERC-20) |
+| `PaymentSettled(bytes32,address,address,address,uint256,bytes32,bytes32)` | `0x81376b183f750cb90f88b90eb5a43709fe4320c357d56a3591d5742fc3577788` | yes (`PrismPaymentRouter`) |
+| `ClaimFunded(bytes32,address,address,uint256,uint256,bytes32)` | `0x79ad4866387321b9e18c7a310e8a09bd2f24fb305007cad774670a6a9919b1cb` | yes (`PrismClaimVault`) |
+| `ClaimCollected(bytes32,address,address,uint256)` | `0x49bf623525297e546347a6781eb7ca10fb87963825aab67c0d3298f00c62a495` | yes |
+| `ClaimRefunded(bytes32,address,address,uint256)` | `0xd93caf7c894b685e08da5d8b1ca607e35ccebdccc9d19ce31e7840611eaa9d56` | yes |
+| `Transfer(address,address,uint256)` | `0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef` | AUSD and USDC |
 
 Indexed argument positions in `config.yaml` match the `indexed` keywords in the Solidity sources.
 
-**Network config is correct**: `id: 10143`, `start_block: 0`, AUSD pinned to
-`0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC` — the address independently verified live in
-`AGORA_AUSD_PROOF.md`.
+**Network config is correct**: `id: 10143`, `start_block: 0`, with AUSD and USDC testnet addresses
+pinned in `config.yaml`.
 
 **Envio is a consumer, never a source of financial truth.** `PaymentService.reconcile` decides
 `completed` / `failed` **only** from an on-chain receipt; `_checkIndexing` then annotates whether

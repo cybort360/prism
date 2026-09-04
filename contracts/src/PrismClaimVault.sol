@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {IAUSD} from "./interfaces/IAUSD.sol";
+import {IERC3009} from "./interfaces/IERC3009.sol";
 import {SafeTransferLib} from "./libraries/SafeTransferLib.sol";
 import {PrismEIP712} from "./libraries/PrismEIP712.sol";
 
 /// @title PrismClaimVault
-/// @notice Escrow for AUSD sent to someone who has not joined Prism yet ("send before signup").
-/// @dev Funded gaslessly via AUSD ERC-3009 `receiveWithAuthorization` (sender needs zero MON).
+/// @notice Escrow for AUSD or USDC sent to someone who has not joined Prism yet.
+/// @dev Funded gaslessly via ERC-3009 `receiveWithAuthorization` (sender needs zero MON).
 ///      Collection requires BOTH an isolated backend "claim authorizer" EIP-712 signature (bind
 ///      claimId/recipient/aliasVersion/expiry/nonce) AND the recipient's own Mera-account EIP-712
 ///      `ClaimIntent`. A relayer submits and pays gas. After expiry, funds always return to the
@@ -22,12 +22,14 @@ contract PrismClaimVault {
         bytes32 claimId;
         bytes32 recipientReference;
         address sender;
+        address token;
         uint256 amount;
         uint256 expiry;
         ClaimStatus status;
     }
 
-    IAUSD public immutable ausd;
+    IERC3009 public immutable ausd;
+    IERC3009 public immutable usdc;
     bytes32 public immutable domainSeparator;
 
     /// @notice secp256k1 address of the isolated eligibility signer. Production: KMS/HSM. Never a
@@ -43,14 +45,15 @@ contract PrismClaimVault {
     mapping(bytes32 => Claim) public claims;
     mapping(bytes32 => bool) public eligibilityNonceUsed;
 
-    event ClaimFunded(bytes32 indexed claimId, address indexed sender, uint256 amount, uint256 expiry, bytes32 recipientReference);
-    event ClaimCollected(bytes32 indexed claimId, address indexed recipient, uint256 amount);
-    event ClaimRefunded(bytes32 indexed claimId, address indexed sender, uint256 amount);
+    event ClaimFunded(bytes32 indexed claimId, address indexed sender, address token, uint256 amount, uint256 expiry, bytes32 recipientReference);
+    event ClaimCollected(bytes32 indexed claimId, address indexed recipient, address token, uint256 amount);
+    event ClaimRefunded(bytes32 indexed claimId, address indexed sender, address token, uint256 amount);
     event ClaimAuthorizerUpdated(address indexed previous, address indexed current);
     event OwnershipTransferStarted(address indexed owner, address indexed pendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     error ZeroAddress();
+    error WrongToken();
     error InvalidClaim();
     error ClaimExists();
     error NotFunded();
@@ -64,10 +67,14 @@ contract PrismClaimVault {
     error NotOwner();
     error NotPendingOwner();
 
-    constructor(address owner_, address ausd_, address claimAuthorizer_) {
-        if (owner_ == address(0) || ausd_ == address(0) || claimAuthorizer_ == address(0)) revert ZeroAddress();
+    constructor(address owner_, address ausd_, address usdc_, address claimAuthorizer_) {
+        if (
+            owner_ == address(0) || ausd_ == address(0) || usdc_ == address(0) || ausd_ == usdc_
+                || claimAuthorizer_ == address(0)
+        ) revert ZeroAddress();
         owner = owner_;
-        ausd = IAUSD(ausd_);
+        ausd = IERC3009(ausd_);
+        usdc = IERC3009(usdc_);
         claimAuthorizer = claimAuthorizer_;
         domainSeparator = PrismEIP712.domainSeparator("PrismClaimVault", "1", address(this));
         emit OwnershipTransferred(address(0), owner_);
@@ -78,13 +85,13 @@ contract PrismClaimVault {
         _;
     }
 
-    /// @notice Fund a claim by pulling AUSD from `sender` via an ERC-3009 `receiveWithAuthorization`.
-    /// @dev The ERC-3009 `nonce` MUST equal `fundingNonce(claimId, recipientReference, amount, sender)`,
-    ///      so the sender's AUSD signature commits to exactly this claim and a relayer cannot repoint it.
+    /// @notice Fund a claim by pulling a supported token via ERC-3009.
+    /// @dev The nonce binds the token, claim, amount, and sender so a relayer cannot repoint it.
     function fundClaim(
         bytes32 claimId,
         bytes32 recipientReference,
         address sender,
+        address token,
         uint256 amount,
         uint256 expiry,
         uint256 validAfter,
@@ -97,14 +104,16 @@ contract PrismClaimVault {
         if (claimId == bytes32(0) || recipientReference == bytes32(0) || sender == address(0) || amount == 0) {
             revert InvalidClaim();
         }
+        if (!isSupportedToken(token)) revert WrongToken();
         if (expiry <= block.timestamp) revert InvalidClaim();
         if (claims[claimId].status != ClaimStatus.None) revert ClaimExists();
-        if (nonce != fundingNonce(claimId, recipientReference, amount, sender)) revert NonceBindingMismatch();
+        if (nonce != fundingNonce(claimId, recipientReference, token, amount, sender)) revert NonceBindingMismatch();
 
         claims[claimId] = Claim({
             claimId: claimId,
             recipientReference: recipientReference,
             sender: sender,
+            token: token,
             amount: amount,
             expiry: expiry,
             status: ClaimStatus.Funded
@@ -112,8 +121,10 @@ contract PrismClaimVault {
 
         // receiveWithAuthorization requires `to == msg.sender`, so only this vault can pull the funds,
         // atomically with recording the claim. No orphaned deposits.
-        ausd.receiveWithAuthorization(sender, address(this), amount, validAfter, validBefore, nonce, v, r, s);
-        emit ClaimFunded(claimId, sender, amount, expiry, recipientReference);
+        IERC3009(token).receiveWithAuthorization(
+            sender, address(this), amount, validAfter, validBefore, nonce, v, r, s
+        );
+        emit ClaimFunded(claimId, sender, token, amount, expiry, recipientReference);
     }
 
     /// @notice Collect a funded claim. Requires BOTH the backend eligibility authorization and the
@@ -148,8 +159,8 @@ contract PrismClaimVault {
 
         eligibilityNonceUsed[eligibilityNonce] = true;
         c.status = ClaimStatus.Claimed;
-        address(ausd).safeTransfer(recipient, c.amount);
-        emit ClaimCollected(claimId, recipient, c.amount);
+        c.token.safeTransfer(recipient, c.amount);
+        emit ClaimCollected(claimId, recipient, c.token, c.amount);
     }
 
     /// @notice After expiry, return a funded claim to its original sender. Permissionless — funds can
@@ -160,16 +171,20 @@ contract PrismClaimVault {
         if (block.timestamp <= c.expiry) revert NotYetExpired();
 
         c.status = ClaimStatus.Refunded;
-        address(ausd).safeTransfer(c.sender, c.amount);
-        emit ClaimRefunded(claimId, c.sender, c.amount);
+        c.token.safeTransfer(c.sender, c.amount);
+        emit ClaimRefunded(claimId, c.sender, c.token, c.amount);
     }
 
-    function fundingNonce(bytes32 claimId, bytes32 recipientReference, uint256 amount, address sender)
+    function fundingNonce(bytes32 claimId, bytes32 recipientReference, address token, uint256 amount, address sender)
         public
         pure
         returns (bytes32)
     {
-        return keccak256(abi.encode(claimId, recipientReference, amount, sender));
+        return keccak256(abi.encode(claimId, recipientReference, token, amount, sender));
+    }
+
+    function isSupportedToken(address token) public view returns (bool) {
+        return token == address(ausd) || token == address(usdc);
     }
 
     function eligibilityDigest(

@@ -7,20 +7,20 @@ export class ActivityService {
       if (i.kind==='payment' && (i.senderPrismId===prismId || i.recipientPrismId===prismId)) {
         const incoming=i.recipientPrismId===prismId;
         const other=this.identityService.get(incoming?i.senderPrismId:i.recipientPrismId);
-        items.push({id:op.operationId,kind:incoming?'received':'sent',direction:incoming?'incoming':'outgoing',counterpartyPrismId:other?.prismId??null,counterpartyHandle:other?.handle?`@${other.handle}`:null,amountAtomic:i.amountAtomic,memo:i.memo??'',status:consumerState(op.state),createdAt:op.createdAt,transactionHash:op.transactionHash??op.receipt?.receipt?.transactionHash??null,requestId:i.requestId??null,claimId:null});
+        items.push({id:op.operationId,kind:incoming?'received':'sent',direction:incoming?'incoming':'outgoing',counterpartyPrismId:other?.prismId??null,counterpartyHandle:other?.handle?`@${other.handle}`:null,amountAtomic:i.amountAtomic,token:i.token??null,tokenSymbol:i.tokenSymbol??null,memo:i.memo??'',status:consumerState(op.state),createdAt:op.createdAt,transactionHash:op.transactionHash??op.receipt?.receipt?.transactionHash??null,requestId:i.requestId??null,claimId:null});
       }
       if ((i.kind==='claim-funding'||i.kind==='claim-refund') && i.senderPrismId===prismId) {
         const claim=data.claims[i.claimId];
-        items.push({id:op.operationId,kind:i.kind,direction:'outgoing',counterpartyPrismId:null,counterpartyHandle:null,claimId:i.claimId,amountAtomic:i.amountAtomic??claim?.amountAtomic??null,memo:i.kind==='claim-refund'?'Claim refund':'Waiting to be claimed',status:consumerState(op.state),createdAt:op.createdAt,transactionHash:op.transactionHash??null,requestId:null});
+        items.push({id:op.operationId,kind:i.kind,direction:'outgoing',counterpartyPrismId:null,counterpartyHandle:null,claimId:i.claimId,amountAtomic:i.amountAtomic??claim?.amountAtomic??null,token:i.token??claim?.token??null,tokenSymbol:i.tokenSymbol??claim?.tokenSymbol??null,memo:i.kind==='claim-refund'?'Claim refund':'Waiting to be claimed',status:consumerState(op.state),createdAt:op.createdAt,transactionHash:op.transactionHash??null,requestId:null});
       }
-      if (i.kind==='claim-collection' && i.senderPrismId===prismId) {
+      if (i.kind==='claim-collection' && i.recipientPrismId===prismId) {
         const claim=data.claims[i.claimId]; const sender=this.identityService.get(claim?.senderPrismId);
-        items.push({id:op.operationId,kind:'claim-received',direction:'incoming',counterpartyPrismId:sender?.prismId??null,counterpartyHandle:sender?.handle?`@${sender.handle}`:null,claimId:i.claimId,amountAtomic:claim?.amountAtomic??null,memo:'Claimed payment',status:consumerState(op.state),createdAt:op.createdAt,transactionHash:op.transactionHash??null,requestId:null});
+        items.push({id:op.operationId,kind:'claim-received',direction:'incoming',counterpartyPrismId:sender?.prismId??null,counterpartyHandle:sender?.handle?`@${sender.handle}`:null,claimId:i.claimId,amountAtomic:claim?.amountAtomic??null,token:claim?.token??null,tokenSymbol:claim?.tokenSymbol??null,memo:'Claimed payment',status:consumerState(op.state),createdAt:op.createdAt,transactionHash:op.transactionHash??null,requestId:null});
       }
     }
     for(const r of Object.values(data.requests)) if(r.status!=='DRAFT'&&(r.requesterPrismId===prismId||r.payerPrismId===prismId)) {
       const outgoing=r.requesterPrismId===prismId; const other=this.identityService.get(outgoing?r.payerPrismId:r.requesterPrismId);
-      items.push({id:r.requestId,kind:'request',direction:outgoing?'outgoing':'incoming',counterpartyPrismId:other?.prismId??null,counterpartyHandle:other?.handle?`@${other.handle}`:null,amountAtomic:r.amountAtomic,memo:r.memo,status:r.status,createdAt:r.createdAt,transactionHash:r.transactionHash??null,requestId:r.requestId,claimId:null,requesterPrismId:r.requesterPrismId,payerPrismId:r.payerPrismId});
+      items.push({id:r.requestId,kind:'request',direction:outgoing?'outgoing':'incoming',counterpartyPrismId:other?.prismId??null,counterpartyHandle:other?.handle?`@${other.handle}`:null,amountAtomic:r.amountAtomic,token:r.token,tokenSymbol:r.tokenSymbol??null,memo:r.memo,status:r.status,createdAt:r.createdAt,transactionHash:r.transactionHash??null,requestId:r.requestId,claimId:null,requesterPrismId:r.requesterPrismId,payerPrismId:r.payerPrismId});
     }
     return items.sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt));
   }

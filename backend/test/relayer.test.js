@@ -54,6 +54,22 @@ test('AUSD transfer authorization co-binds recipient and amount', async () => {
   assert.equal(await verifyTypedData(transferAuthorizationTypedData({ ...params, value: params.value + 1n }), payer.address, sig), false);
 });
 
+test('USDC transfer authorization uses the Circle Monad domain', async () => {
+  const payer = meraAccount(PK_A);
+  const params = {
+    token: 'USDC', from: payer.address, to: meraAccount(PK_B).address,
+    value: 12_000000n, validAfter: 0, validBefore: Math.floor(Date.now() / 1000) + 300,
+    nonce: `0x${'44'.repeat(32)}`
+  };
+  const typed = transferAuthorizationTypedData(params);
+  assert.equal(typed.domain.name, 'USDC');
+  assert.equal(typed.domain.version, '2');
+  assert.equal(typed.domain.verifyingContract.toLowerCase(), '0x534b2f3a21130d7a60830c2df862319e593943a3');
+  const signature = await payer.signTypedData(typed);
+  assert.equal(await verifyTypedData(typed, payer.address, signature), true);
+  assert.equal(await verifyTypedData(transferAuthorizationTypedData({ ...params, token: 'AUSD' }), payer.address, signature), false);
+});
+
 test('resolutionHash is derived only from opaque resolver data', () => {
   // Same opaque inputs -> same hash; different identity -> different hash. Never involves a phone.
   const a = resolutionHash({ prismIdentity: 'id-1', recipientAccount: meraAccount(PK_B).address, aliasVersion: 2, resolutionRequestId: 'res_x' });

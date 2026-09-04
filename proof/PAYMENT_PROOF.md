@@ -1,6 +1,6 @@
 # PAYMENT PROOF
 
-**Status: BLOCKED on testnet. No AUSD has moved on Monad by this codebase.**
+**Status: BLOCKED on testnet. No supported stablecoin has moved on Monad by this codebase.**
 
 There is no tx hash, no block, and no deployed router. The end-to-end "magical moment" — iPhone A →
 Contacts → Tobi → $20 → Face ID → Mera sign → router → AUSD → Monad — **has not been executed**.
@@ -22,7 +22,7 @@ byte-identical to the live token (`AGORA_AUSD_PROOF.md`), so a signature valid h
 | Payer AUSD after | `975_000000` |
 | Recipient AUSD before | `0` |
 | Recipient AUSD after | `25_000000` |
-| Event | `PaymentSettled(paymentId, payer, recipient, 25e6, requestId, resolutionHash)` — asserted with `vm.expectEmit(true,true,true,true)` |
+| Event | `PaymentSettled(paymentId, payer, recipient, token, 25e6, requestId, resolutionHash)` asserted with `vm.expectEmit(true,true,true,true)` |
 | Submitted by | `relayer` (`vm.prank`), not the payer |
 
 The payer's two signatures are cross-bound: the AUSD authorization the router submits takes its
@@ -30,8 +30,11 @@ The payer's two signatures are cross-bound: the AUSD authorization the router su
 reference invalidates the envelope signature *and* AUSD's own `ecrecover`. Mutation coverage:
 `testModifiedAmountRejected`, `testModifiedRecipientRejected`, `testModifiedRequestIdRejected`,
 `testWrongSignerRejected`, `testReplayRejected`, `testPaymentIdReuseRejected`,
-`testExpiredPaymentRejected`, `testNonAUSDTokenRejected`, plus 10,000 fuzz runs of
+`testExpiredPaymentRejected`, `testUnsupportedTokenRejected`, plus fuzz runs of
 `testFuzz_directPayment` and `testFuzz_wrongSignerAlwaysRejected`.
+
+`testUsdcPaymentSucceeds` and `testUsdcClaimSucceeds` prove the USDC payment and pre-user claim paths
+with USDC's `USDC` / `2` EIP-712 domain.
 
 Backend orchestration is proven in `backend/test/infra.test.js` and `mutation-audit.test.js`:
 prepare → dual signature verification → simulate → relay → receipt reconcile → Envio index check,
