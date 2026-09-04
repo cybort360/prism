@@ -79,7 +79,7 @@ struct SendMoneyView: View {
     amount.isEmpty
       ? "$0.00"
       : (Decimal(string: amount) ?? 0).formatted(
-        .currency(code: "USD").precision(.fractionLength(2)))
+        .currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))
   }
   private func decimalText(_ atomic: String) -> String {
     let n = Decimal(string: atomic) ?? 0

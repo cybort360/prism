@@ -57,8 +57,17 @@ final class ContactService: @unchecked Sendable {
       let value = "+\(digits)"
       return value.count >= 9 && value.count <= 16 ? value : nil
     }
+    // Nigerian local form with the trunk 0 (e.g. 0803 123 4567). Kept for pasted/contact numbers.
     if digits.count == 11, digits.first == "0" {
       return "+234\(digits.dropFirst())"
+    }
+    // A number stored as 234… without the + (common in device contacts).
+    if digits.count == 13, digits.hasPrefix("234") {
+      return "+\(digits)"
+    }
+    // Local mobile without the trunk 0 — what the +234 prefix in the UI implies (e.g. 803 123 4567).
+    if digits.count == 10, let first = digits.first, "789".contains(first) {
+      return "+234\(digits)"
     }
     return nil
   }

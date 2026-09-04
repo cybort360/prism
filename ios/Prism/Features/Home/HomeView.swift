@@ -196,7 +196,7 @@ struct HomeView: View {
     guard found else { return nil }
     let magnitude = net < 0 ? -net : net
     let rendered = NSDecimalNumber(decimal: magnitude).doubleValue.formatted(
-      .currency(code: "USD").precision(.fractionLength(2)))
+      .currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))
     return ((net >= 0 ? "+" : "−") + rendered + " this week", net >= 0)
   }
 

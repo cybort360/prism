@@ -504,7 +504,7 @@ struct ReachabilityEditorView: View {
   }
   private var handleEditor: some View {
     VStack(alignment: .leading, spacing: 14) {
-      TextField("@octane", text: $handle).textInputAutocapitalization(.never)
+      TextField("@keoneHD", text: $handle).textInputAutocapitalization(.never)
         .autocorrectionDisabled().padding(14).background(PrismTheme.surface).clipShape(
           RoundedRectangle(cornerRadius: 14))
       PrismPrimaryButton(

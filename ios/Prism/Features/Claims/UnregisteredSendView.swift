@@ -90,7 +90,7 @@ struct UnregisteredSendView: View {
   private var displayAmount: String {
     amount.isEmpty
       ? "$0.00"
-      : (Decimal(string: amount) ?? 0).formatted(.currency(code: "USD").precision(.fractionLength(2)))
+      : (Decimal(string: amount) ?? 0).formatted(.currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))
   }
 
   private func fund(pin: String?, face: Bool) async {

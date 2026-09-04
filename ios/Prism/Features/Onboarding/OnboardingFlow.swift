@@ -610,7 +610,7 @@ private struct HandleStep: View {
       VStack(alignment: .leading, spacing: 0) {
         HStack(spacing: 7) {
           Text("@").font(PrismTheme.display(28)).foregroundStyle(PrismTheme.mintDeep)
-          TextField("octane", text: $handle)
+          TextField("keoneHD", text: $handle)
             .font(PrismTheme.display(28))
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
