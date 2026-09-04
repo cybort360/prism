@@ -156,16 +156,17 @@ final class WKWebViewMeraBridge: NSObject, MeraAccountService {
 }
 
 extension WKWebViewMeraBridge: WKScriptMessageHandler {
-  nonisolated func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+  // WebKit delivers script messages on the main actor and `WKScriptMessage.body` is main-actor
+  // isolated, so this cannot be `nonisolated` — the class's own @MainActor isolation is correct
+  // here, and it lets the continuation resume directly instead of hopping through a Task.
+  func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
     guard let body = message.body as? [String: Any], let id = body["id"] as? String else { return }
     let ok = body["ok"] as? Bool ?? false
     let errorText = body["error"] as? String
-    // Re-serialize the result into Sendable JSON Data so nothing non-Sendable crosses the actor hop.
+    // Re-serialize the result into JSON Data so nothing non-Sendable is retained past this call.
     let resultData: Data? = body["result"].flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.fragmentsAllowed]) }
-    Task { @MainActor in
-      if ok { self.resume(id, .success(resultData)) }
-      else { self.resume(id, .failure(MeraBridgeError.bridge(errorText ?? "Mera error"))) }
-    }
+    if ok { resume(id, .success(resultData)) }
+    else { resume(id, .failure(MeraBridgeError.bridge(errorText ?? "Mera error"))) }
   }
 }
 

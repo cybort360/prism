@@ -143,7 +143,11 @@ final class ScannerController: UIViewController, AVCaptureMetadataOutputObjectsD
     preview.videoGravity = .resizeAspectFill
     preview.frame = view.bounds
     view.layer.addSublayer(preview)
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in self?.session.startRunning() }
+    // startRunning() blocks, so it must not run on the main actor. AVCaptureSession is not Sendable
+    // and `session` is main-actor isolated, so hand the background queue an explicitly unsafe local
+    // rather than reaching back through `self`. AVFoundation documents this call as safe off-main.
+    nonisolated(unsafe) let capture = session
+    DispatchQueue.global(qos: .userInitiated).async { capture.startRunning() }
   }
 
   override func viewDidLayoutSubviews() {
