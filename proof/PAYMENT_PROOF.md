@@ -1,0 +1,49 @@
+# PAYMENT PROOF
+
+**Status: BLOCKED on testnet. No AUSD has moved on Monad by this codebase.**
+
+There is no tx hash, no block, and no deployed router. The end-to-end "magical moment" — iPhone A →
+Contacts → Tobi → $20 → Face ID → Mera sign → router → AUSD → Monad — **has not been executed**.
+Blockers and the unblock sequence: `TESTNET_DEPLOYMENT.md`.
+
+## What is proven locally
+
+The payment mechanism is proven against a signature-faithful AUSD whose EIP-712 domain is
+byte-identical to the live token (`AGORA_AUSD_PROOF.md`), so a signature valid here is valid there.
+
+`contracts/test/PrismPaymentRouter.t.sol::testDirectPaymentSucceeds`:
+
+| | Value |
+|---|---|
+| Contract | `PrismPaymentRouter` (local EVM, Foundry) |
+| Token | `MockAUSD`, domain `Agora Dollar`/`1`, 6 decimals — matches live AUSD's `DOMAIN_SEPARATOR` |
+| Amount | `25_000000` (25 AUSD) |
+| Payer AUSD before | `1_000_000000` |
+| Payer AUSD after | `975_000000` |
+| Recipient AUSD before | `0` |
+| Recipient AUSD after | `25_000000` |
+| Event | `PaymentSettled(paymentId, payer, recipient, 25e6, requestId, resolutionHash)` — asserted with `vm.expectEmit(true,true,true,true)` |
+| Submitted by | `relayer` (`vm.prank`), not the payer |
+
+The payer's two signatures are cross-bound: the AUSD authorization the router submits takes its
+`to`, `value`, and `nonce` from the envelope, so a relayer that rewrites recipient, amount, or
+reference invalidates the envelope signature *and* AUSD's own `ecrecover`. Mutation coverage:
+`testModifiedAmountRejected`, `testModifiedRecipientRejected`, `testModifiedRequestIdRejected`,
+`testWrongSignerRejected`, `testReplayRejected`, `testPaymentIdReuseRejected`,
+`testExpiredPaymentRejected`, `testNonAUSDTokenRejected`, plus 10,000 fuzz runs of
+`testFuzz_directPayment` and `testFuzz_wrongSignerAlwaysRejected`.
+
+Backend orchestration is proven in `backend/test/infra.test.js` and `mutation-audit.test.js`:
+prepare → dual signature verification → simulate → relay → receipt reconcile → Envio index check,
+with the Alchemy provider and Envio consumer both asserted to have been exercised.
+
+## What cannot be claimed
+
+- No timing numbers. `authorization → submission`, `submission → confirmation`, and total payment
+  time are instrumented (`signing_wait_ms`, `relay_submit_ms`, `chain_confirmation_ms`,
+  `end_to_end_payment_ms`, `envio_index_ms` in `backend/src/lib/metrics.js`, readable at
+  `GET /v1/metrics`) but have **never been measured against Monad**. Any latency figure would be
+  fabricated.
+- No independent readback. There is no receipt to re-read from Alchemy and no `PaymentSettled` for
+  Envio to index.
+- The Face ID / passkey / Contacts leg has never run on hardware — see `MERA_PROOF.md`.

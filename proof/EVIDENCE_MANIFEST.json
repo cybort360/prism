@@ -1,0 +1,139 @@
+{
+  "audit": "FORGE hostile audit",
+  "generatedAt": "2026-09-03T23:51:03Z",
+  "posture": "Every claim is treated as false until an executed check or a live chain read supports it.",
+  "environment": {
+    "platform": "Linux 5.15 (WSL2)",
+    "node": "v22.13.0",
+    "forge": "1.8.1",
+    "macos_xcode_simulator_device": "ABSENT",
+    "network": "reachable; Monad testnet RPC live"
+  },
+  "suites": {
+    "contracts": { "command": "forge test", "tests": 30, "passed": 30, "failed": 0, "runtimeSeconds": 191 },
+    "contracts_fuzz_deep": { "command": "forge test --match-path test/PrismFuzz.t.sol --fuzz-runs 10000", "properties": 3, "runsEach": 10000, "passed": 3, "failed": 0 },
+    "contracts_invariant": { "suite": "PrismVaultInvariant", "runs": 256, "calls": 128000, "invariants": 3, "failed": 0 },
+    "backend": { "command": "node --test test/*.test.js", "tests": 39, "passed": 39, "failed": 0 },
+    "ios_unit": { "status": "NOT_RUN", "reason": "no macOS/Xcode in this environment" },
+    "ios_ui": { "status": "NOT_RUN", "reason": "no simulator in this environment" },
+    "swiftlint_swiftformat": { "status": "NOT_RUN", "reason": "tools absent; no configuration exists in the repo" },
+    "backend_typecheck_lint": { "status": "DOES_NOT_EXIST", "reason": "plain ESM JavaScript; package.json defines no typecheck or lint script, and the `lint` target in the Makefile is declared .PHONY with no rule" }
+  },
+  "proven": [
+    {
+      "claim": "Agora AUSD on Monad testnet uses EIP-712 domain name 'Agora Dollar' version '1'",
+      "status": "PROVEN",
+      "contract": "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC",
+      "chainId": 10143,
+      "block": 59477252,
+      "onchainValue": "DOMAIN_SEPARATOR() = 0x7ff7d6b4bdc3e260c85cf89f8779b1ac80120e3c277f7db4900739a507f03ea1",
+      "independentReadback": "locally recomputed over 4 candidate domains; only 'Agora Dollar'/'1' matches",
+      "note": "the token's ERC-20 name() returns 'AUSD', which disagrees with its EIP-712 domain name; the codebase uses the correct one",
+      "evidence": "proof/AGORA_AUSD_PROOF.md"
+    },
+    {
+      "claim": "Live AUSD exposes the (v,r,s) ERC-3009 functions PrismPaymentRouter and PrismClaimVault call",
+      "status": "PROVEN",
+      "implementation": "0xc1e3c7d486d6a92fbe920232e439eec2ceb112da",
+      "selectors": ["0xe3ee160e", "0xef55bec6", "0xe94a0102", "0x5a049a70"],
+      "independentReadback": "live eth_call reverts InvalidSignature() (0x8baa579f) on a junk signature",
+      "evidence": "proof/AGORA_AUSD_PROOF.md"
+    },
+    {
+      "claim": "@category-labs/mera is a real published library and Prism uses its official entry points",
+      "status": "PROVEN",
+      "independentReadback": "npm registry: versions 0.1.0/0.2.0, latest 0.2.0, modified 2026-08-12",
+      "evidence": "proof/MERA_PROOF.md"
+    },
+    {
+      "claim": "No phone-derived value reaches calldata, events, or storage",
+      "status": "PROVEN",
+      "evidence": "contracts/test/PrismPrivacy.t.sol (3 tests, incl. a self-guard that the scanner can fail)"
+    },
+    {
+      "claim": "No raw phone number is persisted or logged by the backend",
+      "status": "PROVEN_AFTER_FIX",
+      "evidence": "backend/test/privacy-leak.test.js (6 checks); LEAK-01 verified non-vacuous by reintroducing the leak"
+    },
+    {
+      "claim": "A payer holding MON = 0 can pay",
+      "status": "PROVEN_LOCALLY",
+      "evidence": "contracts/test/PrismPaymentRouter.t.sol::testPayerOwnsZeroMon",
+      "limitation": "local EVM only; never submitted to Monad"
+    }
+  ],
+  "findings": [
+    {
+      "id": "FIND-01",
+      "severity": "HIGH",
+      "state": "OPEN",
+      "title": "bind_account proof is a static, replayable message",
+      "impact": "One captured signature grants a permanent Prism session for the victim: reads /v1/me, /v1/me/balance, /v1/activity, /v1/claims, resolves aliases as them, and flips privacy/profile settings (which require no account signature). Not fund theft.",
+      "reproduction": "proof/poc/bind-replay.mjs",
+      "fix": "server-issued single-use challenge with TTL, chainId and expiry in the signed payload; extend account-signature enforcement to setPrivacy/setProfile",
+      "notFixedBecause": "the payload is co-defined in ios/MeraBridge/MeraAccountManager.swift and the iOS half cannot be compiled or tested here"
+    },
+    {
+      "id": "FIND-02",
+      "severity": "HIGH",
+      "state": "FIXED",
+      "title": "A lost relayer response caused a blind re-broadcast (MUT-16)",
+      "impact": "A retry after a lost response re-entered the relayer and re-broadcast the same authorization. On-chain guards prevented a double-spend, but it burned relayer gas; fundClaim additionally marked a claim failed while its funding may have been landing.",
+      "fix": "operations move to a 'broadcasting' state before the relay call; errors are classified pre-broadcast vs ambiguous; an ambiguous retry reads AUSD.authorizationState(payer, nonce) and resolves to 'confirming' instead of resending",
+      "regressionTests": "backend/test/mutation-audit.test.js MUT-16 x3; verified to fail against the pre-fix code"
+    },
+    {
+      "id": "FIND-03",
+      "severity": "MEDIUM",
+      "state": "OPEN",
+      "title": "Alias-lookup rate limit is per-identity with no global or per-IP cap",
+      "impact": "60 lookups/hour per Prism identity; an attacker minting N identities gets 60N. Identity creation costs an OTP plus an account-control signature, which raises but does not bound the cost."
+    },
+    {
+      "id": "FIND-04",
+      "severity": "MEDIUM",
+      "state": "OPEN",
+      "title": "Identity-change trust store lives in UserDefaults, not the Keychain",
+      "impact": "TOFU pins in ios/Prism/Features/People/PeopleView.swift are readable and writable from an unencrypted device backup, so the MUT-14 identity-change warning can be suppressed."
+    },
+    {
+      "id": "FIND-05",
+      "severity": "MEDIUM",
+      "state": "ACCEPTED_BY_DESIGN",
+      "title": "Claim authorizer key is a single point of failure",
+      "impact": "PrismClaimVault.claim releases funds on one authorizer signature plus the recipient's intent; the intent proves who is asking, not who is entitled. aliasVersion is signed but never compared to on-chain state. Compromise drains every funded claim. KMS/HSM is load-bearing."
+    },
+    {
+      "id": "FIND-06",
+      "severity": "MEDIUM",
+      "state": "OPEN",
+      "title": "Resolver pepper is stored beside the data it protects",
+      "impact": "phoneIndex is HMAC-SHA256(pepper, E164) over a ~10^10 space with a fast primitive; an attacker taking both the datastore and RESOLVER_PEPPER can enumerate every user's number offline."
+    }
+  ],
+  "blocked": {
+    "testnet_deployment": {
+      "status": "BLOCKED",
+      "missing": ["funded DEPLOYER_PRIVATE_KEY", "funded RELAYER_PRIVATE_KEY", "CLAIM_AUTHORIZER_ADDRESS", "test AUSD"],
+      "hardBlockers": [
+        "faucet.monad.xyz sits behind a Vercel bot checkpoint (HTTP 429); no unauthenticated claim endpoint",
+        "AUSD mint(address,uint256) is role-gated: eth_call from an arbitrary address reverts AddressIsNotMinterRole"
+      ],
+      "evidence": "proof/TESTNET_DEPLOYMENT.md"
+    },
+    "ios_toolchain": {
+      "status": "BLOCKED",
+      "reason": "no macOS, Xcode, simulator, or physical iPhone in this Linux/WSL2 environment",
+      "unproven": ["passkey creation", "Face ID", "Contacts", "universal links", "camera QR", "real Mera signatures", "SwiftLint", "SwiftFormat", "unit tests", "UI tests", "xcodebuild", "that mera-bridge.js even builds"]
+    },
+    "live_payment_loop": { "status": "BLOCKED", "reason": "depends on testnet_deployment", "evidence": "proof/PAYMENT_PROOF.md" },
+    "claim_loop": { "status": "BLOCKED", "evidence": "proof/CLAIM_PROOF.md" },
+    "refund_loop": { "status": "BLOCKED", "evidence": "proof/REFUND_PROOF.md" },
+    "cross_border": { "status": "BLOCKED", "evidence": "proof/CROSS_BORDER_PROOF.md" },
+    "envio_indexing": { "status": "BLOCKED", "reason": "no deployment to index; envio codegen never run", "evidence": "proof/ENVIO_PROOF.md" },
+    "alchemy": { "status": "BLOCKED", "reason": "no API key; no request ever made", "evidence": "proof/ALCHEMY_PROOF.md" },
+    "latency_measurements": { "status": "BLOCKED", "reason": "metrics instrumented but never populated from a real transaction; any figure would be fabricated" }
+  },
+  "transactions": [],
+  "note": "The transactions array is empty and must stay empty until a real Monad testnet transaction exists. No tx hash, block number, or latency figure appears anywhere in proof/ because none has been produced."
+}

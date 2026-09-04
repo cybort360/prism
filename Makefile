@@ -1,4 +1,4 @@
-.PHONY: test test-backend test-contracts test-ios lint zip
+.PHONY: test test-backend test-contracts test-ios audit zip
 
 test: test-backend test-contracts test-ios
 
@@ -13,6 +13,11 @@ test-ios:
 	cd ios && xcodegen generate && \
 	xcodebuild -project Prism.xcodeproj -scheme Prism -sdk iphonesimulator \
 	  -destination "$$(../scripts/ios-destination.sh)" test
+
+# Hostile-audit checks: the privacy leak scanners and the mutation suite (see proof/).
+audit:
+	cd contracts && forge test --match-path 'test/PrismPrivacy.t.sol' -vv
+	cd backend && node --test test/privacy-leak.test.js test/mutation-audit.test.js
 
 zip:
 	cd .. && zip -r prism-v1.zip prism-v1 -x '*/.git/*' '*/node_modules/*' '*/out/*' '*/cache/*' '*/DerivedData/*'

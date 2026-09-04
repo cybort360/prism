@@ -68,7 +68,7 @@ cp .env.example .env
 forge test
 ```
 
-27 tests across unit, fuzz, and invariant suites. The vault invariant run (256 runs / 128k calls)
+30 tests across unit, fuzz, privacy, and invariant suites. The vault invariant run (256 runs / 128k calls)
 takes ~2 minutes — that is expected, not a hang.
 
 ### Backend
@@ -84,7 +84,7 @@ Twilio Verify, the relayer, the claim authorizer, and the Envio endpoint are act
 environment variables. Without them the server runs explicit dev adapters and never claims a real
 OTP or on-chain settlement occurred.
 
-Run tests: `node --test test/*.test.js`.
+Run tests: `node --test test/*.test.js` (39 tests).
 
 ### iOS
 
@@ -125,6 +125,37 @@ make test        # backend + contracts + iOS
 
 `make test-ios` needs macOS with Xcode and xcodegen; on Linux run `make test-backend` and
 `make test-contracts`.
+
+## Proof status
+
+A hostile audit (`proof/`) was run against this codebase on 2026-09-03. Every row is either backed
+by an executed check or marked blocked with the reason — nothing here is a "works" claim.
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Contract suite green | **PROVEN** — 30 tests, 0 failed | `forge test` |
+| Deep fuzzing | **PROVEN** — 3 properties × 10,000 runs | `forge test --fuzz-runs 10000` |
+| Vault invariants | **PROVEN** — 256 runs / 128k calls, 3 invariants | `PrismVaultInvariant` |
+| Backend suite green | **PROVEN** — 39 tests, 0 failed | `node --test test/*.test.js` |
+| AUSD EIP-712 domain is `Agora Dollar`/`1` | **PROVEN on live chain** | `proof/AGORA_AUSD_PROOF.md` |
+| Live AUSD exposes the `(v,r,s)` ERC-3009 API Prism calls | **PROVEN on live chain** | `proof/AGORA_AUSD_PROOF.md` |
+| `@category-labs/mera` is real and used officially | **PROVEN** (npm registry + source) | `proof/MERA_PROOF.md` |
+| No phone in calldata / events / storage | **PROVEN** | `contracts/test/PrismPrivacy.t.sol` |
+| No raw phone persisted or logged | **PROVEN after fix** | `proof/PRIVACY_PROOF.md` |
+| Mutations MUT-01…MUT-16 rejected | **PROVEN** (2 caveats) | `proof/SECURITY_PROOF.md` |
+| Payer with MON = 0 can pay | **PROVEN locally**, not on testnet | `proof/ZERO_MON_PROOF.md` |
+| Contracts deployed to Monad testnet | **BLOCKED** — no funded key, faucet gated, AUSD mint role-gated | `proof/TESTNET_DEPLOYMENT.md` |
+| End-to-end payment on Monad | **BLOCKED** — no tx exists | `proof/PAYMENT_PROOF.md` |
+| Claim / refund on Monad | **BLOCKED** | `proof/CLAIM_PROOF.md`, `proof/REFUND_PROOF.md` |
+| Cross-border demonstration | **BLOCKED** (and there is no FX — AUSD both ends) | `proof/CROSS_BORDER_PROOF.md` |
+| Envio indexing real events | **BLOCKED** — config verified by topic0, never run | `proof/ENVIO_PROOF.md` |
+| Alchemy live path | **BLOCKED** — no API key, no request made | `proof/ALCHEMY_PROOF.md` |
+| iOS build, tests, passkey, Face ID, Contacts, QR | **BLOCKED** — no macOS/Xcode/device | `proof/MERA_PROOF.md` |
+| Latency figures | **NONE** — instrumented, never measured | `proof/PAYMENT_PROOF.md` |
+
+Open findings: one HIGH (`bind_account` proof is replayable — `proof/poc/bind-replay.mjs`) and four
+MEDIUM. One HIGH was found and fixed during the audit (blind re-broadcast on a lost relayer
+response). See `proof/SECURITY_PROOF.md` and `proof/EVIDENCE_MANIFEST.json`.
 
 ## Documentation
 
