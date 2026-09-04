@@ -113,7 +113,7 @@ worth taking from it.
 Fixed: `@MainActor` on `PrismHaptics`, and `authenticate` returns `Void` (neither caller used the
 context — the gate is the throw). Verified by CI, not locally.
 
-### Finding 8 — onboarding fails after account creation (OPEN, needs diagnosis)
+### Finding 8 — onboarding failed in CI on a Keychain write (FIXED, verified green)
 
 With the app compiling and CI running a dev backend, the onboarding UI test gets further but still
 fails. The backend confirms the account was created:
@@ -144,7 +144,11 @@ signing overrides and letting the simulator's default ad-hoc identity apply the 
 What this does expose about the product: `KeychainStore` collapses every `SecItemAdd` failure into
 `KeychainError.write`, so the user-facing alert was `"KeychainError error 0"` and the OSStatus —
 which names the cause exactly — was discarded. Surfacing the status would have made this a one-run
-diagnosis instead of three.
+diagnosis instead of three. `KeychainError` now carries the `OSStatus` and renders it through
+`SecCopyErrorMessageString`.
+
+**Verified.** CI run 33855151198 is fully green, and
+`OnboardingFlowUITests.testPhoneOnboardingReachesHome` **passed in 34.9s**.
 
 ## Caveats — real limits on the verdicts above
 

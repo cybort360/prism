@@ -43,8 +43,10 @@
       "detail": "MoneyTests.testAtomicConversion, MoneyTests.testZeroIsNotPayable \u2014 run 33852798608"
     },
     "ios_ui": {
-      "status": "FAIL_IN_CI",
-      "reason": "onboarding fails after account creation with an unidentified alert; see FIND-08"
+      "status": "PASS_IN_CI",
+      "tests": 1,
+      "detail": "OnboardingFlowUITests.testPhoneOnboardingReachesHome passed in 34.9s \u2014 run 33855151198",
+      "proves": "app launch, WKWebView Mera bundle load, account derivation, bind_account signature verified server-side, phone submission, OTP verified through the real backend, advance past onboarding"
     },
     "swiftlint_swiftformat": {
       "status": "NOT_RUN",
@@ -63,6 +65,16 @@
       "status": "PROVEN_BY_CI",
       "command": "npm ci && npm run build in ios/MeraBridge/web",
       "result": "succeeded \u2014 @category-labs/mera 0.2.0 exports the four entry points bridge.js imports"
+    },
+    "ci": {
+      "status": "GREEN",
+      "run": "33855151198",
+      "checks": [
+        "Backend pass",
+        "Contracts pass",
+        "iOS pass",
+        "GitGuardian pass"
+      ]
     }
   },
   "proven": [
@@ -130,6 +142,13 @@
       "status": "PROVEN",
       "independentReadback": "CI run 33852798608: POST /v1/auth/device -> 200, which requires a valid bind_account signature for the submitted address",
       "limitation": "exercises the dev-seeded signer, not a passkey; proves the bridge and signature plumbing, not WebAuthn",
+      "evidence": "proof/MERA_PROOF.md"
+    },
+    {
+      "claim": "The full onboarding flow runs end to end on a simulator against a real backend",
+      "status": "PROVEN",
+      "independentReadback": "CI run 33855151198: OnboardingFlowUITests passed; the test returns success only on reaching the post-OTP screen",
+      "limitation": "simulator only \u2014 the dev-seeded signer stands in for the passkey, so WebAuthn and Face ID remain unproven; the payment surface is further into the app than this test reaches",
       "evidence": "proof/MERA_PROOF.md"
     }
   ],

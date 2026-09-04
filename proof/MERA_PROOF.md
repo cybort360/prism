@@ -96,9 +96,16 @@ files that did not build. Fixed in this branch; see `SECURITY_PROOF.md` → Find
 
 ## To prove it
 
-What remains unproven is specifically the *device* path — passkey creation, the PRF output, and
-Face ID — plus a passing UI test: the onboarding flow still fails after account creation with an
-unidentified alert (see `SECURITY_PROOF.md` → Finding 8).
+The onboarding UI test now **passes** (run 33855151198, 34.9s). Because the test only returns
+success on reaching the post-OTP screen, that single green result establishes the whole chain on a
+simulator: the app launches, the WKWebView loads the Mera bundle, an account is derived, the
+`bind_account` signature verifies server-side, a phone is submitted, the OTP is verified through the
+real backend, and the flow advances past onboarding.
+
+What remains unproven is specifically the *device* path — real passkey creation, the PRF output, and
+Face ID — none of which the simulator exercises, since the dev-seeded signer stands in for the
+passkey there. The payment surface (MUT-14's identity-change gate, MUT-15's `.sent` binding) is also
+still unexecuted: it lies further into the app than this test reaches.
 
 ```bash
 cd ios/MeraBridge/web && npm ci && npm run build   # proves the API surface matches

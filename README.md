@@ -155,13 +155,14 @@ by an executed check or marked blocked with the reason — nothing here is a "wo
 | Mera bundle builds against the published lib | **PROVEN by CI** | `proof/MERA_PROOF.md` |
 | Mera bridge derives an account the backend accepts (simulator) | **PROVEN by CI** | `proof/MERA_PROOF.md` |
 | Backend AUSD domain integrity check passes live | **PROVEN by CI** | `proof/AGORA_AUSD_PROOF.md` |
-| iOS onboarding UI test | **FAILING** — real defect after account creation | `proof/SECURITY_PROOF.md` (Finding 8) |
+| iOS onboarding UI test (launch → Mera account → phone → OTP → past onboarding) | **PASSES in CI** | `proof/MERA_PROOF.md` |
 | iOS passkey, Face ID, Contacts, QR, universal links | **BLOCKED** — no device; never executed | `proof/MERA_PROOF.md` |
 | Latency figures | **NONE** — instrumented, never measured | `proof/PAYMENT_PROOF.md` |
 
 Open findings: one HIGH (`bind_account` proof is replayable — `proof/poc/bind-replay.mjs`) and four
 MEDIUM. Two HIGH were found and fixed during the audit (blind re-broadcast on a lost relayer
-response; and the iOS app not compiling at all). See `proof/SECURITY_PROOF.md` and
+response; and the iOS app not compiling at all), plus a CI configuration defect that made every
+Keychain write fail. CI is green on all four checks. See `proof/SECURITY_PROOF.md` and
 `proof/EVIDENCE_MANIFEST.json`.
 
 ## Documentation
