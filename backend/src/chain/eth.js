@@ -171,6 +171,27 @@ export async function ausdBalanceOf(address) {
   });
 }
 
+/**
+ * Has this ERC-3009 authorization already been consumed on-chain?
+ *
+ * This is the authoritative answer to "did my broadcast actually land?" when a relayer response is
+ * lost in flight. AUSD marks `(authorizer, nonce)` used inside the same transaction that moves the
+ * money, so a `true` here means the payment settled (or the nonce was cancelled) and the submission
+ * must be reconciled from the chain rather than blindly re-broadcast.
+ */
+export async function ausdAuthorizationUsed(authorizer, nonce) {
+  return chainProvider().readContract({
+    address: getAddress(config.chain.ausd),
+    abi: [{
+      name: 'authorizationState', type: 'function', stateMutability: 'view',
+      inputs: [{ name: 'authorizer', type: 'address' }, { name: 'nonce', type: 'bytes32' }],
+      outputs: [{ type: 'bool' }]
+    }],
+    functionName: 'authorizationState',
+    args: [getAddress(authorizer), nonce]
+  });
+}
+
 /** Native MON balance — used by the proof surface to show a payer can pay with MON = 0. */
 export async function monBalanceOf(address) { return chainProvider().getBalance(getAddress(address)); }
 
