@@ -62,14 +62,23 @@ and no physical iPhone in this environment (Linux/WSL2). Specifically unproven:
 | PRF output → EVM address derivation on device | **never run** |
 | Face ID gate before signing | **never run** |
 | A real Mera signature verifying against the router / AUSD | **never run** |
-| `mera-bridge.js` bundle even builds | **never run** — it is a git-ignored artifact; `npm run build` has not been executed here |
+| `mera-bridge.js` bundle even builds | **PROVEN by CI** — see below |
 | WKWebView bridge round-trip | **never run** |
 
-The bundle being unbuilt matters: `ios/Prism/Resources/MeraWeb/mera-bridge.js` does not exist in a
-fresh clone, and the app throws `"Mera web bundle missing"` without it. That the bundle *compiles*
-against `@category-labs/mera@0.2.0`'s actual exported API is an assumption, not a result — if any
-of the four entry points above were renamed between versions, it would fail at build time and this
-audit would not have caught it.
+### Resolved by CI (GitHub Actions run 33850618242, macos-15)
+
+The audit originally flagged that the bundle compiling against
+`@category-labs/mera@0.2.0`'s *actual* exported API was an assumption, not a result — if any of the
+four entry points had been renamed between versions it would fail at build time.
+
+**It builds.** The `Build Mera bridge bundle` step (`npm ci && npm run build`) succeeded, as did
+XcodeGen, and the job proceeded to Swift compilation. So the four official entry points named above
+exist in the published package and esbuild resolves them. That assumption is now a result.
+
+The same run also exposed that **the Swift app itself did not compile** — five Swift 6 strict
+concurrency errors in `PrismHaptics.swift`, `PaymentCoordinator.swift` and `OnboardingFlow.swift`,
+meaning the Face ID gate and the MUT-15 `.sent` binding reviewed in this audit were sitting in
+files that did not build. Fixed in this branch; see `SECURITY_PROOF.md` → Finding 7.
 
 ## To prove it
 

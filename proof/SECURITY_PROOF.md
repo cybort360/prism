@@ -92,6 +92,27 @@ re-arm and allow a genuine retry.
 The tests fail against the pre-fix code (verified by reverting `paymentService.js` and re-running:
 MUT-16 tests 6 and 7 go red) and pass after it.
 
+### Finding 7 — the iOS app did not compile (HIGH, FIXED)
+
+Static review of the Swift sources found no defect in the MUT-15 logic, but the audit could not
+build the app — no macOS in this environment. Pushing the branch put it in front of CI's `macos-15`
+job, which failed: five Swift 6 strict-concurrency errors under `SWIFT_VERSION: "6.0"`.
+
+- `PrismHaptics`'s static methods were nonisolated while every UIKit feedback generator they call is
+  `@MainActor`-isolated — *"Call to main actor-isolated instance method 'notificationOccurred' in a
+  synchronous nonisolated context"*, five times over.
+- `BiometricService.authenticate` returned `LAContext`, which is non-Sendable and cannot cross an
+  async boundary — *"Non-sendable result type 'LAContext' cannot be sent from nonisolated context"*,
+  at both call sites.
+
+This matters beyond the build: the Face ID gate (`PaymentCoordinator.localApproval`) and the MUT-15
+`.sent` binding (`PaymentCoordinator.swift:77`) that this audit reviewed were in files that did not
+compile. A green static review of code that cannot build is worth very little, which is the point
+worth taking from it.
+
+Fixed: `@MainActor` on `PrismHaptics`, and `authenticate` returns `Void` (neither caller used the
+context — the gate is the throw). Verified by CI, not locally.
+
 ## Caveats — real limits on the verdicts above
 
 - **MUT-13 is per-identity, not global.** The 60/hour ceiling is keyed on `requesterPrismId`; there
@@ -109,8 +130,10 @@ MUT-16 tests 6 and 7 go red) and pass after it.
   of that key drains every funded claim. `aliasVersion` is inside the signed struct but is never
   compared to any on-chain value, so it is an off-chain freshness assertion, not an on-chain
   guarantee. The KMS/HSM requirement in `docs/SECURITY.md` is load-bearing, not advisory.
-- **Everything iOS is static review only.** No macOS, Xcode, simulator, or device exists in this
-  environment. MUT-14's UI gate and MUT-15's `.sent` binding were read, not executed.
+- **Everything iOS is static review plus a CI build.** No macOS, Xcode, simulator, or device exists
+  in this environment; the only iOS signal is GitHub Actions' `macos-15` job. MUT-14's UI gate and
+  MUT-15's `.sent` binding were read and now compile, but have never been *executed* — no simulator
+  run and no device run has been observed by this audit.
 
 ## Non-vacuity
 

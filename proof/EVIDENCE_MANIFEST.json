@@ -10,14 +10,59 @@
     "network": "reachable; Monad testnet RPC live"
   },
   "suites": {
-    "contracts": { "command": "forge test", "tests": 30, "passed": 30, "failed": 0, "runtimeSeconds": 191 },
-    "contracts_fuzz_deep": { "command": "forge test --match-path test/PrismFuzz.t.sol --fuzz-runs 10000", "properties": 3, "runsEach": 10000, "passed": 3, "failed": 0 },
-    "contracts_invariant": { "suite": "PrismVaultInvariant", "runs": 256, "calls": 128000, "invariants": 3, "failed": 0 },
-    "backend": { "command": "node --test test/*.test.js", "tests": 39, "passed": 39, "failed": 0 },
-    "ios_unit": { "status": "NOT_RUN", "reason": "no macOS/Xcode in this environment" },
-    "ios_ui": { "status": "NOT_RUN", "reason": "no simulator in this environment" },
-    "swiftlint_swiftformat": { "status": "NOT_RUN", "reason": "tools absent; no configuration exists in the repo" },
-    "backend_typecheck_lint": { "status": "DOES_NOT_EXIST", "reason": "plain ESM JavaScript; package.json defines no typecheck or lint script, and the `lint` target in the Makefile is declared .PHONY with no rule" }
+    "contracts": {
+      "command": "forge test",
+      "tests": 30,
+      "passed": 30,
+      "failed": 0,
+      "runtimeSeconds": 191
+    },
+    "contracts_fuzz_deep": {
+      "command": "forge test --match-path test/PrismFuzz.t.sol --fuzz-runs 10000",
+      "properties": 3,
+      "runsEach": 10000,
+      "passed": 3,
+      "failed": 0
+    },
+    "contracts_invariant": {
+      "suite": "PrismVaultInvariant",
+      "runs": 256,
+      "calls": 128000,
+      "invariants": 3,
+      "failed": 0
+    },
+    "backend": {
+      "command": "node --test test/*.test.js",
+      "tests": 39,
+      "passed": 39,
+      "failed": 0
+    },
+    "ios_unit": {
+      "status": "NOT_OBSERVED",
+      "reason": "no macOS locally; CI compiles the app but this audit has not observed a passing simulator test run"
+    },
+    "ios_ui": {
+      "status": "NOT_OBSERVED",
+      "reason": "same"
+    },
+    "swiftlint_swiftformat": {
+      "status": "NOT_RUN",
+      "reason": "tools absent; no configuration exists in the repo"
+    },
+    "backend_typecheck_lint": {
+      "status": "DOES_NOT_EXIST",
+      "reason": "plain ESM JavaScript; package.json defines no typecheck or lint script, and the `lint` target in the Makefile is declared .PHONY with no rule"
+    },
+    "ios_build": {
+      "status": "PROVEN_BY_CI",
+      "ci": "GitHub Actions run 33850618242, macos-15",
+      "note": "the app did NOT compile when the branch was first pushed; fixed in this branch, see FIND-07"
+    },
+    "mera_bundle_build": {
+      "status": "PROVEN_BY_CI",
+      "command": "npm ci && npm run build in ios/MeraBridge/web",
+      "result": "succeeded \u2014 @category-labs/mera 0.2.0 exports the four entry points bridge.js imports"
+    }
   },
   "proven": [
     {
@@ -35,7 +80,12 @@
       "claim": "Live AUSD exposes the (v,r,s) ERC-3009 functions PrismPaymentRouter and PrismClaimVault call",
       "status": "PROVEN",
       "implementation": "0xc1e3c7d486d6a92fbe920232e439eec2ceb112da",
-      "selectors": ["0xe3ee160e", "0xef55bec6", "0xe94a0102", "0x5a049a70"],
+      "selectors": [
+        "0xe3ee160e",
+        "0xef55bec6",
+        "0xe94a0102",
+        "0x5a049a70"
+      ],
       "independentReadback": "live eth_call reverts InvalidSignature() (0x8baa579f) on a junk signature",
       "evidence": "proof/AGORA_AUSD_PROOF.md"
     },
@@ -60,6 +110,12 @@
       "status": "PROVEN_LOCALLY",
       "evidence": "contracts/test/PrismPaymentRouter.t.sol::testPayerOwnsZeroMon",
       "limitation": "local EVM only; never submitted to Monad"
+    },
+    {
+      "claim": "The Mera web bundle builds against the published @category-labs/mera API",
+      "status": "PROVEN",
+      "independentReadback": "CI macos-15 job completed `npm run build` and XcodeGen before reaching Swift compilation",
+      "evidence": "proof/MERA_PROOF.md"
     }
   ],
   "findings": [
@@ -109,12 +165,26 @@
       "state": "OPEN",
       "title": "Resolver pepper is stored beside the data it protects",
       "impact": "phoneIndex is HMAC-SHA256(pepper, E164) over a ~10^10 space with a fast primitive; an attacker taking both the datastore and RESOLVER_PEPPER can enumerate every user's number offline."
+    },
+    {
+      "id": "FIND-07",
+      "severity": "HIGH",
+      "state": "FIXED",
+      "title": "The iOS app did not compile",
+      "impact": "Five Swift 6 strict-concurrency errors under SWIFT_VERSION 6.0 in PrismHaptics.swift, PaymentCoordinator.swift and OnboardingFlow.swift. The Face ID gate and the MUT-15 `.sent` binding reviewed by this audit were in files that did not build.",
+      "detectedBy": "CI macos-15 job, after the audit branch was pushed \u2014 not reproducible locally (Linux)",
+      "fix": "@MainActor on PrismHaptics (UIKit feedback generators are main-actor isolated); BiometricService.authenticate returns Void instead of the non-Sendable LAContext, which neither caller used"
     }
   ],
   "blocked": {
     "testnet_deployment": {
       "status": "BLOCKED",
-      "missing": ["funded DEPLOYER_PRIVATE_KEY", "funded RELAYER_PRIVATE_KEY", "CLAIM_AUTHORIZER_ADDRESS", "test AUSD"],
+      "missing": [
+        "funded DEPLOYER_PRIVATE_KEY",
+        "funded RELAYER_PRIVATE_KEY",
+        "CLAIM_AUTHORIZER_ADDRESS",
+        "test AUSD"
+      ],
       "hardBlockers": [
         "faucet.monad.xyz sits behind a Vercel bot checkpoint (HTTP 429); no unauthenticated claim endpoint",
         "AUSD mint(address,uint256) is role-gated: eth_call from an arbitrary address reverts AddressIsNotMinterRole"
@@ -123,16 +193,54 @@
     },
     "ios_toolchain": {
       "status": "BLOCKED",
-      "reason": "no macOS, Xcode, simulator, or physical iPhone in this Linux/WSL2 environment",
-      "unproven": ["passkey creation", "Face ID", "Contacts", "universal links", "camera QR", "real Mera signatures", "SwiftLint", "SwiftFormat", "unit tests", "UI tests", "xcodebuild", "that mera-bridge.js even builds"]
+      "reason": "no macOS, Xcode, simulator, or physical iPhone in this Linux/WSL2 environment; the only iOS signal available is CI's macos-15 job",
+      "unproven": [
+        "passkey creation",
+        "Face ID",
+        "Contacts",
+        "universal links",
+        "camera QR",
+        "real Mera signatures",
+        "SwiftLint",
+        "SwiftFormat",
+        "an observed passing unit/UI test run on a simulator"
+      ],
+      "resolvedByCi": [
+        "the Mera bundle builds",
+        "the Swift app compiles (after FIND-07 was fixed)"
+      ]
     },
-    "live_payment_loop": { "status": "BLOCKED", "reason": "depends on testnet_deployment", "evidence": "proof/PAYMENT_PROOF.md" },
-    "claim_loop": { "status": "BLOCKED", "evidence": "proof/CLAIM_PROOF.md" },
-    "refund_loop": { "status": "BLOCKED", "evidence": "proof/REFUND_PROOF.md" },
-    "cross_border": { "status": "BLOCKED", "evidence": "proof/CROSS_BORDER_PROOF.md" },
-    "envio_indexing": { "status": "BLOCKED", "reason": "no deployment to index; envio codegen never run", "evidence": "proof/ENVIO_PROOF.md" },
-    "alchemy": { "status": "BLOCKED", "reason": "no API key; no request ever made", "evidence": "proof/ALCHEMY_PROOF.md" },
-    "latency_measurements": { "status": "BLOCKED", "reason": "metrics instrumented but never populated from a real transaction; any figure would be fabricated" }
+    "live_payment_loop": {
+      "status": "BLOCKED",
+      "reason": "depends on testnet_deployment",
+      "evidence": "proof/PAYMENT_PROOF.md"
+    },
+    "claim_loop": {
+      "status": "BLOCKED",
+      "evidence": "proof/CLAIM_PROOF.md"
+    },
+    "refund_loop": {
+      "status": "BLOCKED",
+      "evidence": "proof/REFUND_PROOF.md"
+    },
+    "cross_border": {
+      "status": "BLOCKED",
+      "evidence": "proof/CROSS_BORDER_PROOF.md"
+    },
+    "envio_indexing": {
+      "status": "BLOCKED",
+      "reason": "no deployment to index; envio codegen never run",
+      "evidence": "proof/ENVIO_PROOF.md"
+    },
+    "alchemy": {
+      "status": "BLOCKED",
+      "reason": "no API key; no request ever made",
+      "evidence": "proof/ALCHEMY_PROOF.md"
+    },
+    "latency_measurements": {
+      "status": "BLOCKED",
+      "reason": "metrics instrumented but never populated from a real transaction; any figure would be fabricated"
+    }
   },
   "transactions": [],
   "note": "The transactions array is empty and must stay empty until a real Monad testnet transaction exists. No tx hash, block number, or latency figure appears anywhere in proof/ because none has been produced."

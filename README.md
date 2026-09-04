@@ -150,12 +150,15 @@ by an executed check or marked blocked with the reason — nothing here is a "wo
 | Cross-border demonstration | **BLOCKED** (and there is no FX — AUSD both ends) | `proof/CROSS_BORDER_PROOF.md` |
 | Envio indexing real events | **BLOCKED** — config verified by topic0, never run | `proof/ENVIO_PROOF.md` |
 | Alchemy live path | **BLOCKED** — no API key, no request made | `proof/ALCHEMY_PROOF.md` |
-| iOS build, tests, passkey, Face ID, Contacts, QR | **BLOCKED** — no macOS/Xcode/device | `proof/MERA_PROOF.md` |
+| iOS app compiles | **PROVEN by CI** — it did not, until fixed in this branch | `proof/SECURITY_PROOF.md` (Finding 7) |
+| Mera bundle builds against the published lib | **PROVEN by CI** | `proof/MERA_PROOF.md` |
+| iOS passkey, Face ID, Contacts, QR, universal links | **BLOCKED** — no device; never executed | `proof/MERA_PROOF.md` |
 | Latency figures | **NONE** — instrumented, never measured | `proof/PAYMENT_PROOF.md` |
 
 Open findings: one HIGH (`bind_account` proof is replayable — `proof/poc/bind-replay.mjs`) and four
-MEDIUM. One HIGH was found and fixed during the audit (blind re-broadcast on a lost relayer
-response). See `proof/SECURITY_PROOF.md` and `proof/EVIDENCE_MANIFEST.json`.
+MEDIUM. Two HIGH were found and fixed during the audit (blind re-broadcast on a lost relayer
+response; and the iOS app not compiling at all). See `proof/SECURITY_PROOF.md` and
+`proof/EVIDENCE_MANIFEST.json`.
 
 ## Documentation
 
