@@ -25,12 +25,18 @@ struct HomeView: View {
         }
         actions.padding(.top, 32).padding(.bottom, 34)
         if let request = incomingRequest { requestCard(request).padding(.bottom, 12) }
-        if let claim = claims.first { claimCard(claim).padding(.bottom, 30) }
+        if !claims.isEmpty { claimsSection.padding(.bottom, 30) }
         people.padding(.bottom, 34)
         recent
         if let error { ErrorBanner(message: error).padding(.top, 18) }
       }.padding(.horizontal, 22).padding(.top, 8).padding(.bottom, 28)
-    }.refreshable { await reload() }.task { await reload() }.prismScreen()
+    }.refreshable { await reload() }.task { await reload() }
+    // A claim was just collected (the sheet closed) — refetch so the claimed item drops off and
+    // the balance updates immediately, rather than leaving a stale, already-consumed claim.
+    .onChange(of: model.presentClaim) { old, new in
+      if old != nil && new == nil { Task { await reload() } }
+    }
+    .prismScreen()
   }
 
   private var header: some View {
@@ -104,6 +110,25 @@ struct HomeView: View {
         }
       }
     }
+  }
+  // Every eligible claim is shown — never just the first — so no incoming payment is hidden behind
+  // another (C-02). When there are several, a header sums them; each card stays independently claimable.
+  private var claimsSection: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      if claims.count > 1 {
+        HStack {
+          PrismSectionLabel(text: "\(claims.count) payments waiting")
+          Spacer()
+          Text("\(Money.assetAmount(fromAtomic: totalClaimable)) total")
+            .font(PrismTheme.body(11, weight: .semibold)).foregroundStyle(PrismTheme.mintDeep)
+        }
+      }
+      ForEach(claims) { claim in claimCard(claim) }
+    }
+  }
+  private var totalClaimable: String {
+    let sum = claims.reduce(Decimal(0)) { $0 + (Decimal(string: $1.amountAtomic) ?? 0) }
+    return NSDecimalNumber(decimal: sum).stringValue
   }
   private func claimCard(_ c: ClaimRecord) -> some View {
     Button {
