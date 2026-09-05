@@ -48,6 +48,9 @@ export const config = {
   // Encrypts the backend-internal resolver attestation signer (not a consumer/spending key).
   serviceKeyEncryptionKeyHex: requiredHex32('SERVICE_KEY_ENCRYPTION_KEY', '22'.repeat(32)),
   devOtpCode: env('DEV_OTP_CODE', '123456'),
+  // Explicit OTP provider. Defaults to twilio when a Twilio SID is present, otherwise dev. Production
+  // must be 'twilio' (enforced in assertSafeConfig) so a prod boot can never accept the dev OTP code.
+  otpProvider: env('OTP_PROVIDER', env('TWILIO_ACCOUNT_SID') ? 'twilio' : 'dev'),
   limits: {
     // 10,000 stablecoin units for normal transfers, 1,000 for pre-user claims.
     maxPaymentAtomic: bigintEnv('MAX_PAYMENT_ATOMIC', '10000000000'),
@@ -100,5 +103,10 @@ export function assertSafeConfig() {
   if (!config.chain.paymentRouter) bad.push('PRISM_PAYMENT_ROUTER');
   if (!config.chain.claimVault) bad.push('PRISM_CLAIM_VAULT');
   if (!config.chain.claimAuthorizerPrivateKey) bad.push('CLAIM_AUTHORIZER_PRIVATE_KEY');
+  // OTP must fail closed in production: no dev code, and real Twilio credentials required.
+  if (config.otpProvider !== 'twilio') bad.push('OTP_PROVIDER (production must be twilio)');
+  if (config.otpProvider === 'twilio' && (!config.twilio.accountSid || !config.twilio.authToken || !config.twilio.verifyServiceSid)) {
+    bad.push('TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_VERIFY_SERVICE_SID');
+  }
   if (bad.length) throw new Error(`unsafe production configuration: ${bad.join(', ')}`);
 }

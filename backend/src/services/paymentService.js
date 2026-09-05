@@ -214,7 +214,8 @@ export class PaymentService {
       validAfter: 0, validBefore, nonce
     };
 
-    this.store.mutate(d => { d.operations[claim.claimId] = { operationId: claim.claimId, kind: 'claim-funding', state: 'prepared', fundingArgs, intent: { kind: 'claim-funding', senderPrismId, claimId: claim.claimId, amountAtomic, token: stablecoin.address, tokenSymbol: stablecoin.symbol }, createdAt: new Date().toISOString(), expiresAt: new Date(validBefore * 1000).toISOString(), effectsApplied: false }; });
+    const fundOpId = claimOpId('claim-funding', claim.claimId);
+    this.store.mutate(d => { d.operations[fundOpId] = { operationId: fundOpId, kind: 'claim-funding', state: 'prepared', fundingArgs, intent: { kind: 'claim-funding', senderPrismId, claimId: claim.claimId, amountAtomic, token: stablecoin.address, tokenSymbol: stablecoin.symbol }, createdAt: new Date().toISOString(), expiresAt: new Date(validBefore * 1000).toISOString(), effectsApplied: false }; });
     logger.info('claim.prepared', { claimId: claim.claimId, senderPrismId, amountAtomic, token: stablecoin.symbol });
 
     return {
@@ -229,7 +230,8 @@ export class PaymentService {
   }
 
   async fundClaim({ senderPrismId, claimId, signature }) {
-    const record = this.store.read().operations[claimId];
+    const fundOpId = claimOpId('claim-funding', claimId);
+    const record = this.store.read().operations[fundOpId];
     if (!record || record.kind !== 'claim-funding') throw httpError(404, 'claim funding not found');
     if (record.intent.senderPrismId !== senderPrismId) throw httpError(403, 'claim belongs to another caller');
     if (record.state === 'broadcasting') return this._resolveAmbiguousClaimFunding(record);
@@ -243,11 +245,11 @@ export class PaymentService {
     });
     if (!(await verifyTypedData(typed, a.sender, signature))) throw httpError(401, 'funding signature does not match the sender');
 
-    this.store.mutate(d => { d.operations[claimId].state = 'broadcasting'; d.operations[claimId].broadcastAt = new Date().toISOString(); });
+    this.store.mutate(d => { d.operations[fundOpId].state = 'broadcasting'; d.operations[fundOpId].broadcastAt = new Date().toISOString(); });
     try {
       const txHash = await relayFundClaim({ ...a, signature });
-      this.store.mutate(d => { d.operations[claimId].state = 'submitted'; d.operations[claimId].txHash = txHash; });
-      this.claimService.markFundingSubmitted(claimId, txHash, claimId);
+      this.store.mutate(d => { d.operations[fundOpId].state = 'submitted'; d.operations[fundOpId].txHash = txHash; });
+      this.claimService.markFundingSubmitted(claimId, txHash, fundOpId);
       logger.info('claim.funding.submitted', { claimId, txHash });
       return { claimId, state: 'submitted', txHash };
     } catch (e) {
@@ -255,7 +257,7 @@ export class PaymentService {
       // the funding authorization may already be consumed, and marking it failed would invite a
       // second broadcast of the same ERC-3009 nonce (MUT-16).
       if (isPreBroadcastFailure(e)) {
-        this.store.mutate(d => { d.operations[claimId].state = 'prepared'; delete d.operations[claimId].broadcastAt; });
+        this.store.mutate(d => { d.operations[fundOpId].state = 'prepared'; delete d.operations[fundOpId].broadcastAt; });
         this.claimService.markFundingFailed(claimId);
       } else {
         logger.error('claim.funding.broadcast.ambiguous', { claimId, error: e.message });
@@ -292,19 +294,9 @@ export class PaymentService {
       authorizerSig: eligibility.authorizerSig, recipientSig: recipientIntentSignature
     });
     const claim = this.store.read().claims[claimId];
-    this._ensureOp(claimId, 'claim-collection', {
-      kind: 'claim-collection', recipientPrismId, claimId,
-      token: claim?.token, tokenSymbol: claim?.tokenSymbol, amountAtomic: claim?.amountAtomic
-    });
-    this.store.mutate(d => {
-      d.operations[claimId].state = 'submitted';
-      d.operations[claimId].txHash = txHash;
-      d.operations[claimId].kind = 'claim-collection';
-      d.operations[claimId].intent = {
-        kind: 'claim-collection', recipientPrismId, claimId,
-        token: claim?.token, tokenSymbol: claim?.tokenSymbol, amountAtomic: claim?.amountAtomic
-      };
-    });
+    const collectOpId = claimOpId('claim-collection', claimId);
+    const intent = { kind: 'claim-collection', recipientPrismId, claimId, token: claim?.token, tokenSymbol: claim?.tokenSymbol, amountAtomic: claim?.amountAtomic };
+    this.store.mutate(d => { d.operations[collectOpId] = { operationId: collectOpId, kind: 'claim-collection', state: 'submitted', txHash, intent, createdAt: new Date().toISOString(), effectsApplied: false }; });
     this.claimService.markClaimSubmitted(claimId, txHash);
     logger.info('claim.collect.submitted', { claimId, txHash });
     return { claimId, state: 'submitted', txHash };
@@ -315,19 +307,9 @@ export class PaymentService {
     this.claimService.assertRefundable({ claimId, senderPrismId });
     const txHash = await relayRefund({ claimId });
     const claim = this.store.read().claims[claimId];
-    this._ensureOp(claimId, 'claim-refund', {
-      kind: 'claim-refund', senderPrismId, claimId,
-      token: claim?.token, tokenSymbol: claim?.tokenSymbol, amountAtomic: claim?.amountAtomic
-    });
-    this.store.mutate(d => {
-      d.operations[claimId].state = 'submitted';
-      d.operations[claimId].txHash = txHash;
-      d.operations[claimId].kind = 'claim-refund';
-      d.operations[claimId].intent = {
-        kind: 'claim-refund', senderPrismId, claimId,
-        token: claim?.token, tokenSymbol: claim?.tokenSymbol, amountAtomic: claim?.amountAtomic
-      };
-    });
+    const refundOpId = claimOpId('claim-refund', claimId);
+    const intent = { kind: 'claim-refund', senderPrismId, claimId, token: claim?.token, tokenSymbol: claim?.tokenSymbol, amountAtomic: claim?.amountAtomic };
+    this.store.mutate(d => { d.operations[refundOpId] = { operationId: refundOpId, kind: 'claim-refund', state: 'submitted', txHash, intent, createdAt: new Date().toISOString(), effectsApplied: false }; });
     this.claimService.markRefundSubmitted(claimId, txHash);
     logger.info('claim.refund.submitted', { claimId, txHash });
     return { claimId, state: 'submitted', txHash };
@@ -374,19 +356,39 @@ export class PaymentService {
       this.store.mutate(d => { d.operations[operationId].effectsApplied = true; });
       record = this.store.read().operations[operationId];
     } else if (!success && record.kind === 'claim-funding') {
-      this.claimService.markFundingFailed(operationId);
+      this.claimService.markFundingFailed(record.intent.claimId);
     }
     logger.info('operation.reconciled', { operationId, state: record.state, txHash: record.transactionHash });
     if (success) record = await this._checkIndexing(record);
     return publicOp(record);
   }
 
+  /**
+   * Reconcile a claim by its claimId. Since funding/collection/refund are now separate operations,
+   * pick the latest action the caller owns (sender for fund/refund, recipient for collect) so the
+   * client's single `GET /v1/claims/:id` poll targets the action it just triggered.
+   */
+  async reconcileClaim(claimId, actorPrismId) {
+    const ops = this.store.read().operations;
+    const candidates = ['claim-funding', 'claim-collection', 'claim-refund']
+      .map(kind => ops[claimOpId(kind, claimId)])
+      .filter(Boolean);
+    if (!candidates.length) throw httpError(404, 'claim operation not found');
+    const owned = candidates.filter(o => {
+      const owner = o.intent?.senderPrismId ?? o.intent?.recipientPrismId;
+      return !actorPrismId || owner === actorPrismId;
+    });
+    const pool = owned.length ? owned : candidates;
+    const latest = pool.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+    return this.reconcile(latest.operationId, actorPrismId);
+  }
+
   _applySuccess(record) {
     const tx = record.transactionHash;
     if (record.kind === 'payment' && record.intent.requestId) this.requestService.markPaid(record.intent.requestId, record.operationId, tx);
-    if (record.kind === 'claim-funding') this.claimService.markFunded(record.operationId, record.txHash, tx);
-    if (record.kind === 'claim-collection') this.claimService.markClaimed(record.operationId, tx);
-    if (record.kind === 'claim-refund') this.claimService.markRefunded(record.operationId, tx);
+    if (record.kind === 'claim-funding') this.claimService.markFunded(record.intent.claimId, record.txHash, tx);
+    if (record.kind === 'claim-collection') this.claimService.markClaimed(record.intent.claimId, tx);
+    if (record.kind === 'claim-refund') this.claimService.markRefunded(record.intent.claimId, tx);
   }
 
   _ensureOp(id, kind, intent) {
@@ -444,6 +446,10 @@ export class PaymentService {
 }
 
 function httpError(statusCode, message) { const e = new Error(message); e.statusCode = statusCode; return e; }
+
+// Each claim lifecycle action (funding, collection, refund) is its own operation record with a
+// distinct id, so their tx evidence and actor ownership never overwrite each other (F-03).
+function claimOpId(kind, claimId) { return `${kind}#${claimId}`; }
 
 /**
  * Did this relay error provably happen BEFORE anything was broadcast?

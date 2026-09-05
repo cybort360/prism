@@ -149,7 +149,7 @@ route('POST', '/v1/claims/:id/claim', async ({ user, params, body, idempotencyKe
 route('POST', '/v1/claims/:id/refund', async ({ user, params, idempotencyKey }) =>
   withIdempotency(store, { scope: 'claim-refund', key: idempotencyKey, actor: user.prismId }, () =>
     paymentService.refundClaim({ senderPrismId: user.prismId, claimId: params.id })), true);
-route('GET', '/v1/claims/:id', async ({ user, params }) => paymentService.reconcile(params.id, user.prismId), true);
+route('GET', '/v1/claims/:id', async ({ user, params }) => paymentService.reconcileClaim(params.id, user.prismId), true);
 
 route('GET', '/v1/activity', async ({ user }) => activityService.list(user.prismId), true);
 
