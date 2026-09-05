@@ -30,7 +30,7 @@ a receipt rather than trusting the submission.
 confined to `settle` / `fundClaim` / `claim` / `refund` on allowlisted contracts with an allowlisted
 token.
 
-**Startup integrity checks exist.** `verifyChainId()` and `verifyAusdDomain()` run at boot and, in
+**Startup integrity checks exist.** `verifyChainId()` and `verifyUsdcDomain()` run at boot and, in
 production, `process.exit(1)` on drift. The USDC domain is configured from Circle's deployment list
 and checked against the live token, so the check would pass rather
 than false-alarm.

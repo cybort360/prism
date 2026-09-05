@@ -83,7 +83,7 @@ versions fail closed.
 ## Verify, don't trust (USDC)
 
 Before relaying, the backend recomputes USDC's EIP-712 domain separator and compares it to the
-token's on-chain `DOMAIN_SEPARATOR()` (`chain/eth.js#verifyAusdDomain`), failing closed on any
+token's on-chain `DOMAIN_SEPARATOR()` (`chain/eth.js#verifyUsdcDomain`), failing closed on any
 drift in address, name, version, or chainId.
 
 ## App integrity hardening
