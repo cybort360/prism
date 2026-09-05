@@ -47,7 +47,9 @@ contract PrismClaimVault {
     bytes32 public constant CLAIM_INTENT_TYPEHASH = keccak256("ClaimIntent(bytes32 claimId,address recipient)");
 
     mapping(bytes32 => Claim) public claims;
-    mapping(bytes32 => bool) public eligibilityNonceUsed;
+    // Per-claim eligibility nonce namespace ([claimId][nonce]): a transition on one claim can never
+    // invalidate a sibling claim's authorization, even if an authorizer reissues a nonce (C-01).
+    mapping(bytes32 => mapping(bytes32 => bool)) public eligibilityNonceUsed;
 
     event ClaimFunded(
         bytes32 indexed claimId, address indexed sender, uint256 amount, uint256 expiry, bytes32 recipientReference
@@ -139,7 +141,7 @@ contract PrismClaimVault {
         if (block.timestamp > c.expiry) revert ClaimIsExpired();
         if (recipient == address(0)) revert BadRecipientIntent();
         if (block.timestamp > eligibilityExpiry) revert EligibilityExpired();
-        if (eligibilityNonceUsed[eligibilityNonce]) revert EligibilityReused();
+        if (eligibilityNonceUsed[claimId][eligibilityNonce]) revert EligibilityReused();
 
         // (1) Backend eligibility: an isolated authorizer key vouches that `recipient` controls the alias.
         bytes32 eligStruct = keccak256(
@@ -155,7 +157,7 @@ contract PrismClaimVault {
         address intentSigner = PrismEIP712.recover(PrismEIP712.digest(domainSeparator, intentStruct), recipientSig);
         if (intentSigner == address(0) || intentSigner != recipient) revert BadRecipientIntent();
 
-        eligibilityNonceUsed[eligibilityNonce] = true;
+        eligibilityNonceUsed[claimId][eligibilityNonce] = true;
         c.status = ClaimStatus.Claimed;
         address(usdc).safeTransfer(recipient, c.amount);
         emit ClaimCollected(claimId, recipient, c.amount);
