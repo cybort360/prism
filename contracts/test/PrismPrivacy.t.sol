@@ -222,7 +222,7 @@ contract PrismPrivacyTest is Test {
         returns (uint8 v, bytes32 r, bytes32 s)
     {
         bytes32 structHash = keccak256(
-            abi.encode(TRANSFER_TYPEHASH, env.payer, env.recipient, env.amount, uint256(0), env.validBefore, env.nonce)
+            abi.encode(RECEIVE_TYPEHASH, env.payer, address(router), env.amount, uint256(0), env.validBefore, env.nonce)
         );
         (v, r, s) = vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), structHash)));
     }

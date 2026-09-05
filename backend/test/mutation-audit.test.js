@@ -18,7 +18,7 @@ const { ResolverService } = await import('../src/services/resolverService.js');
 const { RequestService } = await import('../src/services/requestService.js');
 const { ClaimService } = await import('../src/services/claimService.js');
 const { PaymentService } = await import('../src/services/paymentService.js');
-const { paymentEnvelopeTypedData, transferAuthorizationTypedData } = await import('../src/chain/eth.js');
+const { paymentEnvelopeTypedData, receiveAuthorizationTypedData, checksum } = await import('../src/chain/eth.js');
 const { setChainProvider, resetChainProvider } = await import('../src/providers/index.js');
 const { makeMockChainProvider } = await import('../src/providers/mockChainProvider.js');
 
@@ -53,8 +53,8 @@ function seedPair(store, payer, recipient) {
 async function signBoth(payer, env) {
   return {
     prismSignature: await payer.signTypedData(paymentEnvelopeTypedData(env)),
-    tokenSignature: await payer.signTypedData(transferAuthorizationTypedData({
-      from: env.payer, to: env.recipient, value: env.amount, validAfter: 0, validBefore: env.validBefore, nonce: env.nonce
+    tokenSignature: await payer.signTypedData(receiveAuthorizationTypedData({
+      from: env.payer, to: checksum(config.chain.paymentRouter), value: env.amount, validAfter: 0, validBefore: env.validBefore, nonce: env.nonce
     }))
   };
 }

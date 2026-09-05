@@ -174,7 +174,8 @@ Keychain write fail. CI is green on all four checks. See `proof/SECURITY_PROOF.m
 
 ## External credentials still required for a live demo
 
-Everything below is an external service/secret — there are no remaining architectural TODOs.
+Everything below is an external service/secret. The core architecture and lifecycles are implemented
+and tested; see `proof/` for what is proven locally versus what still requires deployment and live runs.
 
 | Credential / service | Used for | Where |
 |---|---|---|

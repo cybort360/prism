@@ -30,8 +30,9 @@ trust").
   - Monad **mainnet**: `0x754704Bc059F8C67012fEd69BC8A327a5aafb603` (chainId 143)
   - Monad **testnet**: `0x534b2f3A21130d7a60830c2Df862319e593943A3` (chainId 10143)
 - EIP-712 domain: name **"USDC"**, version **"2"**. Decimals: **6**.
-- Prism's direct-payment primitive is ERC-3009 `transferWithAuthorization`, submitted by
-  `PrismPaymentRouter`, so a payer holding USDC > 0 and MON = 0 can still pay.
+- Prism's direct-payment primitive is ERC-3009 `receiveWithAuthorization` addressed to
+  `PrismPaymentRouter`, which forwards to the recipient, so a payer holding USDC > 0 and MON = 0 can
+  still pay and only the router can consume the authorization.
 - Source: <https://developers.circle.com/stablecoins/usdc-contract-addresses>,
   <https://developers.circle.com/stablecoins/transfer-tokens-without-having-to-pay-gas>.
 

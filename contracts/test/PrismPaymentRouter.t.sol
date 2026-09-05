@@ -16,8 +16,8 @@ contract PrismPaymentRouterTest is Test {
     address internal recipient = address(0xB0B);
     address internal relayer = address(0xF00D);
 
-    bytes32 internal constant TRANSFER_TYPEHASH = keccak256(
-        "TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+    bytes32 internal constant RECEIVE_TYPEHASH = keccak256(
+        "ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
     );
 
     function setUp() public {
@@ -59,7 +59,7 @@ contract PrismPaymentRouterTest is Test {
         returns (uint8 v, bytes32 r, bytes32 s)
     {
         bytes32 structHash = keccak256(
-            abi.encode(TRANSFER_TYPEHASH, env.payer, env.recipient, env.amount, uint256(0), env.validBefore, env.nonce)
+            abi.encode(RECEIVE_TYPEHASH, env.payer, address(router), env.amount, uint256(0), env.validBefore, env.nonce)
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), structHash));
         (v, r, s) = vm.sign(pk, digest);
@@ -86,6 +86,25 @@ contract PrismPaymentRouterTest is Test {
         assertEq(payer.balance, 0, "payer holds no MON");
         _settle(_env(25e6, keccak256("req"), block.timestamp + 300, bytes32(uint256(2))));
         assertEq(usdc.balanceOf(recipient), 25e6);
+    }
+
+    /// F-01: the signed token authorization is a ReceiveWithAuthorization addressed to the router, so
+    /// only the router can consume it. A direct submission to USDC by anyone else reverts, which is
+    /// what prevents a settlement bypass. The router remains the sole path that moves the money.
+    function testDirectAuthorizationCannotBypassRouter() public {
+        PrismPaymentRouter.PaymentEnvelope memory env =
+            _env(25e6, keccak256("bypass"), block.timestamp + 300, bytes32(uint256(42)));
+        (uint8 v, bytes32 r, bytes32 s) = _signUsdc(env, payerPk);
+
+        // An attacker holding the authorization tries to consume it directly, bypassing the router.
+        vm.prank(address(0xBAD));
+        vm.expectRevert(MockUSDC.CallerMustBePayee.selector);
+        usdc.receiveWithAuthorization(env.payer, address(router), env.amount, 0, env.validBefore, env.nonce, v, r, s);
+
+        // The nonce was not consumed, so the legitimate router path still settles.
+        _settle(env);
+        assertEq(usdc.balanceOf(recipient), 25e6);
+        assertTrue(router.paymentUsed(env.paymentId));
     }
 
     function testWrongSignerRejected() public {

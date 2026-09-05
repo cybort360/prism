@@ -20,7 +20,7 @@ const { ResolverService } = await import('../src/services/resolverService.js');
 const { RequestService } = await import('../src/services/requestService.js');
 const { ClaimService } = await import('../src/services/claimService.js');
 const { PaymentService } = await import('../src/services/paymentService.js');
-const { paymentEnvelopeTypedData, transferAuthorizationTypedData } = await import('../src/chain/eth.js');
+const { paymentEnvelopeTypedData, receiveAuthorizationTypedData, checksum } = await import('../src/chain/eth.js');
 const { setChainProvider, resetChainProvider } = await import('../src/providers/index.js');
 const { makeMockChainProvider } = await import('../src/providers/mockChainProvider.js');
 const { setEnvioIndexer, resetEnvioIndexer } = await import('../src/indexers/index.js');
@@ -70,7 +70,7 @@ test('payment path uses the Alchemy provider AND the Envio consumer, and records
 
     const env = prepared.envelope;
     const prismSignature = await payer.signTypedData(paymentEnvelopeTypedData(env));
-    const tokenSignature = await payer.signTypedData(transferAuthorizationTypedData({ from: env.payer, to: env.recipient, value: env.amount, validAfter: 0, validBefore: env.validBefore, nonce: env.nonce }));
+    const tokenSignature = await payer.signTypedData(receiveAuthorizationTypedData({ from: env.payer, to: checksum(config.chain.paymentRouter), value: env.amount, validAfter: 0, validBefore: env.validBefore, nonce: env.nonce }));
 
     const submit = await paymentService.submitPayment({ paymentId: prepared.paymentId, prismSignature, tokenSignature, actorPrismId: 'payer' });
     assert.equal(submit.state, 'submitted');
@@ -115,7 +115,7 @@ test('completed payment stays "not indexed" until Envio catches up (no fake comp
     const prepared = await paymentService.preparePayment({ senderPrismId: 'payer', resolution, amountAtomic: '10000000' });
     const env = prepared.envelope;
     const prismSignature = await payer.signTypedData(paymentEnvelopeTypedData(env));
-    const tokenSignature = await payer.signTypedData(transferAuthorizationTypedData({ from: env.payer, to: env.recipient, value: env.amount, validAfter: 0, validBefore: env.validBefore, nonce: env.nonce }));
+    const tokenSignature = await payer.signTypedData(receiveAuthorizationTypedData({ from: env.payer, to: checksum(config.chain.paymentRouter), value: env.amount, validAfter: 0, validBefore: env.validBefore, nonce: env.nonce }));
     await paymentService.submitPayment({ paymentId: prepared.paymentId, prismSignature, tokenSignature, actorPrismId: 'payer' });
     const reconciled = await paymentService.reconcile(prepared.paymentId, 'payer');
     assert.equal(reconciled.state, 'completed');   // chain confirmed

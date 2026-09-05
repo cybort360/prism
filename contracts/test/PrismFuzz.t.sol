@@ -55,7 +55,7 @@ contract PrismFuzzTest is Test {
         (uint8 ev, bytes32 er, bytes32 es) = vm.sign(payerPk, router.envelopeDigest(env));
         bytes memory prismSig = abi.encodePacked(er, es, ev);
         bytes32 sh =
-            keccak256(abi.encode(TRANSFER_TYPEHASH, payer, recipient, amount, uint256(0), env.validBefore, nonce));
+            keccak256(abi.encode(RECEIVE_TYPEHASH, payer, address(router), amount, uint256(0), env.validBefore, nonce));
         (uint8 v, bytes32 r, bytes32 s) =
             vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), sh)));
 
@@ -83,7 +83,7 @@ contract PrismFuzzTest is Test {
         (uint8 ev, bytes32 er, bytes32 es) = vm.sign(wrongPk, router.envelopeDigest(env));
         bytes memory badSig = abi.encodePacked(er, es, ev);
         bytes32 sh = keccak256(
-            abi.encode(TRANSFER_TYPEHASH, payer, recipient, uint256(10e6), uint256(0), env.validBefore, nonce)
+            abi.encode(RECEIVE_TYPEHASH, payer, address(router), uint256(10e6), uint256(0), env.validBefore, nonce)
         );
         (uint8 v, bytes32 r, bytes32 s) =
             vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), sh)));

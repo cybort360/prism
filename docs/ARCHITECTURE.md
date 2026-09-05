@@ -76,8 +76,9 @@ USDC uses domain `USDC`, version `2`, and 6 decimals. Addresses: mainnet
    typed data (secp256k1).
 6. Backend verifies both signatures recover to the payer's account and relays
    `PrismPaymentRouter.settle(...)`, paying MON.
-7. The router calls USDC's `transferWithAuthorization` directly from payer to recipient. A change
-   to the recipient, amount, or reference invalidates a signature.
+7. The router consumes USDC's `receiveWithAuthorization` addressed to itself (only the router can,
+   since `to == msg.sender`), then forwards the exact amount to the recipient. This prevents a
+   settlement bypass, and a change to the recipient, amount, or reference invalidates a signature.
 8. The operation stays `sending` / `settling` until an on-chain receipt is reconciled. `submitted`
    is never shown as `completed`.
 

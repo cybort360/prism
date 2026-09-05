@@ -109,8 +109,10 @@ export class PaymentService {
       envelope: env,
       typedData: {
         envelope: serialize(paymentEnvelopeTypedData(env)),
-        tokenAuthorization: serialize(transferAuthorizationTypedData({
-          from: env.payer, to: env.recipient, value: env.amount,
+        // Receive-authorization addressed to the router (not the recipient): only the router can
+        // consume it, so the settlement can't be bypassed by submitting the auth directly (F-01).
+        tokenAuthorization: serialize(receiveAuthorizationTypedData({
+          from: env.payer, to: checksum(this.config.chain.paymentRouter), value: env.amount,
           validAfter: 0, validBefore, nonce
         }))
       }
@@ -131,8 +133,8 @@ export class PaymentService {
     // Verify BOTH signatures recover to the payer, over the server-held canonical payloads.
     const okEnvelope = await verifyTypedData(paymentEnvelopeTypedData(env), env.payer, prismSignature);
     if (!okEnvelope) throw httpError(401, 'envelope signature does not match the payer');
-    const tokenTyped = transferAuthorizationTypedData({
-      from: env.payer, to: env.recipient, value: env.amount,
+    const tokenTyped = receiveAuthorizationTypedData({
+      from: env.payer, to: checksum(this.config.chain.paymentRouter), value: env.amount,
       validAfter: 0, validBefore: env.validBefore, nonce: env.nonce
     });
     const okToken = await verifyTypedData(tokenTyped, env.payer, tokenSignature);
