@@ -2,7 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
   @EnvironmentObject private var model: AppModel
-  @State private var balances: [TokenBalance] = []
+  @State private var balance: BalanceResponse?
   @State private var activity: [ActivityRecord] = []
   @State private var requests: [PaymentRequestRecord] = []
   @State private var claims: [ClaimRecord] = []
@@ -18,22 +18,14 @@ struct HomeView: View {
         AmountText(
           dollars: totalBalance, size: 70
         ).padding(.top, 6)
-        if !balances.isEmpty {
-          HStack(spacing: 8) {
-            ForEach(balances) { balance in
-              Text(Money.assetAmount(
-                fromAtomic: balance.amountAtomic,
-                symbol: balance.symbol,
-                decimals: balance.decimals
-              ))
-              .font(PrismTheme.body(10.5, weight: .semibold))
-              .foregroundStyle(PrismTheme.mintDeep)
-              .padding(.horizontal, 10)
-              .padding(.vertical, 6)
-              .background(PrismTheme.mintSoft)
-              .clipShape(Capsule())
-            }
-          }
+        if let balance {
+          Text(Money.assetAmount(fromAtomic: balance.amountAtomic, decimals: balance.decimals))
+          .font(PrismTheme.body(10.5, weight: .semibold))
+          .foregroundStyle(PrismTheme.mintDeep)
+          .padding(.horizontal, 10)
+          .padding(.vertical, 6)
+          .background(PrismTheme.mintSoft)
+          .clipShape(Capsule())
           .padding(.top, 10)
         }
         if let metric = weeklyMetric {
@@ -94,7 +86,7 @@ struct HomeView: View {
           PrismAvatar(initials: "PR", size: 40)
           VStack(alignment: .leading, spacing: 3) {
             Text("Payment request").font(PrismTheme.body(11)).foregroundStyle(PrismTheme.muted)
-            Text("\(Money.assetAmount(fromAtomic: r.amountAtomic, symbol: r.tokenSymbol)) requested").font(
+            Text("\(Money.assetAmount(fromAtomic: r.amountAtomic)) requested").font(
               PrismTheme.body(15, weight: .semibold))
             if !r.memo.isEmpty {
               Text(r.memo).font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted)
@@ -109,7 +101,7 @@ struct HomeView: View {
               await reload()
             }
           }
-          PrismPrimaryButton(title: "Pay \(Money.assetAmount(fromAtomic: r.amountAtomic, symbol: r.tokenSymbol))") {
+          PrismPrimaryButton(title: "Pay \(Money.assetAmount(fromAtomic: r.amountAtomic))") {
             Task { await openRequest(r) }
           }
         }
@@ -126,7 +118,7 @@ struct HomeView: View {
             Image(systemName: "gift").foregroundStyle(PrismTheme.mintDeep))
           VStack(alignment: .leading, spacing: 3) {
             Text("You have money waiting").font(PrismTheme.body(14, weight: .semibold))
-            Text("\(Money.assetAmount(fromAtomic: c.amountAtomic, symbol: c.tokenSymbol)) ready to claim").font(
+            Text("\(Money.assetAmount(fromAtomic: c.amountAtomic)) ready to claim").font(
               PrismTheme.body(12)
             ).foregroundStyle(PrismTheme.muted)
           }
@@ -215,13 +207,10 @@ struct HomeView: View {
   }
 
   private var totalBalance: String {
-    var total = Decimal.zero
-    for balance in balances {
-      guard let raw = Decimal(string: balance.amountAtomic) else { continue }
-      var divisor = Decimal(1)
-      for _ in 0..<balance.decimals { divisor *= 10 }
-      total += raw / divisor
-    }
+    guard let balance, let raw = Decimal(string: balance.amountAtomic) else { return "$0.00" }
+    var divisor = Decimal(1)
+    for _ in 0..<balance.decimals { divisor *= 10 }
+    let total = raw / divisor
     return NSDecimalNumber(decimal: total).doubleValue.formatted(
       .currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))
   }
@@ -231,11 +220,11 @@ struct HomeView: View {
     loading = true
     defer { loading = false }
     do {
-      async let b = PrismAPI.shared.balances()
+      async let b = PrismAPI.shared.balance()
       async let a = PrismAPI.shared.activity()
       async let r = PrismAPI.shared.requests()
       async let c = PrismAPI.shared.eligibleClaims()
-      balances = try await b
+      balance = try await b
       activity = try await a
       requests = try await r
       claims = try await c
@@ -255,8 +244,7 @@ struct HomeView: View {
       model.presentSend = SendTarget(
         contact: contact,
         resolution: res,
-        requestId: r.requestId,
-        requestedAsset: Stablecoin.resolve(symbol: r.tokenSymbol, address: r.token)
+        requestId: r.requestId
       )
     } catch { model.notify(error.localizedDescription) }
   }
@@ -290,7 +278,7 @@ struct ActivityMiniRow: View {
       Spacer()
       VStack(alignment: .trailing, spacing: 3) {
         if let a = item.amountAtomic {
-          Text((item.direction == "incoming" ? "+" : "-") + Money.assetAmount(fromAtomic: a, symbol: item.tokenSymbol)).font(
+          Text((item.direction == "incoming" ? "+" : "-") + Money.assetAmount(fromAtomic: a)).font(
             PrismTheme.body(13, weight: .medium)
           ).foregroundStyle(item.direction == "incoming" ? PrismTheme.positive : PrismTheme.ink)
         }

@@ -14,7 +14,6 @@ function envFor(payer, recipient, amount, requestId) {
     paymentId: `0x${'11'.repeat(32)}`,
     payer,
     recipient,
-    token: '0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC',
     amount,
     requestId,
     resolutionHash: `0x${'22'.repeat(32)}`,
@@ -45,7 +44,7 @@ test('envelope signed by another account is rejected', async () => {
   assert.equal(await verifyTypedData(paymentEnvelopeTypedData(env), payer.address, forged), false);
 });
 
-test('AUSD transfer authorization co-binds recipient and amount', async () => {
+test('USDC transfer authorization co-binds recipient and amount', async () => {
   const payer = meraAccount(PK_A);
   const to = meraAccount(PK_B).address;
   const params = { from: payer.address, to, value: 25_000000n, validAfter: 0, validBefore: Math.floor(Date.now() / 1000) + 300, nonce: `0x${'33'.repeat(32)}` };
@@ -57,7 +56,7 @@ test('AUSD transfer authorization co-binds recipient and amount', async () => {
 test('USDC transfer authorization uses the Circle Monad domain', async () => {
   const payer = meraAccount(PK_A);
   const params = {
-    token: 'USDC', from: payer.address, to: meraAccount(PK_B).address,
+    from: payer.address, to: meraAccount(PK_B).address,
     value: 12_000000n, validAfter: 0, validBefore: Math.floor(Date.now() / 1000) + 300,
     nonce: `0x${'44'.repeat(32)}`
   };
@@ -67,7 +66,6 @@ test('USDC transfer authorization uses the Circle Monad domain', async () => {
   assert.equal(typed.domain.verifyingContract.toLowerCase(), '0x534b2f3a21130d7a60830c2df862319e593943a3');
   const signature = await payer.signTypedData(typed);
   assert.equal(await verifyTypedData(typed, payer.address, signature), true);
-  assert.equal(await verifyTypedData(transferAuthorizationTypedData({ ...params, token: 'AUSD' }), payer.address, signature), false);
 });
 
 test('resolutionHash is derived only from opaque resolver data', () => {

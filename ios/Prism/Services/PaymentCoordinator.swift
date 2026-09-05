@@ -12,10 +12,10 @@ final class PaymentCoordinator: ObservableObject {
 
   // MARK: direct payment
 
-  func pay(resolution: ResolutionResponse, amountAtomic: String, asset: Stablecoin, requestId: String? = nil, memo: String, pin: String?, useFaceID: Bool) async {
+  func pay(resolution: ResolutionResponse, amountAtomic: String, requestId: String? = nil, memo: String, pin: String?, useFaceID: Bool) async {
     do {
       state = .preparing
-      let prepared = try await api.preparePayment(resolution: resolution, amountAtomic: amountAtomic, asset: asset, requestId: requestId, memo: memo)
+      let prepared = try await api.preparePayment(resolution: resolution, amountAtomic: amountAtomic, requestId: requestId, memo: memo)
       state = .awaitingAuthorization
       try await localApproval(pin: pin, useFaceID: useFaceID)
       state = .sending
@@ -26,10 +26,10 @@ final class PaymentCoordinator: ObservableObject {
 
   // MARK: claims (send before signup)
 
-  func fundClaim(phone: String, amountAtomic: String, asset: Stablecoin, memo: String, pin: String?, useFaceID: Bool) async {
+  func fundClaim(phone: String, amountAtomic: String, memo: String, pin: String?, useFaceID: Bool) async {
     do {
       state = .preparing
-      let prepared = try await api.prepareClaim(phone: phone, amountAtomic: amountAtomic, asset: asset, memo: memo)
+      let prepared = try await api.prepareClaim(phone: phone, amountAtomic: amountAtomic, memo: memo)
       state = .awaitingAuthorization
       try await localApproval(pin: pin, useFaceID: useFaceID)
       state = .sending

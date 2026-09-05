@@ -62,7 +62,7 @@ and no physical iPhone in this environment (Linux/WSL2). Specifically unproven:
 | Real passkey creation on device | **never run** |
 | PRF output → EVM address derivation on device | **never run** |
 | Face ID gate before signing | **never run** |
-| A real Mera signature verifying against the router / AUSD | **never run** |
+| A real Mera signature verifying against the router / USDC | **never run** |
 | `mera-bridge.js` bundle even builds | **PROVEN by CI** — see below |
 | WKWebView bridge round-trip (simulator, dev signer) | **PROVEN by CI** — see below |
 

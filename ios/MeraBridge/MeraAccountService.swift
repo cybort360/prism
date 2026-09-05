@@ -2,7 +2,7 @@ import Foundation
 
 /// A Prism account derived from a Mera passkey. The address is a standard EVM account (secp256k1)
 /// that Mera reproduces deterministically from the same passkey across devices. It is both the
-/// AUSD-holding account and the signing authority. Prism never sees the passkey or its derived
+/// USDC-holding account and the signing authority. Prism never sees the passkey or its derived
 /// secret — only signatures and this public address cross the bridge.
 struct PrismMeraAccount: Equatable {
   let address: String
@@ -48,7 +48,7 @@ protocol MeraAccountService: AnyObject {
   func createAccount() async throws -> PrismMeraAccount
   /// Re-derive the account from an existing passkey (a passkey assertion prompt).
   func restoreAccount() async throws -> PrismMeraAccount
-  /// Sign an EIP-712 typed-data payload used for AUSD and USDC ERC-3009 authorizations.
+  /// Sign an EIP-712 typed-data payload used for USDC ERC-3009 authorizations.
   func signTypedData(_ typedData: Data) async throws -> Data
   /// Sign a personal message (EIP-191) — used for identity binding/mutation proofs.
   func signMessage(_ message: Data) async throws -> Data

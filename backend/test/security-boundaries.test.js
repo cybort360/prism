@@ -11,7 +11,7 @@ import { meraAccount, PK_A } from './helpers.js';
 
 const RECIPIENT = '0x00000000000000000000000000000000000000b0';
 
-test('an AUSD authorization fails closed when recipient or amount is mutated', async () => {
+test('a USDC authorization fails closed when recipient or amount is mutated', async () => {
   const payer = meraAccount(PK_A);
   const value = 25_000000n;
   const params = { from: payer.address, to: RECIPIENT, value, validAfter: 0, validBefore: Math.floor(Date.now() / 1000) + 300, nonce: `0x${'11'.repeat(32)}` };
@@ -29,7 +29,7 @@ test('pre-user claims use random non-phone-derived public references', () => {
   const config = { limits: { maxClaimAtomic: 1_000_000_000n } };
   const service = new ClaimService({ store, config, identityService: { get: () => null } });
   const phone = '+2348031234567';
-  const token = '0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC';
+  const token = '0x534b2f3A21130d7a60830c2Df862319e593943A3';
   const c1 = service.createPending({ senderPrismId: 'sender', recipientPhoneLookupKey: 'opaque-hmac', amountAtomic: '20000000', token });
   const c2 = service.createPending({ senderPrismId: 'sender', recipientPhoneLookupKey: 'opaque-hmac', amountAtomic: '20000000', token });
   assert.match(c1.claimId, /^0x[0-9a-f]{64}$/); assert.match(c1.recipientReference, /^0x[0-9a-f]{64}$/);

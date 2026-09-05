@@ -15,10 +15,10 @@ Suites at time of writing: **30 contract tests** (`forge test`), **39 backend te
 | MUT-02 | `SHA256(phone)` public mapping | **REJECTED** | `LEAK-02` asserts `phoneLookupKey != sha256(phone)` and proves the key is *keyed* (changing only the pepper changes the key). Lookup is `HMAC-SHA256(pepper, E164)`, server-side, never returned to a client (`LEAK-04`). No on-chain phone map exists — the vault keys on random `claimId` / `recipientReference`. |
 | MUT-03 | New SIM + OTP takeover of a funded account | **REJECTED** | `identity.test.js` "OTP-style phone possession cannot seize a bound account". `IdentityService.upsertVerifiedPhone` throws 409 when the phone already indexes an identity bound to a different account. OTP moves reachability, never spending authority. |
 | MUT-04 | Reuse a revoked / stale resolver response | **REJECTED** | `mutation-audit.test.js` MUT-04 ×2. `PaymentService.assertResolution` re-reads the identity and rejects on `aliasVersion` drift *or* account repoint; `verifyResolution` binds requester, enforces a 2-minute lifetime, and fails closed on a tampered attestation. |
-| MUT-05 | Amount changed after Mera signature | **REJECTED** | `testModifiedAmountRejected`; `security-boundaries.test.js`. `amount` is in both the Prism envelope digest and the AUSD ERC-3009 digest — mutation breaks two independent `ecrecover`s. |
+| MUT-05 | Amount changed after Mera signature | **REJECTED** | `testModifiedAmountRejected`; `security-boundaries.test.js`. `amount` is in both the Prism envelope digest and the USDC ERC-3009 digest — mutation breaks two independent `ecrecover`s. |
 | MUT-06 | Recipient changed after Mera signature | **REJECTED** | `testModifiedRecipientRejected`; `mutation-audit.test.js` MUT-06 (forged signature never reaches the relayer: `writeContract` call count is 0). |
 | MUT-07 | requestId changed after Mera signature | **REJECTED** | `testModifiedRequestIdRejected`. `requestId` is inside the envelope struct hash. |
-| MUT-08 | Replay an AUSD authorization | **REJECTED** | `MockAUSD._authorizationStates[from][nonce]` (faithful to live AUSD, which exposes the same `authorizationState`); `testReplayRejected`; `mutation-audit.test.js` MUT-08 asserts a settled payment is never broadcast twice. |
+| MUT-08 | Replay a USDC authorization | **REJECTED** | `MockUSDC._authorizationStates[from][nonce]`; `testReplayRejected`; `mutation-audit.test.js` MUT-08 asserts a settled payment is never broadcast twice. |
 | MUT-09 | Replay a Prism PaymentEnvelope | **REJECTED** | `testPaymentIdReuseRejected` — `paymentUsed[paymentId]` and `nonceUsed[payer][nonce]`, both set before the external token call. |
 | MUT-10 | Claim twice | **REJECTED** | `testDoubleClaimFails` — status flips `Funded → Claimed`; a second call reverts `NotFunded`. |
 | MUT-11 | Claim after refund | **REJECTED** | `testClaimAfterRefundFails` — status `Refunded` is not `Funded`. |
@@ -53,7 +53,7 @@ mutable w/o acct sig: phoneDiscoverable -> false
 ```
 
 **Impact.** Not fund theft — spending still needs a fresh Mera signature over the envelope and the
-AUSD authorization, and `/v1/payments/submit` verifies both. But the session grants read access to
+USDC authorization, and `/v1/payments/submit` verifies both. But the session grants read access to
 `/v1/me` (masked phone, account, handle), `/v1/me/balance`, `/v1/activity` (full payment history),
 `/v1/claims`, and alias resolution *as the victim*; and `POST /v1/me/privacy` and `/v1/me/profile`
 require only a session, not an account signature, so an attacker can flip the victim's
@@ -75,7 +75,7 @@ propagated with the record still in `prepared`, so the client's retry re-entered
 broadcast the same authorization a second time. `withIdempotency` did not cover this: it caches only
 on success, and a thrown producer caches nothing.
 
-On-chain guards meant this was never a double-spend — `paymentUsed[paymentId]` and AUSD's
+On-chain guards meant this was never a double-spend — `paymentUsed[paymentId]` and USDC's
 `authorizationState` both reject the second settle — but it burned relayer gas on a doomed
 transaction and contradicted the stated requirement to reconcile rather than resubmit. The same
 pattern in `fundClaim` was worse: it called `markFundingFailed` on *any* error, labelling a claim
@@ -85,7 +85,7 @@ failed while its funding may have been landing.
 failure is classified: a provable pre-broadcast failure (our own argument validation, or a viem
 simulation revert) re-arms the record as `prepared`; anything else — timeouts, socket errors,
 unknown — is treated as ambiguous and stays `broadcasting`. A retry against a `broadcasting` record
-reads `AUSD.authorizationState(payer, nonce)`, the value AUSD sets in the same transaction that
+reads `USDC.authorizationState(payer, nonce)`, the value USDC sets in the same transaction that
 moves the money: used ⇒ resolve to `confirming` and poll, never resend; unused ⇒ nothing settled, so
 re-arm and allow a genuine retry.
 

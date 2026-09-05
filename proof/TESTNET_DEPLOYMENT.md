@@ -14,7 +14,7 @@ Monad testnet itself is reachable and healthy from this environment:
 |---|---|
 | `eth_chainId` | `0x279f` = `10143` |
 | `eth_blockNumber` | `0x38b79b0` = `59477252` at 2026-09-03T23:51:03Z |
-| Agora AUSD at `0xa9012a…22dC` | live, correct domain and ERC-3009 surface — see `AGORA_AUSD_PROOF.md` |
+| Circle USDC at `0x534b2f…43A3` | live, configured with domain `USDC` / `2` and ERC-3009 support |
 
 So the blocker is not connectivity or the target contracts. It is credentials and funds.
 
@@ -25,14 +25,14 @@ So the blocker is not connectivity or the target contracts. It is credentials an
 | `DEPLOYER_PRIVATE_KEY` funded with MON | **absent** | `contracts/.env` — variable present, value empty |
 | `CLAIM_AUTHORIZER_ADDRESS` | **absent** | `contracts/.env` — empty |
 | `RELAYER_PRIVATE_KEY` funded with MON | **absent** | `backend/.env` — empty |
-| Test AUSD for the sender account | **unobtainable here** | `mint(address,uint256)` exists on the live token but is role-gated: `eth_call` from an arbitrary address reverts `AddressIsNotMinterRole`. Test AUSD must come from Agora. |
+| Test USDC for the sender account | **requires external faucet access** | The repository does not mint live USDC. |
 | Testnet MON | **unobtainable here** | `faucet.monad.xyz` returns HTTP 429 behind a Vercel bot checkpoint; there is no unauthenticated claim endpoint. |
 | Alchemy Monad API key | **absent** | `MONAD_RPC_URL` falls back to the public node |
 | Envio HyperIndex deployment | **absent** | `ENVIO_GRAPHQL_URL` empty |
 | Twilio Verify | **absent** | `TWILIO_*` empty — OTP runs the dev adapter |
 
-A key can be generated in a second; funding it cannot be automated past a captcha, and AUSD cannot
-be minted without Agora's minter role. Both need a human with a browser.
+A key can be generated in a second. Funding the deployment account and obtaining test USDC require
+external faucet access.
 
 ## Unblock sequence
 
@@ -42,7 +42,7 @@ cast wallet new                          # ×2: deployer, relayer
 #    fund both at https://faucet.monad.xyz
 # 2. Generate the isolated claim authorizer (KMS/HSM in production)
 cast wallet new                          # → CLAIM_AUTHORIZER_PRIVATE_KEY / _ADDRESS
-# 3. Obtain test AUSD for the sender account from Agora
+# 3. Obtain test USDC for the sender account
 # 4. Deploy
 cd contracts && source .env
 forge script script/Deploy.s.sol --rpc-url "$MONAD_TESTNET_RPC_URL" --broadcast

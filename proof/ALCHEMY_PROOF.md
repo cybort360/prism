@@ -31,8 +31,8 @@ confined to `settle` / `fundClaim` / `claim` / `refund` on allowlisted contracts
 token.
 
 **Startup integrity checks exist.** `verifyChainId()` and `verifyAusdDomain()` run at boot and, in
-production, `process.exit(1)` on drift. The AUSD domain half of that check was independently
-confirmed correct against the live token (`AGORA_AUSD_PROOF.md`), so the check would pass rather
+production, `process.exit(1)` on drift. The USDC domain is configured from Circle's deployment list
+and checked against the live token, so the check would pass rather
 than false-alarm.
 
 ## Not verified

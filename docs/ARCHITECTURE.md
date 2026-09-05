@@ -22,7 +22,7 @@ phone / @handle / QR / payment link
   MERA PASSKEY-DERIVED ACCOUNT                    (secp256k1 EOA from a passkey; the signing authority)
             |
             v
-  AUSD / USDC                                     (ERC-3009 gasless authorization)
+  USDC                                            (ERC-3009 gasless authorization)
             |
             v
   PRISM PAYMENT ROUTER / CLAIM VAULT              (relayer-submitted; recipient/amount bound in-signature)
@@ -44,7 +44,7 @@ a passkey (WebAuthn PRF), so:
 - account creation is a Face ID / Touch ID prompt — no seed phrase, no backend custody;
 - the same passkey reproduces the **same** account on a new device, so "recovery" is just signing in
   again — there is nothing to rotate on-chain;
-- the account signs ordinary ECDSA, which is exactly what AUSD's ERC-3009 path verifies. No ERC-4337
+- the account signs ordinary ECDSA, which is exactly what USDC's ERC-3009 path verifies. No ERC-4337
   account, bundler, or paymaster is needed. USDC exposes the same ERC-3009 signing path.
 
 Because Mera has no pure-Swift API, Prism runs the **official** `@category-labs/mera` TypeScript
@@ -53,15 +53,12 @@ library inside a tiny offscreen WKWebView and exposes only a narrow Swift protoc
 `createSession`, `revokeSession`). Passkey secrets and the derived root never leave the WebView and
 are never sent to the Prism backend. See `ios/MeraBridge/`.
 
-## Why AUSD, USDC, and ERC-3009
+## Why USDC and ERC-3009
 
-AUSD and USDC both expose ERC-3009 on Monad. A holder signs an EIP-712 authorization off-chain,
-then a relayer submits the transaction and pays MON. A Prism user can hold either asset with no MON
+USDC exposes ERC-3009 on Monad. A holder signs an EIP-712 authorization off-chain,
+then a relayer submits the transaction and pays MON. A Prism user can hold USDC with no MON
 and still pay.
 
-Domain (verified + re-checked at runtime): name `Agora Dollar`, version `1`, 6 decimals. Addresses:
-mainnet `0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a` (chainId 143), testnet
-`0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC` (chainId 10143).
 USDC uses domain `USDC`, version `2`, and 6 decimals. Addresses: mainnet
 `0x754704Bc059F8C67012fEd69BC8A327a5aafb603`, testnet
 `0x534b2f3A21130d7a60830c2Df862319e593943A3`.
@@ -73,22 +70,22 @@ USDC uses domain `USDC`, version `2`, and 6 decimals. Addresses: mainnet
    resolver, which returns a short-lived, requester-bound, signed resolution: recipient account,
    Prism identity, alias version, expiry.
 3. The app checks the resolution against its last locally trusted identity for this contact.
-4. Backend builds the Prism envelope and the selected token's exact EIP-712
-   `TransferWithAuthorization`, both binding recipient, token, amount, validity, and nonce.
+4. Backend builds the Prism envelope and USDC's exact EIP-712
+   `TransferWithAuthorization`, both binding recipient, amount, validity, and nonce.
 5. The app shows the intent; Face ID or PIN is the local approval gate; the Mera session signs the
    typed data (secp256k1).
 6. Backend verifies both signatures recover to the payer's account and relays
    `PrismPaymentRouter.settle(...)`, paying MON.
-7. The router calls the selected token's `transferWithAuthorization` directly from payer to
-   recipient. A change to the token, recipient, amount, or reference invalidates a signature.
+7. The router calls USDC's `transferWithAuthorization` directly from payer to recipient. A change
+   to the recipient, amount, or reference invalidates a signature.
 8. The operation stays `sending` / `settling` until an on-chain receipt is reconciled. `submitted`
    is never shown as `completed`.
 
 ## Payment router (recipient integrity without a smart wallet)
 
-`PrismPaymentRouter` accepts only its immutable AUSD and USDC addresses. Its signed payment envelope
-binds the payer, recipient, token, amount, request, resolution, validity, and nonce. The router then
-submits the matching ERC-3009 token authorization. Envio indexes `PaymentSettled` with the token.
+`PrismPaymentRouter` uses its immutable USDC address. Its signed payment envelope binds the payer,
+recipient, amount, request, resolution, validity, and nonce. The router then submits the matching
+ERC-3009 authorization. Envio indexes `PaymentSettled` without a user-selected token field.
 
 ## Claims for non-users
 
@@ -97,7 +94,7 @@ For a contact with no Prism account:
 1. App creates cryptographically random `claimId` and `recipientReference` (never phone-derived).
 2. Sender signs an ERC-3009 `ReceiveWithAuthorization` to the claim vault, with the binding nonce
    `keccak256(claimId, recipientReference, amount, from)`.
-3. Relayer calls `PrismClaimVault.createClaim(...)`, which pulls the AUSD into escrow.
+3. Relayer calls `PrismClaimVault.fundClaim(...)`, which pulls the USDC into escrow.
 4. Recipient joins Prism (creates their Mera account) and verifies the same alias.
 5. The isolated **claim authorizer** (secp256k1, KMS/HSM in production) signs an EIP-712
    `ClaimAuthorization(claimId, recipientAccount, aliasVersion, nonce, deadline)`.
@@ -137,14 +134,14 @@ payment's recipient or amount (nonce binding) — it only pays gas.
 
 ## Indexing
 
-Envio HyperIndex indexes AUSD `Transfer`, router `PrismPayment`, and vault `ClaimCreated` /
+Envio HyperIndex indexes USDC `Transfer`, router `PrismPayment`, and vault `ClaimCreated` /
 `ClaimPaid` / `ClaimRefunded` events into the product's activity feed and reconciliation view.
 
 ## Canonical sources
 
 | State | Canonical source |
 |---|---|
-| AUSD balance | Monad RPC / AUSD contract |
+| USDC balance | Monad RPC / USDC contract |
 | Signing authority | Mera passkey-derived account |
 | Payment completion | Monad transaction receipt + `PrismPayment` event |
 | Claim funds/state | PrismClaimVault |

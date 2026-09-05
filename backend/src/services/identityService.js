@@ -57,7 +57,7 @@ export class IdentityService {
       prismId, createdAt: now, updatedAt: now, aliasVersion: 1,
       displayName: null,
       account,                      // Mera passkey-derived EVM account = signing authority AND money account
-      accountAddress: account,      // canonical AUSD-holding address (same address)
+      accountAddress: account,      // canonical USDC-holding address (same address)
       phoneEncrypted: phone ? encryptString(phone, this.config.dataEncryptionKeyHex) : null,
       phoneLookupKey: key,
       phoneDiscoverable: true, handleSearchable: true, handle: null

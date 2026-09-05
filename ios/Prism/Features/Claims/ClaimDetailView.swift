@@ -31,7 +31,7 @@ struct ClaimDetailView: View {
       AmountText(dollars: Money.dollars(fromAtomic: claim.amountAtomic), size: 67)
         .padding(.top, 24)
 
-      Text(claim.tokenSymbol ?? Stablecoin.resolve(symbol: nil, address: claim.token).rawValue)
+      Text("USDC")
         .font(PrismTheme.body(12, weight: .semibold))
         .foregroundStyle(PrismTheme.mintDeep)
         .padding(.top, 6)
@@ -65,7 +65,7 @@ struct ClaimDetailView: View {
 
       if claim.refundAvailable == true {
         PrismPrimaryButton(
-          title: busy ? "Refunding…" : "Refund \(Money.assetAmount(fromAtomic: claim.amountAtomic, symbol: claim.tokenSymbol))",
+          title: busy ? "Refunding…" : "Refund \(Money.assetAmount(fromAtomic: claim.amountAtomic))",
           enabled: !busy,
           icon: "arrow.uturn.backward"
         ) {
@@ -123,7 +123,7 @@ struct ClaimDetailView: View {
       dismiss()
       model.presentReceipt = ReceiptPresentation(
         title: "Refunded",
-        amount: Money.assetAmount(fromAtomic: claim.amountAtomic, symbol: claim.tokenSymbol),
+        amount: Money.assetAmount(fromAtomic: claim.amountAtomic),
         subtitle: "Unclaimed payment returned",
         transactionHash: tx,
         status: "Completed"

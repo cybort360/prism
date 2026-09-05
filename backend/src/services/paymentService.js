@@ -4,8 +4,7 @@ import {
   claimIntentTypedData, verifyTypedData, resolutionHash, claimFundingNonce, checksum
 } from '../chain/eth.js';
 import { relaySettle, relayFundClaim, relayClaim, relayRefund, getReceipt } from '../chain/relay.js';
-import { tokenAuthorizationUsed } from '../chain/eth.js';
-import { supportedToken } from '../config.js';
+import { usdcAuthorizationUsed } from '../chain/eth.js';
 import { logger } from '../lib/logger.js';
 import { startTimer, record as recordMetric, increment } from '../lib/metrics.js';
 import { envioIndexer } from '../indexers/index.js';
@@ -43,10 +42,10 @@ export class PaymentService {
 
   // ---- direct payments -----------------------------------------------------
 
-  async preparePayment({ senderPrismId, resolution, amountAtomic, token = 'AUSD', requestId = null, memo = '' }) {
+  async preparePayment({ senderPrismId, resolution, amountAtomic, requestId = null, memo = '' }) {
     const stopPrepare = startTimer('payment_prepare_ms');
     if (!this.config.chain.paymentRouter) throw httpError(503, 'PRISM_PAYMENT_ROUTER not configured');
-    const stablecoin = supportedToken(token);
+    const stablecoin = usdcAsset(this.config);
     amountAtomic = this._paymentAmount(amountAtomic);
     const { identity: recipient, attestation } = this.assertResolution(resolution, senderPrismId);
     if (recipient.prismId === senderPrismId) throw new Error('cannot pay yourself');
@@ -58,7 +57,7 @@ export class PaymentService {
     if (requestId) {
       this.requestService.assertPayable({
         requestId, payerPrismId: senderPrismId, recipientPrismId: recipient.prismId,
-        amountAtomic, token: stablecoin.address
+        amountAtomic
       });
     }
 
@@ -69,7 +68,6 @@ export class PaymentService {
       paymentId,
       payer: checksum(sender.accountAddress),
       recipient: checksum(recipient.accountAddress),
-      token: checksum(stablecoin.address),
       amount: amountAtomic,
       requestId: requestId ? hex(sha256(Buffer.from(`request:${requestId}`))) : ZERO32,
       // resolutionHash is derived ONLY from opaque resolver data — never a phone number.
@@ -112,15 +110,14 @@ export class PaymentService {
       typedData: {
         envelope: serialize(paymentEnvelopeTypedData(env)),
         tokenAuthorization: serialize(transferAuthorizationTypedData({
-          token: stablecoin.address, from: env.payer, to: env.recipient, value: env.amount,
+          from: env.payer, to: env.recipient, value: env.amount,
           validAfter: 0, validBefore, nonce
         }))
       }
     };
   }
 
-  async submitPayment({ paymentId, prismSignature, tokenSignature, ausdSignature, actorPrismId }) {
-    tokenSignature ??= ausdSignature;
+  async submitPayment({ paymentId, prismSignature, tokenSignature, actorPrismId }) {
     const record = this.store.read().operations[paymentId];
     if (!record || record.kind !== 'payment') throw httpError(404, 'payment not found');
     if (actorPrismId && record.intent.senderPrismId !== actorPrismId) throw httpError(403, 'payment belongs to another caller');
@@ -135,7 +132,7 @@ export class PaymentService {
     const okEnvelope = await verifyTypedData(paymentEnvelopeTypedData(env), env.payer, prismSignature);
     if (!okEnvelope) throw httpError(401, 'envelope signature does not match the payer');
     const tokenTyped = transferAuthorizationTypedData({
-      token: env.token, from: env.payer, to: env.recipient, value: env.amount,
+      from: env.payer, to: env.recipient, value: env.amount,
       validAfter: 0, validBefore: env.validBefore, nonce: env.nonce
     });
     const okToken = await verifyTypedData(tokenTyped, env.payer, tokenSignature);
@@ -179,7 +176,7 @@ export class PaymentService {
    */
   async _resolveAmbiguousBroadcast(record) {
     const { operationId, env } = record;
-    const used = await tokenAuthorizationUsed(env.token, env.payer, env.nonce);
+    const used = await usdcAuthorizationUsed(env.payer, env.nonce);
     if (used) {
       // Landed (or is landing). Hand back a non-terminal state so the client polls instead of retrying.
       this.store.mutate(d => { d.operations[operationId].state = 'confirming'; });
@@ -194,9 +191,9 @@ export class PaymentService {
 
   // ---- claims --------------------------------------------------------------
 
-  async prepareClaim({ senderPrismId, recipientPhone, amountAtomic, token = 'AUSD', expirySeconds = 7 * 24 * 3600, memo = '' }) {
+  async prepareClaim({ senderPrismId, recipientPhone, amountAtomic, expirySeconds = 7 * 24 * 3600, memo = '' }) {
     if (!this.config.chain.claimVault) throw httpError(503, 'PRISM_CLAIM_VAULT not configured');
-    const stablecoin = supportedToken(token);
+    const stablecoin = usdcAsset(this.config);
     amountAtomic = this._claimAmount(amountAtomic);
     const sender = this.identityService.get(senderPrismId);
     if (!sender?.accountAddress) throw new Error('sender account not ready');
@@ -209,16 +206,15 @@ export class PaymentService {
     });
     const from = checksum(sender.accountAddress);
     const vault = checksum(this.config.chain.claimVault);
-    const tokenAddress = checksum(stablecoin.address);
-    const nonce = claimFundingNonce(claim.claimId, claim.recipientReference, tokenAddress, BigInt(amountAtomic), from);
+    const nonce = claimFundingNonce(claim.claimId, claim.recipientReference, BigInt(amountAtomic), from);
     const validBefore = Math.floor(Date.now() / 1000) + AUTH_WINDOW_SECONDS;
     const fundingArgs = {
       claimId: claim.claimId, recipientReference: claim.recipientReference, sender: from,
-      token: tokenAddress, amount: amountAtomic, expiry: claim.expiry,
+      amount: amountAtomic, expiry: claim.expiry,
       validAfter: 0, validBefore, nonce
     };
 
-    this.store.mutate(d => { d.operations[claim.claimId] = { operationId: claim.claimId, kind: 'claim-funding', state: 'prepared', fundingArgs, intent: { kind: 'claim-funding', senderPrismId, claimId: claim.claimId, amountAtomic, token: tokenAddress, tokenSymbol: stablecoin.symbol }, createdAt: new Date().toISOString(), expiresAt: new Date(validBefore * 1000).toISOString(), effectsApplied: false }; });
+    this.store.mutate(d => { d.operations[claim.claimId] = { operationId: claim.claimId, kind: 'claim-funding', state: 'prepared', fundingArgs, intent: { kind: 'claim-funding', senderPrismId, claimId: claim.claimId, amountAtomic, token: stablecoin.address, tokenSymbol: stablecoin.symbol }, createdAt: new Date().toISOString(), expiresAt: new Date(validBefore * 1000).toISOString(), effectsApplied: false }; });
     logger.info('claim.prepared', { claimId: claim.claimId, senderPrismId, amountAtomic, token: stablecoin.symbol });
 
     return {
@@ -227,7 +223,7 @@ export class PaymentService {
       expiresAt: new Date(validBefore * 1000).toISOString(),
       asset: publicToken(stablecoin),
       typedData: serialize(receiveAuthorizationTypedData({
-        token: tokenAddress, from, to: vault, value: amountAtomic, validAfter: 0, validBefore, nonce
+        from, to: vault, value: amountAtomic, validAfter: 0, validBefore, nonce
       }))
     };
   }
@@ -242,7 +238,7 @@ export class PaymentService {
 
     const a = record.fundingArgs;
     const typed = receiveAuthorizationTypedData({
-      token: a.token, from: a.sender, to: checksum(this.config.chain.claimVault), value: a.amount,
+      from: a.sender, to: checksum(this.config.chain.claimVault), value: a.amount,
       validAfter: 0, validBefore: a.validBefore, nonce: a.nonce
     });
     if (!(await verifyTypedData(typed, a.sender, signature))) throw httpError(401, 'funding signature does not match the sender');
@@ -271,7 +267,7 @@ export class PaymentService {
   /** Chain-truth resolution for a claim funding whose broadcast outcome is unknown (MUT-16). */
   async _resolveAmbiguousClaimFunding(record) {
     const { operationId, fundingArgs } = record;
-    const used = await tokenAuthorizationUsed(fundingArgs.token, fundingArgs.sender, fundingArgs.nonce);
+    const used = await usdcAuthorizationUsed(fundingArgs.sender, fundingArgs.nonce);
     if (used) {
       this.store.mutate(d => { d.operations[operationId].state = 'confirming'; });
       logger.warn('claim.funding.broadcast.reconciled', { claimId: operationId, authorizationUsed: true });
@@ -468,6 +464,9 @@ function isPreBroadcastFailure(error) {
 function serialize(obj) { return JSON.parse(JSON.stringify(obj, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))); }
 function publicToken(token) {
   return { symbol: token.symbol, name: token.name, address: token.address, decimals: token.decimals };
+}
+function usdcAsset(config) {
+  return { symbol: 'USDC', name: 'USD Coin', address: config.chain.usdc, decimals: config.chain.usdcDecimals };
 }
 function publicOp(r) {
   return {

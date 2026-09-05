@@ -73,7 +73,7 @@ test('LEAK-01 no raw phone number is ever persisted to the datastore', async () 
   resolver.resolvePhone(identity.prismId, OTHER_PHONE);  // a miss still touches rate-limit state
   claims.createPending({
     senderPrismId: identity.prismId, recipientPhoneLookupKey: 'opaque', amountAtomic: '20000000',
-    token: '0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC'
+    token: '0x534b2f3A21130d7a60830c2Df862319e593943A3'
   });
 
   const persisted = fs.readFileSync(file, 'utf8');

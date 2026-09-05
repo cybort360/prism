@@ -38,10 +38,9 @@ test('HTTP contract exposes Swift-required routes and rejects unsigned identity 
     const base = `http://127.0.0.1:${port}`;
     await waitFor(`${base}/health`);
     const cfg = await (await fetch(`${base}/v1/config`)).json();
-    assert.equal(cfg.ausd.toLowerCase(), '0xa9012a055bd4e0edff8ce09f960291c09d5322dc');
-    assert.equal(cfg.ausdDecimals, 6);
     assert.equal(cfg.usdc.toLowerCase(), '0x534b2f3a21130d7a60830c2df862319e593943a3');
-    assert.deepEqual(cfg.tokens.map(token => token.symbol), ['AUSD', 'USDC']);
+    assert.equal(cfg.usdcDecimals, 6);
+    assert.equal(cfg.asset.symbol, 'USDC');
     assert.equal(cfg.chainId, '10143');
 
     const owner = meraAccount(PK_A);

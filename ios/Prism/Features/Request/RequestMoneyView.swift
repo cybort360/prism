@@ -6,7 +6,6 @@ struct RequestMoneyView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var amount = ""
   @State private var memo = ""
-  @State private var asset: Stablecoin = .ausd
   @State private var busy = false
   @State private var error: String?
   @State private var sent = false
@@ -32,7 +31,9 @@ struct RequestMoneyView: View {
 
         Spacer().frame(height: 24)
         AmountText(dollars: displayAmount, size: 78)
-        StablecoinPicker(selection: $asset)
+        Text("USDC")
+          .font(PrismTheme.body(12, weight: .semibold))
+          .foregroundStyle(PrismTheme.mintDeep)
           .padding(.top, 8)
 
         HStack(spacing: 9) {
@@ -75,7 +76,7 @@ struct RequestMoneyView: View {
               Image(systemName: "checkmark").font(.system(size: 29, weight: .semibold)).foregroundStyle(PrismTheme.mintDeep)
             )
             Text("Request sent").font(PrismTheme.display(34))
-            Text("\(displayAmount) \(asset.rawValue) requested from \(target.contact.name).")
+            Text("\(displayAmount) USDC requested from \(target.contact.name).")
               .font(PrismTheme.body(14))
               .foregroundStyle(PrismTheme.muted)
               .multilineTextAlignment(.center)
@@ -111,7 +112,6 @@ struct RequestMoneyView: View {
       let draft = try await PrismAPI.shared.draftRequest(
         payerPrismId: payer,
         amountAtomic: atomic,
-        token: asset.rawValue,
         memo: memo
       )
       _ = try await PrismAPI.shared.commitRequest(draft)

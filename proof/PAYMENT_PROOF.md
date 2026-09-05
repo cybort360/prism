@@ -3,37 +3,37 @@
 **Status: BLOCKED on testnet. No supported stablecoin has moved on Monad by this codebase.**
 
 There is no tx hash, no block, and no deployed router. The end-to-end "magical moment" — iPhone A →
-Contacts → Tobi → $20 → Face ID → Mera sign → router → AUSD → Monad — **has not been executed**.
+Contacts → Tobi → $20 → Face ID → Mera sign → router → USDC → Monad — **has not been executed**.
 Blockers and the unblock sequence: `TESTNET_DEPLOYMENT.md`.
 
 ## What is proven locally
 
-The payment mechanism is proven against a signature-faithful AUSD whose EIP-712 domain is
-byte-identical to the live token (`AGORA_AUSD_PROOF.md`), so a signature valid here is valid there.
+The payment mechanism is proven against a signature-faithful USDC mock using Circle's EIP-712
+domain, so a signature valid in the local test exercises the same ERC-3009 digest shape.
 
 `contracts/test/PrismPaymentRouter.t.sol::testDirectPaymentSucceeds`:
 
 | | Value |
 |---|---|
 | Contract | `PrismPaymentRouter` (local EVM, Foundry) |
-| Token | `MockAUSD`, domain `Agora Dollar`/`1`, 6 decimals — matches live AUSD's `DOMAIN_SEPARATOR` |
-| Amount | `25_000000` (25 AUSD) |
-| Payer AUSD before | `1_000_000000` |
-| Payer AUSD after | `975_000000` |
-| Recipient AUSD before | `0` |
-| Recipient AUSD after | `25_000000` |
-| Event | `PaymentSettled(paymentId, payer, recipient, token, 25e6, requestId, resolutionHash)` asserted with `vm.expectEmit(true,true,true,true)` |
+| Token | `MockUSDC`, domain `USDC`/`2`, 6 decimals |
+| Amount | `25_000000` (25 USDC) |
+| Payer USDC before | `1_000_000000` |
+| Payer USDC after | `975_000000` |
+| Recipient USDC before | `0` |
+| Recipient USDC after | `25_000000` |
+| Event | `PaymentSettled(paymentId, payer, recipient, 25e6, requestId, resolutionHash)` asserted with `vm.expectEmit(true,true,true,true)` |
 | Submitted by | `relayer` (`vm.prank`), not the payer |
 
-The payer's two signatures are cross-bound: the AUSD authorization the router submits takes its
+The payer's two signatures are cross-bound: the USDC authorization the router submits takes its
 `to`, `value`, and `nonce` from the envelope, so a relayer that rewrites recipient, amount, or
-reference invalidates the envelope signature *and* AUSD's own `ecrecover`. Mutation coverage:
+reference invalidates the envelope signature *and* USDC's own `ecrecover`. Mutation coverage:
 `testModifiedAmountRejected`, `testModifiedRecipientRejected`, `testModifiedRequestIdRejected`,
 `testWrongSignerRejected`, `testReplayRejected`, `testPaymentIdReuseRejected`,
-`testExpiredPaymentRejected`, `testUnsupportedTokenRejected`, plus fuzz runs of
+`testExpiredPaymentRejected`, plus fuzz runs of
 `testFuzz_directPayment` and `testFuzz_wrongSignerAlwaysRejected`.
 
-`testUsdcPaymentSucceeds` and `testUsdcClaimSucceeds` prove the USDC payment and pre-user claim paths
+`testDirectPaymentSucceeds` and `testClaimFundingSucceeds` prove the payment and pre-user claim paths
 with USDC's `USDC` / `2` EIP-712 domain.
 
 Backend orchestration is proven in `backend/test/infra.test.js` and `mutation-audit.test.js`:

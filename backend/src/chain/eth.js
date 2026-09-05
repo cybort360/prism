@@ -3,7 +3,7 @@ import {
   recoverTypedDataAddress, recoverMessageAddress, isAddress, getAddress
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { config, supportedToken } from '../config.js';
+import { config, usdcToken } from '../config.js';
 import { chainProvider } from '../providers/index.js';
 // Chain clients live in the Alchemy provider; re-exported here for existing importers.
 import { monad, publicClient, relayerAccount, relayerWallet } from '../providers/alchemyProvider.js';
@@ -14,7 +14,7 @@ export { monad, publicClient, relayerAccount, relayerWallet };
  * All EVM/Monad interaction for Prism's stablecoin execution layer.
  *
  * Prism never holds a user's key. The payer's Mera passkey-derived account signs (1) a Prism
- * EIP-712 PaymentEnvelope and (2) an allowlisted token's ERC-3009 authorization; this module builds those
+ * EIP-712 PaymentEnvelope and (2) USDC's ERC-3009 authorization; this module builds those
  * payloads, verifies the returned signatures, and a MON-funded relayer submits so the user holds
  * MON = 0. The isolated claim authorizer (secp256k1) signs pre-user claim eligibility.
  */
@@ -32,8 +32,8 @@ export function claimAuthorizerAddress() { return getAddress(claimAuthorizerAcco
 
 // ---- EIP-712: token domains + ERC-3009 authorizations ----------------------
 
-export function tokenDomain(token = 'AUSD') {
-  const definition = supportedToken(token);
+export function usdcDomain() {
+  const definition = usdcToken();
   return {
     name: definition.domain.name,
     version: definition.domain.version,
@@ -42,27 +42,25 @@ export function tokenDomain(token = 'AUSD') {
   };
 }
 
-export function ausdDomain() { return tokenDomain('AUSD'); }
-
 const ERC3009_FIELDS = [
   { name: 'from', type: 'address' }, { name: 'to', type: 'address' }, { name: 'value', type: 'uint256' },
   { name: 'validAfter', type: 'uint256' }, { name: 'validBefore', type: 'uint256' }, { name: 'nonce', type: 'bytes32' }
 ];
 
-/** Allowlisted token `TransferWithAuthorization`, the direct-payment primitive. */
-export function transferAuthorizationTypedData({ token = 'AUSD', from, to, value, validAfter, validBefore, nonce }) {
+/** USDC `TransferWithAuthorization`, the direct-payment primitive. */
+export function transferAuthorizationTypedData({ from, to, value, validAfter, validBefore, nonce }) {
   return {
-    domain: tokenDomain(token),
+    domain: usdcDomain(),
     primaryType: 'TransferWithAuthorization',
     types: { TransferWithAuthorization: ERC3009_FIELDS },
     message: { from: getAddress(from), to: getAddress(to), value: BigInt(value), validAfter: BigInt(validAfter), validBefore: BigInt(validBefore), nonce }
   };
 }
 
-/** Allowlisted token `ReceiveWithAuthorization`, used when a claim vault pulls funding. */
-export function receiveAuthorizationTypedData({ token = 'AUSD', from, to, value, validAfter, validBefore, nonce }) {
+/** USDC `ReceiveWithAuthorization`, used when a claim vault pulls funding. */
+export function receiveAuthorizationTypedData({ from, to, value, validAfter, validBefore, nonce }) {
   return {
-    domain: tokenDomain(token),
+    domain: usdcDomain(),
     primaryType: 'ReceiveWithAuthorization',
     types: { ReceiveWithAuthorization: ERC3009_FIELDS },
     message: { from: getAddress(from), to: getAddress(to), value: BigInt(value), validAfter: BigInt(validAfter), validBefore: BigInt(validBefore), nonce }
@@ -73,7 +71,7 @@ export function receiveAuthorizationTypedData({ token = 'AUSD', from, to, value,
 
 const PAYMENT_ENVELOPE_FIELDS = [
   { name: 'paymentId', type: 'bytes32' }, { name: 'payer', type: 'address' }, { name: 'recipient', type: 'address' },
-  { name: 'token', type: 'address' }, { name: 'amount', type: 'uint256' }, { name: 'requestId', type: 'bytes32' },
+  { name: 'amount', type: 'uint256' }, { name: 'requestId', type: 'bytes32' },
   { name: 'resolutionHash', type: 'bytes32' }, { name: 'validBefore', type: 'uint256' }, { name: 'nonce', type: 'bytes32' }
 ];
 
@@ -84,7 +82,7 @@ export function paymentEnvelopeTypedData(env) {
     types: { PaymentEnvelope: PAYMENT_ENVELOPE_FIELDS },
     message: {
       paymentId: env.paymentId, payer: getAddress(env.payer), recipient: getAddress(env.recipient),
-      token: getAddress(env.token), amount: BigInt(env.amount), requestId: env.requestId,
+      amount: BigInt(env.amount), requestId: env.requestId,
       resolutionHash: env.resolutionHash, validBefore: BigInt(env.validBefore), nonce: env.nonce
     }
   };
@@ -141,10 +139,10 @@ export async function recoverAccountMessageDebug(message, signature) {
 
 // ---- deterministic nonces --------------------------------------------------
 
-export function claimFundingNonce(claimId, recipientReference, token, amount, from) {
+export function claimFundingNonce(claimId, recipientReference, amount, from) {
   return keccak256(encodeAbiParameters(
-    parseAbiParameters('bytes32, bytes32, address, uint256, address'),
-    [claimId, recipientReference, getAddress(token), BigInt(amount), getAddress(from)]
+    parseAbiParameters('bytes32, bytes32, uint256, address'),
+    [claimId, recipientReference, BigInt(amount), getAddress(from)]
   ));
 }
 
@@ -170,8 +168,8 @@ export function splitSignature(signature) {
 
 // ---- chain reads / integrity checks ----------------------------------------
 
-export async function tokenBalanceOf(token, address) {
-  const definition = supportedToken(token);
+export async function usdcBalanceOf(address) {
+  const definition = usdcToken();
   return chainProvider().readContract({
     address: getAddress(definition.address),
     abi: [{ name: 'balanceOf', type: 'function', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'uint256' }] }],
@@ -180,18 +178,16 @@ export async function tokenBalanceOf(token, address) {
   });
 }
 
-export async function ausdBalanceOf(address) { return tokenBalanceOf('AUSD', address); }
-
 /**
  * Has this ERC-3009 authorization already been consumed on-chain?
  *
  * This is the authoritative answer to "did my broadcast actually land?" when a relayer response is
- * lost in flight. AUSD marks `(authorizer, nonce)` used inside the same transaction that moves the
+ * lost in flight. USDC marks `(authorizer, nonce)` used inside the same transaction that moves the
  * money, so a `true` here means the payment settled (or the nonce was cancelled) and the submission
  * must be reconciled from the chain rather than blindly re-broadcast.
  */
-export async function tokenAuthorizationUsed(token, authorizer, nonce) {
-  const definition = supportedToken(token);
+export async function usdcAuthorizationUsed(authorizer, nonce) {
+  const definition = usdcToken();
   return chainProvider().readContract({
     address: getAddress(definition.address),
     abi: [{
@@ -202,10 +198,6 @@ export async function tokenAuthorizationUsed(token, authorizer, nonce) {
     functionName: 'authorizationState',
     args: [getAddress(authorizer), nonce]
   });
-}
-
-export async function ausdAuthorizationUsed(authorizer, nonce) {
-  return tokenAuthorizationUsed('AUSD', authorizer, nonce);
 }
 
 /** Native MON balance — used by the proof surface to show a payer can pay with MON = 0. */
@@ -219,9 +211,9 @@ export async function verifyChainId() {
   return { ok: onchain === chainId, onchain, configured: chainId };
 }
 
-/** Verify-don't-trust: recompute AUSD's domain separator and compare to the token's own. */
-export async function verifyTokenDomain(token) {
-  const definition = supportedToken(token);
+/** Recompute USDC's domain separator and compare it to the token's own value. */
+export async function verifyUsdcDomain() {
+  const definition = usdcToken();
   const onchain = await chainProvider().readContract({
     address: getAddress(definition.address),
     abi: [{ name: 'DOMAIN_SEPARATOR', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'bytes32' }] }],
@@ -240,8 +232,6 @@ export async function verifyTokenDomain(token) {
   ));
   return { ok: onchain.toLowerCase() === local.toLowerCase(), onchain, local };
 }
-
-export async function verifyAusdDomain() { return verifyTokenDomain('AUSD'); }
 
 export function isEvmAddress(value) { return typeof value === 'string' && isAddress(value); }
 export function checksum(value) { return getAddress(value); }

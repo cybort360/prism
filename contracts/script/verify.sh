@@ -18,7 +18,7 @@ VERIFIER="${MONAD_VERIFIER:-sourcify}"
 
 if [ ! -f "$MANIFEST" ]; then echo "manifest not found: $MANIFEST"; exit 1; fi
 
-AUSD=$(jq -r .ausd "$MANIFEST")
+USDC=$(jq -r .usdc "$MANIFEST")
 ROUTER=$(jq -r .paymentRouter "$MANIFEST")
 VAULT=$(jq -r .claimVault "$MANIFEST")
 AUTHORIZER=$(jq -r .claimAuthorizer "$MANIFEST")
@@ -32,11 +32,11 @@ fi
 echo "Verifying PrismPaymentRouter @ $ROUTER"
 forge verify-contract "$ROUTER" src/PrismPaymentRouter.sol:PrismPaymentRouter \
   --chain-id "$CHAIN_ID" --verifier "$VERIFIER" --verifier-url "$VERIFIER_URL" \
-  --constructor-args "$(cast abi-encode 'constructor(address)' "$AUSD")" --watch
+  --constructor-args "$(cast abi-encode 'constructor(address)' "$USDC")" --watch
 
 echo "Verifying PrismClaimVault @ $VAULT"
 forge verify-contract "$VAULT" src/PrismClaimVault.sol:PrismClaimVault \
   --chain-id "$CHAIN_ID" --verifier "$VERIFIER" --verifier-url "$VERIFIER_URL" \
-  --constructor-args "$(cast abi-encode 'constructor(address,address,address)' "$DEPLOYER" "$AUSD" "$AUTHORIZER")" --watch
+  --constructor-args "$(cast abi-encode 'constructor(address,address,address)' "$DEPLOYER" "$USDC" "$AUTHORIZER")" --watch
 
 echo "Verification submitted for both contracts."

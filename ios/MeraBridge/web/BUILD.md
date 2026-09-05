@@ -26,7 +26,7 @@ npm run build      # → ios/Prism/Resources/MeraWeb/mera-bridge.js (esbuild bun
 | `createAccount`    | `createPasskeyWithPrfOutput` → `getEvmAddress` → `createSecp256k1SigningSession` |
 | `restoreAccount`   | `getPasskeyPrfOutput` → `getEvmAddress` → `createSecp256k1SigningSession`        |
 | `signMessage`      | session `signMessage` (EIP-191)                             |
-| `signTypedData`    | session `signTypedData` (EIP-712, AUSD ERC-3009)           |
+| `signTypedData`    | session `signTypedData` (EIP-712, USDC ERC-3009)           |
 | `revokeSession`    | session `end()` (zeros the warm key)                        |
 
 Confirm the exact option shapes against the current Mera API reference at

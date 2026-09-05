@@ -5,23 +5,6 @@ struct MoneyKeypad: View {
   var body: some View { DigitPad(value: $value, maxDigits: 10, allowsDecimal: true) }
 }
 
-struct StablecoinPicker: View {
-  @Binding var selection: Stablecoin
-  var locked = false
-
-  var body: some View {
-    Picker("Asset", selection: $selection) {
-      ForEach(Stablecoin.allCases) { asset in
-        Text(asset.rawValue).tag(asset)
-      }
-    }
-    .pickerStyle(.segmented)
-    .disabled(locked)
-    .frame(maxWidth: 230)
-    .accessibilityHint(locked ? "This payment request fixes the asset" : "Choose AUSD or USDC")
-  }
-}
-
 struct PaymentAuthorizationSheet: View {
   let amount: String
   let approve: (String?, Bool) -> Void

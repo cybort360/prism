@@ -36,35 +36,9 @@ struct AuthResponse: Codable {
 }
 struct BalanceResponse: Codable {
   let token: String
+  let symbol: String
   let amountAtomic: String
   let decimals: Int
-}
-
-enum Stablecoin: String, CaseIterable, Codable, Identifiable {
-  case ausd = "AUSD"
-  case usdc = "USDC"
-
-  var id: String { rawValue }
-  var name: String {
-    switch self {
-    case .ausd: "Agora Dollar"
-    case .usdc: "USD Coin"
-    }
-  }
-
-  static func resolve(symbol: String?, address: String?) -> Stablecoin {
-    if let symbol, let asset = Stablecoin(rawValue: symbol.uppercased()) { return asset }
-    if let address {
-      let knownUSDC = [
-        "0x534b2f3A21130d7a60830c2Df862319e593943A3",
-        "0x754704Bc059F8C67012fEd69BC8A327a5aafb603"
-      ]
-      if knownUSDC.contains(where: { $0.caseInsensitiveCompare(address) == .orderedSame }) {
-        return .usdc
-      }
-    }
-    return .ausd
-  }
 }
 
 struct TokenConfig: Codable, Identifiable, Equatable {
@@ -75,19 +49,6 @@ struct TokenConfig: Codable, Identifiable, Equatable {
   let decimals: Int
 }
 
-struct TokenBalance: Codable, Identifiable, Equatable {
-  var id: String { symbol }
-  let symbol: String
-  let name: String
-  let address: String
-  let decimals: Int
-  let amountAtomic: String
-}
-
-struct BalancesResponse: Codable {
-  let balances: [TokenBalance]
-}
-
 struct PublicServiceKey: Codable, Hashable {
   let qx: String
   let qy: String
@@ -95,10 +56,9 @@ struct PublicServiceKey: Codable, Hashable {
 }
 struct PrismNetworkConfig: Codable {
   let chainId: String
-  let ausd: String
-  let usdc: String?
-  let ausdDecimals: Int
-  let tokens: [TokenConfig]?
+  let usdc: String
+  let usdcDecimals: Int
+  let asset: TokenConfig
   let paymentRouter: String?
   let claimVault: String?
   let resolverPublicKey: PublicServiceKey?
@@ -138,7 +98,7 @@ struct PreparedIntent: Codable {
 }
 
 /// A direct payment prepared by the backend. The Mera account signs BOTH the Prism `envelope`
-/// (metadata binding) and the AUSD `ausd` transfer authorization; the router cross-binds them.
+/// (metadata binding) and the USDC transfer authorization. The router cross-binds them.
 struct PreparedPayment: Codable {
   let paymentId: String
   let asset: TokenConfig?
@@ -150,26 +110,9 @@ struct TypedDataPair: Codable {
   let envelope: JSONValue
   let tokenAuthorization: JSONValue
 
-  enum CodingKeys: String, CodingKey { case envelope, tokenAuthorization, ausd }
-
-  init(from decoder: Decoder) throws {
-    let values = try decoder.container(keyedBy: CodingKeys.self)
-    envelope = try values.decode(JSONValue.self, forKey: .envelope)
-    if let authorization = try values.decodeIfPresent(JSONValue.self, forKey: .tokenAuthorization) {
-      tokenAuthorization = authorization
-    } else {
-      tokenAuthorization = try values.decode(JSONValue.self, forKey: .ausd)
-    }
-  }
-
-  func encode(to encoder: Encoder) throws {
-    var values = encoder.container(keyedBy: CodingKeys.self)
-    try values.encode(envelope, forKey: .envelope)
-    try values.encode(tokenAuthorization, forKey: .tokenAuthorization)
-  }
 }
 
-/// A claim funding prepared by the backend — the sender signs the AUSD receive authorization.
+/// A claim funding prepared by the backend. The sender signs the USDC receive authorization.
 struct PreparedClaim: Codable {
   let claimId: String
   let asset: TokenConfig?
@@ -283,7 +226,6 @@ struct SendTarget: Identifiable {
   let contact: ContactPerson
   let resolution: ResolutionResponse
   var requestId: String? = nil
-  var requestedAsset: Stablecoin? = nil
 }
 
 struct PaymentRequestRecord: Codable, Identifiable, Equatable {
@@ -408,14 +350,13 @@ enum Money {
     var divisor = Decimal(1)
     for _ in 0..<decimals { divisor *= 10 }
     let amount = n / divisor
-    // Deterministic "$" formatting (locale-independent) — Prism shows dollar-denominated AUSD.
+    // Deterministic dollar formatting for USDC amounts.
     return NSDecimalNumber(decimal: amount).doubleValue.formatted(
       .currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))
   }
-  static func assetAmount(fromAtomic value: String, symbol: String?, decimals: Int = 6) -> String {
+  static func assetAmount(fromAtomic value: String, decimals: Int = 6) -> String {
     let amount = dollars(fromAtomic: value, decimals: decimals)
-    guard let symbol, !symbol.isEmpty else { return amount }
-    return "\(amount) \(symbol)"
+    return "\(amount) USDC"
   }
   static func atomic(fromDollars text: String, decimals: Int = 6) -> String? {
     let cleaned = text.replacingOccurrences(of: "$", with: "").replacingOccurrences(

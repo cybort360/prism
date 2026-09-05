@@ -48,12 +48,12 @@ actions live inside Home: **Send, Request, Scan, Add money**. Modal flows are Sw
 `SwiftUI View → PrismAPI (typed request) → APIClient (URLSession, bearer session, Idempotency-Key)
 → Prism backend`. `AppModel` (@MainActor ObservableObject) holds the session-derived identity and
 presentation state. Money state is never trusted from the app — balances and payment completion come
-from the backend, which treats Monad/AUSD as canonical.
+from the backend, which treats Monad/USDC as canonical.
 
 ## Payment flow (envelope)
 
 `PaymentCoordinator` runs: **prepare → local approval (PIN / Face ID) → Mera signs the Prism
-PaymentEnvelope + the AUSD authorization → submit → poll status**. "Submitted" is never shown as
+PaymentEnvelope + the USDC authorization → submit → poll status**. "Submitted" is never shown as
 success; the terminal state comes from a reconciled receipt. See MERA_INTEGRATION.md for the
 signing detail.
 

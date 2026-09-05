@@ -36,17 +36,17 @@ Swift  ──MeraAccountService──▶  MeraAccountManager  ──▶  WKWebVi
 | Onboarding proof | personal_sign of `{action:"bind_account",account}` | EIP-191 |
 | Identity mutation | personal_sign of the canonical action payload | EIP-191 |
 | Request commit | personal_sign of the request signable | EIP-191 |
-| Direct payment | EIP-712 `PaymentEnvelope` **and** AUSD `TransferWithAuthorization` | PrismPaymentRouter / Agora Dollar |
-| Claim funding | EIP-712 AUSD `ReceiveWithAuthorization` | Agora Dollar |
+| Direct payment | EIP-712 `PaymentEnvelope` **and** USDC `TransferWithAuthorization` | PrismPaymentRouter / Circle USDC |
+| Claim funding | EIP-712 USDC `ReceiveWithAuthorization` | Circle USDC |
 | Claim collection | EIP-712 `ClaimIntent` | PrismClaimVault |
 
 ## Normal payment sequence
 
 ```
-prepare (backend builds envelope + AUSD typed data)
+prepare (backend builds envelope + USDC typed data)
   → PIN or Face ID (local approval gate)
   → Mera beginSession(.payments)
-  → signTypedData(envelope) + signTypedData(ausd)
+  → signTypedData(envelope) + signTypedData(usdc)
   → POST /v1/payments/submit (relayer pays MON, submits PrismPaymentRouter.settle)
   → poll GET /v1/payments/:id until a receipt reconciles
 ```

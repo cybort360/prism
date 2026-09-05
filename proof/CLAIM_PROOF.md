@@ -4,7 +4,7 @@
 
 The "David is not registered → send $20 anyway → iPhone B installs, verifies the matching phone,
 creates a Mera account, sees '$20 waiting', claims" sequence **has not been executed**. It needs a
-deployed vault, a funded relayer, test AUSD, and two physical iPhones — none available here. See
+deployed vault, a funded relayer, test USDC, and two physical iPhones — none available here. See
 `TESTNET_DEPLOYMENT.md`.
 
 ## What is proven locally
@@ -14,7 +14,7 @@ deployed vault, a funded relayer, test AUSD, and two physical iPhones — none a
 
 ### Funding — `testClaimFundingSucceeds`
 
-Funded through AUSD `receiveWithAuthorization`, which requires `to == msg.sender`, so only the vault
+Funded through USDC `receiveWithAuthorization`, which requires `to == msg.sender`, so only the vault
 can pull the money and it happens atomically with recording the claim — no orphaned deposits. The
 ERC-3009 nonce must equal `fundingNonce(claimId, recipientReference, amount, sender)`, so the
 sender's signature commits to exactly this claim and a relayer cannot repoint it
@@ -24,8 +24,8 @@ sender's signature commits to exactly this claim and a relayer cannot repoint it
 
 | | Value |
 |---|---|
-| Recipient AUSD before | `0` |
-| Recipient AUSD after | `amount` |
+| Recipient USDC before | `0` |
+| Recipient USDC after | `amount` |
 | Requires | backend `ClaimEligibility` signature **and** the recipient's own Mera `ClaimIntent` |
 | Submitted by | `relayer` (`vm.prank`) |
 

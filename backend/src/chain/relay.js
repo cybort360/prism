@@ -13,7 +13,7 @@ import { chainProvider } from '../providers/index.js';
 const PAYMENT_ENVELOPE_TUPLE = {
   name: 'env', type: 'tuple', components: [
     { name: 'paymentId', type: 'bytes32' }, { name: 'payer', type: 'address' }, { name: 'recipient', type: 'address' },
-    { name: 'token', type: 'address' }, { name: 'amount', type: 'uint256' }, { name: 'requestId', type: 'bytes32' },
+    { name: 'amount', type: 'uint256' }, { name: 'requestId', type: 'bytes32' },
     { name: 'resolutionHash', type: 'bytes32' }, { name: 'validBefore', type: 'uint256' }, { name: 'nonce', type: 'bytes32' }
   ]
 };
@@ -28,7 +28,6 @@ const VAULT_ABI = [
     type: 'function', name: 'fundClaim', stateMutability: 'nonpayable', outputs: [],
     inputs: [
       { name: 'claimId', type: 'bytes32' }, { name: 'recipientReference', type: 'bytes32' }, { name: 'sender', type: 'address' },
-      { name: 'token', type: 'address' },
       { name: 'amount', type: 'uint256' }, { name: 'expiry', type: 'uint256' }, { name: 'validAfter', type: 'uint256' },
       { name: 'validBefore', type: 'uint256' }, { name: 'nonce', type: 'bytes32' },
       { name: 'v', type: 'uint8' }, { name: 'r', type: 'bytes32' }, { name: 's', type: 'bytes32' }
@@ -50,12 +49,6 @@ function assertAllowedContract(address) {
     throw httpError(400, 'destination is not an allowlisted Prism contract');
   }
 }
-function assertAllowedToken(address) {
-  if (!config.chain.tokenAllowlist.includes(String(address).toLowerCase())) {
-    throw httpError(400, 'token is not allowlisted');
-  }
-}
-
 /** Simulate then submit a single, fixed-shape call to an allowlisted contract (via Alchemy). */
 async function simulateAndWrite({ address, abi, functionName, args }) {
   assertAllowedContract(address);
@@ -66,22 +59,20 @@ async function simulateAndWrite({ address, abi, functionName, args }) {
 }
 
 export async function relaySettle({ env, prismSignature, tokenSignature }) {
-  assertAllowedToken(env.token);
   const { v, r, s } = splitSignature(tokenSignature);
   const tuple = {
     paymentId: env.paymentId, payer: getAddress(env.payer), recipient: getAddress(env.recipient),
-    token: getAddress(env.token), amount: BigInt(env.amount), requestId: env.requestId,
+    amount: BigInt(env.amount), requestId: env.requestId,
     resolutionHash: env.resolutionHash, validBefore: BigInt(env.validBefore), nonce: env.nonce
   };
   return simulateAndWrite({ address: config.chain.paymentRouter, abi: ROUTER_ABI, functionName: 'settle', args: [tuple, prismSignature, v, r, s] });
 }
 
-export async function relayFundClaim({ claimId, recipientReference, sender, token, amount, expiry, validAfter, validBefore, nonce, signature }) {
-  assertAllowedToken(token);
+export async function relayFundClaim({ claimId, recipientReference, sender, amount, expiry, validAfter, validBefore, nonce, signature }) {
   const { v, r, s } = splitSignature(signature);
   return simulateAndWrite({
     address: config.chain.claimVault, abi: VAULT_ABI, functionName: 'fundClaim',
-    args: [claimId, recipientReference, getAddress(sender), getAddress(token), BigInt(amount), BigInt(expiry), BigInt(validAfter), BigInt(validBefore), nonce, v, r, s]
+    args: [claimId, recipientReference, getAddress(sender), BigInt(amount), BigInt(expiry), BigInt(validAfter), BigInt(validBefore), nonce, v, r, s]
   });
 }
 

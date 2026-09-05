@@ -70,9 +70,9 @@ test('payment path uses the Alchemy provider AND the Envio consumer, and records
 
     const env = prepared.envelope;
     const prismSignature = await payer.signTypedData(paymentEnvelopeTypedData(env));
-    const ausdSignature = await payer.signTypedData(transferAuthorizationTypedData({ from: env.payer, to: env.recipient, value: env.amount, validAfter: 0, validBefore: env.validBefore, nonce: env.nonce }));
+    const tokenSignature = await payer.signTypedData(transferAuthorizationTypedData({ from: env.payer, to: env.recipient, value: env.amount, validAfter: 0, validBefore: env.validBefore, nonce: env.nonce }));
 
-    const submit = await paymentService.submitPayment({ paymentId: prepared.paymentId, prismSignature, ausdSignature, actorPrismId: 'payer' });
+    const submit = await paymentService.submitPayment({ paymentId: prepared.paymentId, prismSignature, tokenSignature, actorPrismId: 'payer' });
     assert.equal(submit.state, 'submitted');
     // Alchemy provider path exercised: simulate + submit.
     assert.ok(mockChain.calls.simulateContract >= 1, 'simulateContract used');
@@ -115,8 +115,8 @@ test('completed payment stays "not indexed" until Envio catches up (no fake comp
     const prepared = await paymentService.preparePayment({ senderPrismId: 'payer', resolution, amountAtomic: '10000000' });
     const env = prepared.envelope;
     const prismSignature = await payer.signTypedData(paymentEnvelopeTypedData(env));
-    const ausdSignature = await payer.signTypedData(transferAuthorizationTypedData({ from: env.payer, to: env.recipient, value: env.amount, validAfter: 0, validBefore: env.validBefore, nonce: env.nonce }));
-    await paymentService.submitPayment({ paymentId: prepared.paymentId, prismSignature, ausdSignature, actorPrismId: 'payer' });
+    const tokenSignature = await payer.signTypedData(transferAuthorizationTypedData({ from: env.payer, to: env.recipient, value: env.amount, validAfter: 0, validBefore: env.validBefore, nonce: env.nonce }));
+    await paymentService.submitPayment({ paymentId: prepared.paymentId, prismSignature, tokenSignature, actorPrismId: 'payer' });
     const reconciled = await paymentService.reconcile(prepared.paymentId, 'payer');
     assert.equal(reconciled.state, 'completed');   // chain confirmed
     assert.equal(reconciled.indexed, false);        // Envio lagging → honest indexing state, not faked

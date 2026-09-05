@@ -1,5 +1,5 @@
-import { config, supportedToken } from '../config.js';
-import { tokenBalanceOf, monBalanceOf } from '../chain/eth.js';
+import { config } from '../config.js';
+import { usdcBalanceOf, monBalanceOf } from '../chain/eth.js';
 import { chainProvider } from '../providers/index.js';
 import { envioIndexer } from '../indexers/index.js';
 
@@ -20,11 +20,10 @@ export class ProofService {
   async build(paymentId, actorPrismId) {
     const op = await this.paymentService.proofFor(paymentId, actorPrismId);
     const env = op.env;
-    const token = supportedToken(env.token);
     const [senderMon, senderToken, recipientToken] = await Promise.all([
       monBalanceOf(env.payer).catch(() => null),
-      tokenBalanceOf(token.symbol, env.payer).catch(() => null),
-      tokenBalanceOf(token.symbol, env.recipient).catch(() => null)
+      usdcBalanceOf(env.payer).catch(() => null),
+      usdcBalanceOf(env.recipient).catch(() => null)
     ]);
     const useEnvio = envioIndexer().available();
     const envioProof = useEnvio ? await envioIndexer().getPayment(paymentId) : null;
@@ -37,8 +36,8 @@ export class ProofService {
 
     return {
       network: { chainId: config.chain.chainId.toString(), rpcHost: chainProvider().rpcHost, provider: chainProvider().name },
-      token: token.address,
-      tokenSymbol: token.symbol,
+      token: config.chain.usdc,
+      tokenSymbol: 'USDC',
       meraAccount: env.payer,
       recipient: env.recipient,
       amountAtomic: env.amount,

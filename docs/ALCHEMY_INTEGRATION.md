@@ -16,8 +16,8 @@ canonical states — the chain is canonical, Alchemy reads/writes it live, Envio
 
 | Use | Provider method | Call site |
 |---|---|---|
-| `eth_call` / token reads | `readContract` | AUSD `balanceOf`, `DOMAIN_SEPARATOR` (`chain/eth.js`) |
-| balance reads | `getBalance` (MON), `readContract` (AUSD) | proof surface, Home balance |
+| `eth_call` / token reads | `readContract` | USDC `balanceOf`, `DOMAIN_SEPARATOR` (`chain/eth.js`) |
+| balance reads | `getBalance` (MON), `readContract` (USDC) | proof surface, Home balance |
 | transaction simulation | `simulateContract` | `chain/relay.js#simulateAndWrite` (before every submit) |
 | gas estimation | `estimateContractGas` | relayer path |
 | transaction submission | `writeContract` | router/vault relaying |

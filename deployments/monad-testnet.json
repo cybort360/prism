@@ -3,7 +3,6 @@
   "chainId": 10143,
   "status": "not-yet-broadcast",
   "note": "Populated by contracts/script/Deploy.s.sol on `forge script ... --broadcast`. Requires the external DEPLOYER_PRIVATE_KEY (MON-funded) and CLAIM_AUTHORIZER_ADDRESS. Addresses live here, never in Swift source.",
-  "ausd": "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC",
   "usdc": "0x534b2f3A21130d7a60830c2Df862319e593943A3",
   "paymentRouter": null,
   "claimVault": null,

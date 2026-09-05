@@ -13,8 +13,8 @@ on Monad. No tx hash exists. See `TESTNET_DEPLOYMENT.md`.
 |---|---|
 | Claim expiry | `block.timestamp + 7 days` |
 | Time advanced to | `expiry + 1` (`vm.warp`) |
-| Sender AUSD before funding | `1_000e6` |
-| Sender AUSD after refund | `1_000e6` — **made whole** |
+| Sender USDC before funding | `1_000e6` |
+| Sender USDC after refund | `1_000e6` — **made whole** |
 | Caller | permissionless |
 
 ### Ordering and destination

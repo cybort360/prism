@@ -4,11 +4,11 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {PrismPaymentRouter} from "../src/PrismPaymentRouter.sol";
 import {PrismClaimVault} from "../src/PrismClaimVault.sol";
-import {MockAUSD} from "../src/mocks/MockAUSD.sol";
+import {MockUSDC} from "../src/mocks/MockUSDC.sol";
 
 /// @notice Fuzz coverage over amounts, expiry, nonces, and signatures for both contracts.
 contract PrismFuzzTest is Test {
-    MockAUSD internal ausd;
+    MockUSDC internal usdc;
     PrismPaymentRouter internal router;
     PrismClaimVault internal vault;
 
@@ -20,20 +20,21 @@ contract PrismFuzzTest is Test {
     address internal authorizer;
     address internal relayer = address(0xF00D);
 
-    bytes32 internal constant TRANSFER_TYPEHASH =
-        keccak256("TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)");
-    bytes32 internal constant RECEIVE_TYPEHASH =
-        keccak256("ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)");
+    bytes32 internal constant TRANSFER_TYPEHASH = keccak256(
+        "TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+    );
+    bytes32 internal constant RECEIVE_TYPEHASH = keccak256(
+        "ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+    );
 
     function setUp() public {
-        ausd = new MockAUSD();
-        MockAUSD usdc = new MockAUSD();
-        router = new PrismPaymentRouter(address(ausd), address(usdc));
+        usdc = new MockUSDC();
+        router = new PrismPaymentRouter(address(usdc));
         payer = vm.addr(payerPk);
         recipient = vm.addr(recipientPk);
         authorizer = vm.addr(authorizerPk);
-        vault = new PrismClaimVault(address(this), address(ausd), address(usdc), authorizer);
-        ausd.mint(payer, type(uint128).max);
+        vault = new PrismClaimVault(address(this), address(usdc), authorizer);
+        usdc.mint(payer, type(uint128).max);
     }
 
     // --- direct payment fuzz -------------------------------------------------
@@ -45,7 +46,6 @@ contract PrismFuzzTest is Test {
             paymentId: keccak256(abi.encode(nonce, amount)),
             payer: payer,
             recipient: recipient,
-            token: address(ausd),
             amount: amount,
             requestId: requestId,
             resolutionHash: keccak256(abi.encode("res", nonce)),
@@ -54,13 +54,15 @@ contract PrismFuzzTest is Test {
         });
         (uint8 ev, bytes32 er, bytes32 es) = vm.sign(payerPk, router.envelopeDigest(env));
         bytes memory prismSig = abi.encodePacked(er, es, ev);
-        bytes32 sh = keccak256(abi.encode(TRANSFER_TYPEHASH, payer, recipient, amount, uint256(0), env.validBefore, nonce));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", ausd.DOMAIN_SEPARATOR(), sh)));
+        bytes32 sh =
+            keccak256(abi.encode(TRANSFER_TYPEHASH, payer, recipient, amount, uint256(0), env.validBefore, nonce));
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), sh)));
 
-        uint256 before = ausd.balanceOf(recipient);
+        uint256 before = usdc.balanceOf(recipient);
         vm.prank(relayer);
         router.settle(env, prismSig, v, r, s);
-        assertEq(ausd.balanceOf(recipient) - before, amount, "recipient credited exactly amount");
+        assertEq(usdc.balanceOf(recipient) - before, amount, "recipient credited exactly amount");
         assertTrue(router.paymentUsed(env.paymentId));
     }
 
@@ -72,7 +74,6 @@ contract PrismFuzzTest is Test {
             paymentId: keccak256(abi.encode("p", nonce)),
             payer: payer,
             recipient: recipient,
-            token: address(ausd),
             amount: 10e6,
             requestId: bytes32(0),
             resolutionHash: bytes32(0),
@@ -81,8 +82,11 @@ contract PrismFuzzTest is Test {
         });
         (uint8 ev, bytes32 er, bytes32 es) = vm.sign(wrongPk, router.envelopeDigest(env));
         bytes memory badSig = abi.encodePacked(er, es, ev);
-        bytes32 sh = keccak256(abi.encode(TRANSFER_TYPEHASH, payer, recipient, uint256(10e6), uint256(0), env.validBefore, nonce));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", ausd.DOMAIN_SEPARATOR(), sh)));
+        bytes32 sh = keccak256(
+            abi.encode(TRANSFER_TYPEHASH, payer, recipient, uint256(10e6), uint256(0), env.validBefore, nonce)
+        );
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), sh)));
         vm.prank(relayer);
         vm.expectRevert(PrismPaymentRouter.BadEnvelopeSignature.selector);
         router.settle(env, badSig, v, r, s);
@@ -98,23 +102,27 @@ contract PrismFuzzTest is Test {
         uint256 expiry = block.timestamp + ttl;
 
         // fund
-        ausd.mint(payer, amount);
-        bytes32 nonce = vault.fundingNonce(claimId, ref, address(ausd), amount, payer);
+        usdc.mint(payer, amount);
+        bytes32 nonce = vault.fundingNonce(claimId, ref, amount, payer);
         uint256 vb = block.timestamp + 300;
         bytes32 fsh = keccak256(abi.encode(RECEIVE_TYPEHASH, payer, address(vault), amount, uint256(0), vb, nonce));
-        (uint8 fv, bytes32 fr, bytes32 fs) = vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", ausd.DOMAIN_SEPARATOR(), fsh)));
+        (uint8 fv, bytes32 fr, bytes32 fs) =
+            vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), fsh)));
         vm.prank(relayer);
-        vault.fundClaim(claimId, ref, payer, address(ausd), amount, expiry, 0, vb, nonce, fv, fr, fs);
-        assertEq(ausd.balanceOf(address(vault)), amount);
+        vault.fundClaim(claimId, ref, payer, amount, expiry, 0, vb, nonce, fv, fr, fs);
+        assertEq(usdc.balanceOf(address(vault)), amount);
 
         // claim
         uint256 eligExpiry = expiry; // within claim validity
         bytes32 eligNonce = keccak256(abi.encode("e", idSeed));
-        (uint8 av, bytes32 ar, bytes32 as_) = vm.sign(authorizerPk, vault.eligibilityDigest(claimId, recipient, 1, eligExpiry, eligNonce));
+        (uint8 av, bytes32 ar, bytes32 as_) =
+            vm.sign(authorizerPk, vault.eligibilityDigest(claimId, recipient, 1, eligExpiry, eligNonce));
         (uint8 rv, bytes32 rr, bytes32 rs) = vm.sign(recipientPk, vault.claimIntentDigest(claimId, recipient));
         vm.prank(relayer);
-        vault.claim(claimId, recipient, 1, eligExpiry, eligNonce, abi.encodePacked(ar, as_, av), abi.encodePacked(rr, rs, rv));
-        assertEq(ausd.balanceOf(recipient), amount);
-        assertEq(ausd.balanceOf(address(vault)), 0, "vault fully drained to claimant");
+        vault.claim(
+            claimId, recipient, 1, eligExpiry, eligNonce, abi.encodePacked(ar, as_, av), abi.encodePacked(rr, rs, rv)
+        );
+        assertEq(usdc.balanceOf(recipient), amount);
+        assertEq(usdc.balanceOf(address(vault)), 0, "vault fully drained to claimant");
     }
 }

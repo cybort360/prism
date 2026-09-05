@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {PrismPaymentRouter} from "../src/PrismPaymentRouter.sol";
 import {PrismClaimVault} from "../src/PrismClaimVault.sol";
-import {MockAUSD} from "../src/mocks/MockAUSD.sol";
+import {MockUSDC} from "../src/mocks/MockUSDC.sol";
 
 /// @notice On-chain privacy invariants (FORGE MUT-01 / MUT-02).
 ///
@@ -19,7 +19,7 @@ import {MockAUSD} from "../src/mocks/MockAUSD.sol";
 /// phone is absent from the entire observable surface, so a future field that carries a
 /// phone-derived value fails this suite.
 contract PrismPrivacyTest is Test {
-    MockAUSD internal ausd;
+    MockUSDC internal usdc;
     PrismPaymentRouter internal router;
     PrismClaimVault internal vault;
 
@@ -32,28 +32,29 @@ contract PrismPrivacyTest is Test {
 
     string internal constant PHONE = "+2348031234567";
 
-    bytes32 internal constant TRANSFER_TYPEHASH =
-        keccak256("TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)");
-    bytes32 internal constant RECEIVE_TYPEHASH =
-        keccak256("ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)");
+    bytes32 internal constant TRANSFER_TYPEHASH = keccak256(
+        "TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+    );
+    bytes32 internal constant RECEIVE_TYPEHASH = keccak256(
+        "ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+    );
 
     /// Every value an attacker could precompute from a guessed phone number.
     function _forbidden() internal pure returns (bytes32[] memory out) {
         out = new bytes32[](4);
-        out[0] = keccak256(bytes(PHONE));                       // keccak of the E.164 string
-        out[1] = sha256(bytes(PHONE));                          // MUT-02: SHA256(phone)
+        out[0] = keccak256(bytes(PHONE)); // keccak of the E.164 string
+        out[1] = sha256(bytes(PHONE)); // MUT-02: SHA256(phone)
         out[2] = keccak256(abi.encodePacked(uint256(2348031234567))); // digits as a number
-        out[3] = bytes32(uint256(2348031234567));               // the number itself, right-aligned
+        out[3] = bytes32(uint256(2348031234567)); // the number itself, right-aligned
     }
 
     function setUp() public {
-        ausd = new MockAUSD();
-        MockAUSD usdc = new MockAUSD();
-        router = new PrismPaymentRouter(address(ausd), address(usdc));
+        usdc = new MockUSDC();
+        router = new PrismPaymentRouter(address(usdc));
         payer = vm.addr(payerPk);
         recipient = vm.addr(recipientPk);
-        vault = new PrismClaimVault(address(this), address(ausd), address(usdc), vm.addr(authorizerPk));
-        ausd.mint(payer, 1_000e6);
+        vault = new PrismClaimVault(address(this), address(usdc), vm.addr(authorizerPk));
+        usdc.mint(payer, 1_000e6);
         vm.warp(1_800_000_000);
     }
 
@@ -73,7 +74,10 @@ contract PrismPrivacyTest is Test {
         for (uint256 i = 0; i <= haystack.length - needle.length; i++) {
             bool hit = true;
             for (uint256 j = 0; j < needle.length; j++) {
-                if (haystack[i + j] != needle[j]) { hit = false; break; }
+                if (haystack[i + j] != needle[j]) {
+                    hit = false;
+                    break;
+                }
             }
             if (hit) return true;
         }
@@ -109,7 +113,6 @@ contract PrismPrivacyTest is Test {
             paymentId: keccak256("payment-1"),
             payer: payer,
             recipient: recipient,
-            token: address(ausd),
             amount: 20e6,
             requestId: bytes32(0),
             // Opaque: derived from Prism identity data, never from the alias the user typed.
@@ -117,7 +120,7 @@ contract PrismPrivacyTest is Test {
             validBefore: block.timestamp + 300,
             nonce: keccak256("nonce-1")
         });
-        (uint8 v, bytes32 r, bytes32 s) = _signAusd(env);
+        (uint8 v, bytes32 r, bytes32 s) = _signUsdc(env);
         bytes memory prismSig = _signEnvelope(env);
 
         // The calldata a relayer broadcasts is public forever — scan it before it is sent.
@@ -131,8 +134,8 @@ contract PrismPrivacyTest is Test {
 
         _scanLogs("settle");
         _scanStorage(address(router), "router");
-        _scanStorage(address(ausd), "ausd");
-        assertEq(ausd.balanceOf(recipient), 20e6, "payment did not actually settle");
+        _scanStorage(address(usdc), "usdc");
+        assertEq(usdc.balanceOf(recipient), 20e6, "payment did not actually settle");
     }
 
     // --- MUT-01/MUT-02: a pre-user claim leaks no phone ----------------------
@@ -144,25 +147,23 @@ contract PrismPrivacyTest is Test {
         uint256 amount = 20e6;
         uint256 expiry = block.timestamp + 7 days;
         uint256 validBefore = block.timestamp + 300;
-        bytes32 nonce = vault.fundingNonce(claimId, recipientReference, address(ausd), amount, payer);
+        bytes32 nonce = vault.fundingNonce(claimId, recipientReference, amount, payer);
 
         bytes32 structHash =
             keccak256(abi.encode(RECEIVE_TYPEHASH, payer, address(vault), amount, uint256(0), validBefore, nonce));
         (uint8 v, bytes32 r, bytes32 s) =
-            vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", ausd.DOMAIN_SEPARATOR(), structHash)));
+            vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), structHash)));
 
         bytes memory fundCalldata = abi.encodeCall(
             PrismClaimVault.fundClaim,
-            (claimId, recipientReference, payer, address(ausd), amount, expiry, 0, validBefore, nonce, v, r, s)
+            (claimId, recipientReference, payer, amount, expiry, 0, validBefore, nonce, v, r, s)
         );
         _assertNoPhone(fundCalldata, "fundClaim calldata");
 
         vm.recordLogs();
         vm.record();
         vm.prank(relayer);
-        vault.fundClaim(
-            claimId, recipientReference, payer, address(ausd), amount, expiry, 0, validBefore, nonce, v, r, s
-        );
+        vault.fundClaim(claimId, recipientReference, payer, amount, expiry, 0, validBefore, nonce, v, r, s);
         _scanLogs("fundClaim");
         _scanStorage(address(vault), "vault");
 
@@ -182,10 +183,12 @@ contract PrismPrivacyTest is Test {
         vm.recordLogs();
         vm.record();
         vm.prank(relayer);
-        vault.claim(claimId, recipient, 1, eligExpiry, eligNonce, abi.encodePacked(ar, as_, av), abi.encodePacked(rr, rs, rv));
+        vault.claim(
+            claimId, recipient, 1, eligExpiry, eligNonce, abi.encodePacked(ar, as_, av), abi.encodePacked(rr, rs, rv)
+        );
         _scanLogs("claim");
         _scanStorage(address(vault), "vault after claim");
-        assertEq(ausd.balanceOf(recipient), amount, "claim did not actually pay out");
+        assertEq(usdc.balanceOf(recipient), amount, "claim did not actually pay out");
     }
 
     // --- the scanner must be able to fail ------------------------------------
@@ -213,13 +216,14 @@ contract PrismPrivacyTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function _signAusd(PrismPaymentRouter.PaymentEnvelope memory env)
+    function _signUsdc(PrismPaymentRouter.PaymentEnvelope memory env)
         internal
         view
         returns (uint8 v, bytes32 r, bytes32 s)
     {
-        bytes32 structHash =
-            keccak256(abi.encode(TRANSFER_TYPEHASH, env.payer, env.recipient, env.amount, uint256(0), env.validBefore, env.nonce));
-        (v, r, s) = vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", ausd.DOMAIN_SEPARATOR(), structHash)));
+        bytes32 structHash = keccak256(
+            abi.encode(TRANSFER_TYPEHASH, env.payer, env.recipient, env.amount, uint256(0), env.validBefore, env.nonce)
+        );
+        (v, r, s) = vm.sign(payerPk, keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), structHash)));
     }
 }

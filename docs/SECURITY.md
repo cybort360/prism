@@ -11,7 +11,7 @@ These hold across the whole system and are the acceptance bar for the build:
 - the **Mera passkey account is the financial signing authority**;
 - Prism Identity is a lightweight, persistent product identity — it holds no key;
 - there is **no public phone → wallet registry** and **no public SHA(phone) → wallet map**;
-- the backend is **not** the canonical money ledger; Monad/AUSD state is canonical for money;
+- the backend is **not** the canonical money ledger; Monad/USDC state is canonical for money;
 - **submitted ≠ completed**;
 - stale/changed recipient mappings **fail closed**.
 
@@ -49,7 +49,7 @@ is never the money ledger or a spending authority.
 
 ### Blockchain
 
-Monad is canonical for balances and settlement. Public state reveals accounts, AUSD transfers and
+Monad is canonical for balances and settlement. Public state reveals accounts, USDC transfers and
 balances; Prism does not claim these payments are private.
 
 ## Recipient and amount integrity
@@ -57,7 +57,7 @@ balances; Prism does not claim these payments are private.
 Direct payments and claim funding both rely on the **binding nonce**: the payer's ERC-3009
 authorization commits to a 32-byte nonce equal to `keccak256(...recipient, amount, reference...)`.
 The router/vault recompute that nonce from their arguments; if a relayer rewrites the recipient, the
-amount, or the reference, the nonce no longer matches the signed value and AUSD's own `ecrecover`
+amount, or the reference, the nonce no longer matches the signed value and USDC's own `ecrecover`
 check reverts. No smart-contract wallet or EIP-1271 is required.
 
 ## OTP / SIM swap
@@ -80,9 +80,9 @@ If the resolver changes a previously trusted contact from identity A to identity
 identity-change warning instead of silently using B. Resolutions expire; stale/revoked alias
 versions fail closed.
 
-## Verify, don't trust (AUSD)
+## Verify, don't trust (USDC)
 
-Before relaying, the backend recomputes AUSD's EIP-712 domain separator and compares it to the
+Before relaying, the backend recomputes USDC's EIP-712 domain separator and compares it to the
 token's on-chain `DOMAIN_SEPARATOR()` (`chain/eth.js#verifyAusdDomain`), failing closed on any
 drift in address, name, version, or chainId.
 
@@ -100,7 +100,7 @@ assertions only from legitimate app instances. It is optional for the hackathon 
 - stale alias resolution: reject
 - recipient mutation after signature: reject (nonce binding)
 - amount mutation after signature: reject (nonce binding)
-- ERC-3009 authorization replay: reject (AUSD authorization state)
+- ERC-3009 authorization replay: reject (USDC authorization state)
 - double claim: reject
 - claim after refund: reject
 - refund before expiry: reject

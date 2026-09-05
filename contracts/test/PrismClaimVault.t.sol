@@ -3,13 +3,11 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {PrismClaimVault} from "../src/PrismClaimVault.sol";
-import {MockAUSD} from "../src/mocks/MockAUSD.sol";
 import {MockUSDC} from "../src/mocks/MockUSDC.sol";
 
 /// @notice Pre-user claim lifecycle: gasless ERC-3009 funding, dual-signature collection, and
 ///         refund-after-expiry — with no phone-derived data and all failure paths closing.
 contract PrismClaimVaultTest is Test {
-    MockAUSD internal ausd;
     MockUSDC internal usdc;
     PrismClaimVault internal vault;
 
@@ -21,36 +19,32 @@ contract PrismClaimVaultTest is Test {
     address internal recipient;
     address internal relayer = address(0xF00D);
 
-    bytes32 internal constant RECEIVE_TYPEHASH =
-        keccak256("ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)");
+    bytes32 internal constant RECEIVE_TYPEHASH = keccak256(
+        "ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+    );
 
     bytes32 internal claimId = keccak256("claim-1");
     bytes32 internal recipientRef = keccak256("recipient-ref-1");
     uint256 internal amount = 50e6;
 
     function setUp() public {
-        ausd = new MockAUSD();
         usdc = new MockUSDC();
         sender = vm.addr(senderPk);
         authorizer = vm.addr(authorizerPk);
         recipient = vm.addr(recipientPk);
-        vault = new PrismClaimVault(address(this), address(ausd), address(usdc), authorizer);
-        ausd.mint(sender, 1_000e6);
+        vault = new PrismClaimVault(address(this), address(usdc), authorizer);
+        usdc.mint(sender, 1_000e6);
     }
 
     function _fund(bytes32 id, bytes32 ref, uint256 amt, uint256 expiry) internal {
-        _fundToken(ausd, id, ref, amt, expiry);
-    }
-
-    function _fundToken(MockAUSD token, bytes32 id, bytes32 ref, uint256 amt, uint256 expiry) internal {
-        bytes32 nonce = vault.fundingNonce(id, ref, address(token), amt, sender);
+        bytes32 nonce = vault.fundingNonce(id, ref, amt, sender);
         uint256 validBefore = block.timestamp + 300;
         bytes32 structHash =
             keccak256(abi.encode(RECEIVE_TYPEHASH, sender, address(vault), amt, uint256(0), validBefore, nonce));
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", token.DOMAIN_SEPARATOR(), structHash));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(senderPk, digest);
         vm.prank(relayer);
-        vault.fundClaim(id, ref, sender, address(token), amt, expiry, 0, validBefore, nonce, v, r, s);
+        vault.fundClaim(id, ref, sender, amt, expiry, 0, validBefore, nonce, v, r, s);
     }
 
     function _eligSig(bytes32 id, address rcpt, uint256 aliasVersion, uint256 expiry, bytes32 nonce, uint256 pk)
@@ -69,18 +63,11 @@ contract PrismClaimVaultTest is Test {
 
     function testClaimFundingSucceeds() public {
         _fund(claimId, recipientRef, amount, block.timestamp + 7 days);
-        assertEq(ausd.balanceOf(address(vault)), amount);
-        (,, address s_, address token_, uint256 a_,, PrismClaimVault.ClaimStatus st_) = vault.claims(claimId);
+        assertEq(usdc.balanceOf(address(vault)), amount);
+        (,, address s_, uint256 a_,, PrismClaimVault.ClaimStatus st_) = vault.claims(claimId);
         assertEq(s_, sender);
-        assertEq(token_, address(ausd));
         assertEq(a_, amount);
         assertEq(uint256(st_), uint256(PrismClaimVault.ClaimStatus.Funded));
-    }
-
-    function testFundingNonceBindsToken() public view {
-        bytes32 ausdNonce = vault.fundingNonce(claimId, recipientRef, address(ausd), amount, sender);
-        bytes32 usdcNonce = vault.fundingNonce(claimId, recipientRef, address(usdc), amount, sender);
-        assertNotEq(ausdNonce, usdcNonce);
     }
 
     function testRandomRecipientReferenceHasNoPhoneCorrelation() public {
@@ -88,8 +75,8 @@ contract PrismClaimVaultTest is Test {
         // what it is given and never derives anything from a phone number.
         _fund(keccak256("c1"), keccak256("ref-A"), 10e6, block.timestamp + 7 days);
         _fund(keccak256("c2"), keccak256("ref-B"), 10e6, block.timestamp + 7 days);
-        (, bytes32 refA,,,,,) = vault.claims(keccak256("c1"));
-        (, bytes32 refB,,,,,) = vault.claims(keccak256("c2"));
+        (, bytes32 refA,,,,) = vault.claims(keccak256("c1"));
+        (, bytes32 refB,,,,) = vault.claims(keccak256("c2"));
         assertTrue(refA != refB);
         assertEq(refA, keccak256("ref-A"));
     }
@@ -102,20 +89,7 @@ contract PrismClaimVaultTest is Test {
         bytes memory intent = _intentSig(claimId, recipient, recipientPk);
         vm.prank(relayer);
         vault.claim(claimId, recipient, 1, eligExpiry, eligNonce, elig, intent);
-        assertEq(ausd.balanceOf(recipient), amount);
-    }
-
-    function testUsdcClaimSucceeds() public {
-        usdc.mint(sender, 100e6);
-        _fundToken(usdc, claimId, recipientRef, amount, block.timestamp + 7 days);
-        uint256 eligExpiry = block.timestamp + 3600;
-        bytes32 eligNonce = keccak256("elig-usdc");
-        bytes memory elig = _eligSig(claimId, recipient, 1, eligExpiry, eligNonce, authorizerPk);
-        bytes memory intent = _intentSig(claimId, recipient, recipientPk);
-        vm.prank(relayer);
-        vault.claim(claimId, recipient, 1, eligExpiry, eligNonce, elig, intent);
         assertEq(usdc.balanceOf(recipient), amount);
-        assertEq(ausd.balanceOf(recipient), 0);
     }
 
     function testWrongClaimantFails() public {
@@ -178,7 +152,7 @@ contract PrismClaimVaultTest is Test {
         _fund(claimId, recipientRef, amount, expiry);
         vm.warp(expiry + 1);
         vault.refund(claimId);
-        assertEq(ausd.balanceOf(sender), 1_000e6, "sender made whole");
+        assertEq(usdc.balanceOf(sender), 1_000e6, "sender made whole");
     }
 
     function testClaimAfterRefundFails() public {
@@ -210,7 +184,7 @@ contract PrismClaimVaultTest is Test {
         // An attacker triggers the refund; funds can only ever go back to the original sender.
         vm.prank(address(0xBAD));
         vault.refund(claimId);
-        assertEq(ausd.balanceOf(sender), 1_000e6);
-        assertEq(ausd.balanceOf(address(0xBAD)), 0);
+        assertEq(usdc.balanceOf(sender), 1_000e6);
+        assertEq(usdc.balanceOf(address(0xBAD)), 0);
     }
 }

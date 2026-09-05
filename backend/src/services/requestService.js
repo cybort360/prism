@@ -19,13 +19,12 @@ export class RequestService {
     this.config = config;
   }
 
-  draft({ requesterPrismId, payerPrismId, amountAtomic, token, memo = '', expiresAt }) {
+  draft({ requesterPrismId, payerPrismId, amountAtomic, memo = '', expiresAt }) {
     if (!this.identityService.get(requesterPrismId)) throw new Error('requester not found');
     if (!this.identityService.get(payerPrismId)) throw new Error('payer not found');
     if (requesterPrismId === payerPrismId) throw new Error('cannot request yourself');
     amountAtomic = positiveAtomic(amountAtomic);
     if (BigInt(amountAtomic) > this.config.limits.maxPaymentAtomic) throw new Error('amount exceeds Prism payment limit');
-    const stablecoin = this._token(token);
     memo = String(memo ?? '').trim().slice(0, 120);
     const expiry = expiresAt ? new Date(expiresAt) : new Date(Date.now() + 24 * 60 * 60_000);
     if (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= Date.now() || expiry.getTime() > Date.now() + 30 * 24 * 60 * 60_000) throw new Error('invalid request expiry');
@@ -35,8 +34,8 @@ export class RequestService {
       requesterPrismId,
       payerPrismId,
       amountAtomic,
-      token: stablecoin.address,
-      tokenSymbol: stablecoin.symbol,
+      token: this.config.chain.usdc,
+      tokenSymbol: 'USDC',
       memo,
       createdAt: new Date().toISOString(),
       expiresAt: expiry.toISOString(),
@@ -44,18 +43,6 @@ export class RequestService {
     };
     this.store.mutate(data => { data.requests[request.requestId] = request; });
     return { request, signable: canonicalJson(signable(request)) };
-  }
-
-  _token(value) {
-    const configured = this.config.chain.tokens
-      ? Object.values(this.config.chain.tokens)
-      : [{ symbol: 'AUSD', address: this.config.chain.ausd }];
-    const needle = String(value ?? 'AUSD').toLowerCase();
-    const token = configured.find(candidate =>
-      candidate.symbol.toLowerCase() === needle || candidate.address.toLowerCase() === needle
-    );
-    if (!token) throw new Error('unsupported request token');
-    return token;
   }
 
   async commit({ requesterPrismId, requestId, signature }) {
@@ -85,14 +72,13 @@ export class RequestService {
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   }
 
-  assertPayable({ requestId, payerPrismId, recipientPrismId, amountAtomic, token }) {
+  assertPayable({ requestId, payerPrismId, recipientPrismId, amountAtomic }) {
     this._expireOpenRequests();
     const r = this.store.read().requests[requestId];
     if (!r || r.status !== 'OPEN') throw new Error('request is not open');
     if (r.payerPrismId !== payerPrismId) throw new Error('request belongs to another payer');
     if (r.requesterPrismId !== recipientPrismId) throw new Error('payment recipient does not match requester');
     if (String(r.amountAtomic) !== String(amountAtomic)) throw new Error('payment amount does not match request');
-    if (r.token.toLowerCase() !== String(token).toLowerCase()) throw new Error('payment token does not match request');
     return r;
   }
 

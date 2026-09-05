@@ -10,7 +10,7 @@ trust").
   passkey via the WebAuthn PRF extension** and turns them into a **standard secp256k1 EVM account**
   (and an ed25519 Solana account). No seed phrase, no bundler, no MPC service, no backend custody.
 - Because the derived account is a **standard EOA-style secp256k1 signer**, it produces ordinary
-  ECDSA signatures — which is exactly what AUSD's ERC-3009 `ecrecover` path expects. No ERC-4337,
+  ECDSA signatures — which is exactly what USDC's ERC-3009 `ecrecover` path expects. No ERC-4337,
   smart-account, or EIP-1271 machinery is required for the payment primitive.
 - Official API used by Prism's bridge: `createPasskeyWithPrfOutput`, `getPasskeyPrfOutput`,
   `getEvmAddress`, `createSecp256k1SigningSession` (returns a session holding a `SigningKey` whose
@@ -22,18 +22,18 @@ trust").
 - Source: <https://github.com/category-labs/mera>, <https://mera.category.xyz>,
   <https://www.monad.xyz/blog/introducing-mera>, Monad docs → Embedded Wallets.
 
-## Agora AUSD — the payment asset
+## Circle USDC — the payment asset
 
-- AUSD implements ERC-20, EIP-712, **ERC-2612 permit**, **ERC-3009 gasless transfers**
+- USDC implements ERC-20, EIP-712, **ERC-2612 permit**, **ERC-3009 gasless transfers**
   (`transferWithAuthorization` / `receiveWithAuthorization` / `cancelAuthorization`), and ERC-1271.
-- Verified token addresses (Agora contract-deployments):
-  - Monad **mainnet**: `0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a` (chainId 143)
-  - Monad **testnet**: `0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC` (chainId 10143)
-- EIP-712 domain: name **"Agora Dollar"**, version **"1"**. Decimals: **6**.
-- Prism's direct-payment primitive is ERC-3009 `receiveWithAuthorization`, pulled by
-  `PrismPaymentRouter`, so a payer holding AUSD > 0 and MON = 0 can still pay.
-- Source: <https://docs.agora.finance/developer/contract-deployments>,
-  <https://docs.agora.finance/developer/advanced-erc-features>.
+- Verified token addresses (Circle contract deployments):
+  - Monad **mainnet**: `0x754704Bc059F8C67012fEd69BC8A327a5aafb603` (chainId 143)
+  - Monad **testnet**: `0x534b2f3A21130d7a60830c2Df862319e593943A3` (chainId 10143)
+- EIP-712 domain: name **"USDC"**, version **"2"**. Decimals: **6**.
+- Prism's direct-payment primitive is ERC-3009 `transferWithAuthorization`, submitted by
+  `PrismPaymentRouter`, so a payer holding USDC > 0 and MON = 0 can still pay.
+- Source: <https://developers.circle.com/stablecoins/usdc-contract-addresses>,
+  <https://developers.circle.com/stablecoins/transfer-tokens-without-having-to-pay-gas>.
 
 ## Monad — the settlement chain
 
@@ -52,7 +52,7 @@ trust").
 ## Envio — indexing
 
 - Envio HyperIndex + HyperSync support Monad with full trace history from block 0 (HyperIndex
-  v2.15.0). Prism indexes AUSD transfers, `PrismPayment` router events, and `PrismClaimVault` events
+  v2.15.0). Prism indexes USDC transfers, `PrismPayment` router events, and `PrismClaimVault` events
   into the product's activity/reconciliation layer.
 - Source: <https://docs.envio.dev/blog/how-to-index-monad-data-using-envio>,
   <https://docs.monad.xyz/guides/indexers/tg-bot-using-envio>.
@@ -66,7 +66,7 @@ trust").
 
 ## Verify, don't trust
 
-The listed AUSD addresses and EIP-712 domain are treated as *inputs to verify*, not facts to trust:
-`backend/src/chain/eth.js#verifyAusdDomain` recomputes AUSD's EIP-712 domain separator and compares
+The listed USDC addresses and EIP-712 domain are treated as *inputs to verify*, not facts to trust:
+`backend/src/chain/eth.js#verifyUsdcDomain` recomputes USDC's EIP-712 domain separator and compares
 it to the token's on-chain `DOMAIN_SEPARATOR()` before Prism will relay, failing closed on any
-drift. Contract deploy scripts take the AUSD address as an explicit, comment-flagged input.
+drift. Contract deploy scripts take the USDC address as an explicit, comment-flagged input.

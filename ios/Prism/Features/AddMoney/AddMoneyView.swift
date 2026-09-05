@@ -6,7 +6,6 @@ struct AddMoneyView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var copied = false
   @State private var showQR = false
-  @State private var asset: Stablecoin = .ausd
 
   private var address: String? { model.identity?.accountAddress }
   private var faucetURL: URL? {
@@ -19,19 +18,16 @@ struct AddMoneyView: View {
       VStack(alignment: .leading, spacing: 0) {
         PrismTopBar(title: "Add money", back: { dismiss() }).padding(.top, 10)
 
-        Text("Add \(asset.rawValue) to\nyour balance")
+        Text("Add USDC to\nyour balance")
           .font(PrismTheme.display(38))
           .tracking(-0.8)
           .padding(.top, 24)
 
-        Text("Send \(asset.rawValue) on Monad to your Prism address. Your balance updates after the transfer confirms.")
+        Text("Send USDC on Monad to your Prism address. Your balance updates after the transfer confirms.")
           .font(PrismTheme.body(14))
           .foregroundStyle(PrismTheme.muted)
           .lineSpacing(2)
           .padding(.top, 12)
-
-        StablecoinPicker(selection: $asset)
-          .padding(.top, 18)
 
         PrismCard(padding: 18) {
           VStack(alignment: .leading, spacing: 16) {
@@ -41,8 +37,8 @@ struct AddMoneyView: View {
                 Text("$").font(PrismTheme.display(20)).foregroundStyle(PrismTheme.mintDeep)
               }
               VStack(alignment: .leading, spacing: 2) {
-                Text(asset.rawValue).font(PrismTheme.body(15, weight: .semibold))
-                Text(asset.name).font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted)
+                Text("USDC").font(PrismTheme.body(15, weight: .semibold))
+                Text("USD Coin").font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted)
               }
               Spacer()
               PrismStatusPill(text: "Supported", tone: .positive)
@@ -83,7 +79,7 @@ struct AddMoneyView: View {
 
         HStack(alignment: .top, spacing: 10) {
           Image(systemName: "checkmark.shield.fill").foregroundStyle(PrismTheme.mintDeep)
-          Text("Only AUSD and USDC on Monad are supported. Do not send assets from another network.")
+          Text("Only USDC on Monad is supported. Do not send assets from another network.")
             .font(PrismTheme.body(12.5))
             .foregroundStyle(PrismTheme.muted)
         }
@@ -108,7 +104,7 @@ struct AddMoneyView: View {
       VStack(alignment: .leading, spacing: 10) {
         PrismSectionLabel(text: "Developer")
         VStack(alignment: .leading, spacing: 12) {
-          Text("Testnet build. Fund this address with testnet \(asset.rawValue), then pull to refresh your balance on Home.")
+          Text("Testnet build. Fund this address with testnet USDC, then pull to refresh your balance on Home.")
             .font(PrismTheme.body(12.5))
             .foregroundStyle(PrismTheme.muted)
           if let faucetURL {

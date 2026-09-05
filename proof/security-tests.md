@@ -11,13 +11,12 @@ Every required negative/security property maps to a passing test. `cd contracts 
 | Modified recipient rejected | `testModifiedRecipientRejected` | recipient is in the signed envelope AND the ERC-3009 auth |
 | Modified requestId rejected | `testModifiedRequestIdRejected` | requestId bound in the envelope digest |
 | Expired payment rejected | `testExpiredPaymentRejected` | `block.timestamp >= validBefore` → `Expired` |
-| Replay rejected | `testReplayRejected` | `paymentUsed[paymentId]` + AUSD `authorizationState` |
+| Replay rejected | `testReplayRejected` | `paymentUsed[paymentId]` + USDC `authorizationState` |
 | paymentId reuse rejected | `testPaymentIdReuseRejected` | fresh nonce, same paymentId → `PaymentAlreadyUsed` |
-| Unsupported token rejected | `testUnsupportedTokenRejected` | Router allowlist check returns `WrongToken` |
 | No phone-derived value on-chain | `testResolutionHashIsOpaqueMetadata` | resolutionHash/requestId are opaque Prism refs, emitted verbatim |
 
 The relayer can never redirect or resize a payment: recipient and amount are bound into **both** the
-Prism envelope signature and AUSD's own ERC-3009 signature. Tampering either breaks a signature.
+Prism envelope signature and USDC's own ERC-3009 signature. Tampering either breaks a signature.
 
 ## Send-before-signup (claims)
 
@@ -52,5 +51,5 @@ account signature.
 
 - EIP-2 low-s enforced and `v ∈ {27,28}` in `PrismEIP712.recover`; malformed signatures recover to
   `address(0)` and fail closed.
-- ERC-3009 authorizations are additionally tracked by AUSD's own `authorizationState`, giving
+- ERC-3009 authorizations are additionally tracked by USDC's own `authorizationState`, giving
   defense-in-depth replay protection beyond the router/vault nonce maps.

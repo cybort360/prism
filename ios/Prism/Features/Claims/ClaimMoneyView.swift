@@ -36,7 +36,7 @@ struct ClaimMoneyView: View {
       AmountText(dollars: Money.dollars(fromAtomic: claim.amountAtomic), size: 70)
         .padding(.top, 8)
 
-      Text(claim.tokenSymbol ?? Stablecoin.resolve(symbol: nil, address: claim.token).rawValue)
+      Text("USDC")
         .font(PrismTheme.body(12, weight: .semibold))
         .foregroundStyle(PrismTheme.mintDeep)
         .padding(.top, 4)
@@ -83,7 +83,7 @@ struct ClaimMoneyView: View {
       Spacer()
 
       PrismPrimaryButton(
-        title: busy ? "Claiming…" : "Claim \(Money.assetAmount(fromAtomic: claim.amountAtomic, symbol: claim.tokenSymbol))",
+        title: busy ? "Claiming…" : "Claim \(Money.assetAmount(fromAtomic: claim.amountAtomic))",
         enabled: !busy,
         icon: "arrow.down"
       ) {
@@ -122,7 +122,7 @@ struct ClaimMoneyView: View {
       dismiss()
       model.presentReceipt = ReceiptPresentation(
         title: "Money received",
-        amount: Money.assetAmount(fromAtomic: claim.amountAtomic, symbol: claim.tokenSymbol),
+        amount: Money.assetAmount(fromAtomic: claim.amountAtomic),
         subtitle: claim.memo?.isEmpty == false ? claim.memo! : "Claim completed",
         transactionHash: tx,
         status: "Completed"

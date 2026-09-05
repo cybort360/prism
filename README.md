@@ -14,7 +14,7 @@ Core loop:
 phone / @handle / QR / payment link
         -> Prism Identity + protected alias resolver
         -> Mera passkey-derived account        (secp256k1 EOA from a passkey)
-        -> AUSD or USDC                         (ERC-3009 gasless)
+        -> USDC                                 (ERC-3009 gasless)
         -> Prism payment router / claim vault   (relayer-submitted; recipient/amount bound in-signature)
         -> Monad                                (canonical settlement)
 ```
@@ -25,7 +25,7 @@ phone / @handle / QR / payment link
   signing, and never rewrites the app in React Native.
 - `backend/` — protected alias resolver, OTP adapter, off-chain requests, stablecoin ERC-3009
   authorization builder + verifier, MON-funded relayer, claim authorizer.
-- `contracts/` — `PrismPaymentRouter`, `PrismClaimVault`, `IERC3009`, a faithful `MockAUSD`, and
+- `contracts/` — `PrismPaymentRouter`, `PrismClaimVault`, `IERC3009`, a faithful `MockUSDC`, and
   Foundry tests.
 - `indexer/envio/` — Envio HyperIndex config + handlers that index real Monad activity into the
   GraphQL API the backend reads for reconciled history.
@@ -40,8 +40,8 @@ under `archive/` and is not active alongside Mera. See `docs/PRD_ADDENDUM_v1.1.m
 1. Phone number is a private reachability alias — not a key, not an on-chain identifier.
 2. `@handle` is an optional public alias; QR / links resolve to a Prism identity, never a raw address.
 3. The **Mera passkey account** owns funds and is the spending authority.
-4. **AUSD and USDC** are the payment assets; **ERC-3009 gasless authorizations** are the direct-payment primitive.
-5. A user can hold either supported asset and MON = 0 and still pay (relayer / Alchemy Gas Manager pays gas).
+4. **USDC** is the payment asset; **ERC-3009 gasless authorizations** are the direct-payment primitive.
+5. A user can hold USDC and MON = 0 and still pay (relayer / Alchemy Gas Manager pays gas).
 6. The backend is never the canonical money ledger; Monad token state is canonical.
 7. No public phone→wallet registry and no `SHA(phone)`→wallet map.
 8. Pre-user claims use random claim IDs / references; no phone-derived value is emitted on-chain.
@@ -52,9 +52,6 @@ under `archive/` and is not active alongside Mera. See `docs/PRD_ADDENDUM_v1.1.m
 
 - Monad testnet: chainId `10143`, RPC `https://testnet-rpc.monad.xyz`.
 - Monad mainnet: chainId `143`, RPC `https://rpc.monad.xyz`.
-- AUSD (verify against Agora docs; re-checked at runtime): testnet
-  `0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC`, mainnet
-  `0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a`. Domain `Agora Dollar` / `1`, 6 decimals.
 - USDC (verify against Circle docs; re-checked at runtime): testnet
   `0x534b2f3A21130d7a60830c2Df862319e593943A3`, mainnet
   `0x754704Bc059F8C67012fEd69BC8A327a5aafb603`. Domain `USDC` / `2`, 6 decimals.
@@ -71,7 +68,7 @@ cp .env.example .env
 forge test
 ```
 
-36 tests across unit, fuzz, privacy, and invariant suites. The vault invariant run (256 runs / 128k calls)
+31 tests across unit, fuzz, privacy, and invariant suites. The vault invariant run (256 runs / 128k calls)
 takes ~2 minutes — that is expected, not a hang.
 
 ### Backend
@@ -136,28 +133,25 @@ by an executed check or marked blocked with the reason — nothing here is a "wo
 
 | Claim | Status | Evidence |
 |---|---|---|
-| Contract suite green | **PROVEN** — 30 tests, 0 failed | `forge test` |
+| Contract suite green | **PROVEN** — 31 tests, 0 failed | `forge test --offline` |
 | Deep fuzzing | **PROVEN** — 3 properties × 10,000 runs | `forge test --fuzz-runs 10000` |
 | Vault invariants | **PROVEN** — 256 runs / 128k calls, 3 invariants | `PrismVaultInvariant` |
-| Backend suite green | **PROVEN** — 39 tests, 0 failed | `node --test test/*.test.js` |
-| AUSD EIP-712 domain is `Agora Dollar`/`1` | **PROVEN on live chain** | `proof/AGORA_AUSD_PROOF.md` |
-| Live AUSD exposes the `(v,r,s)` ERC-3009 API Prism calls | **PROVEN on live chain** | `proof/AGORA_AUSD_PROOF.md` |
+| Backend suite green | **PROVEN** — 41 tests, 0 failed | `node --test test/*.test.js` |
 | `@category-labs/mera` is real and used officially | **PROVEN** (npm registry + source) | `proof/MERA_PROOF.md` |
 | No phone in calldata / events / storage | **PROVEN** | `contracts/test/PrismPrivacy.t.sol` |
 | No raw phone persisted or logged | **PROVEN after fix** | `proof/PRIVACY_PROOF.md` |
 | Mutations MUT-01…MUT-16 rejected | **PROVEN** (2 caveats) | `proof/SECURITY_PROOF.md` |
 | Payer with MON = 0 can pay | **PROVEN locally**, not on testnet | `proof/ZERO_MON_PROOF.md` |
-| Contracts deployed to Monad testnet | **BLOCKED** — no funded key, faucet gated, AUSD mint role-gated | `proof/TESTNET_DEPLOYMENT.md` |
+| Contracts deployed to Monad testnet | **BLOCKED** — no funded deployment key | `proof/TESTNET_DEPLOYMENT.md` |
 | End-to-end payment on Monad | **BLOCKED** — no tx exists | `proof/PAYMENT_PROOF.md` |
 | Claim / refund on Monad | **BLOCKED** | `proof/CLAIM_PROOF.md`, `proof/REFUND_PROOF.md` |
-| Cross-border demonstration | **BLOCKED** (and there is no FX — AUSD both ends) | `proof/CROSS_BORDER_PROOF.md` |
+| Cross-border demonstration | **BLOCKED** — no live USDC transaction exists | `proof/CROSS_BORDER_PROOF.md` |
 | Envio indexing real events | **BLOCKED** — config verified by topic0, never run | `proof/ENVIO_PROOF.md` |
 | Alchemy live path | **BLOCKED** — no API key, no request made | `proof/ALCHEMY_PROOF.md` |
 | iOS app compiles | **PROVEN by CI** — it did not, until fixed in this branch | `proof/SECURITY_PROOF.md` (Finding 7) |
 | iOS unit tests | **PASS in CI** — 2 tests | `proof/EVIDENCE_MANIFEST.json` |
 | Mera bundle builds against the published lib | **PROVEN by CI** | `proof/MERA_PROOF.md` |
 | Mera bridge derives an account the backend accepts (simulator) | **PROVEN by CI** | `proof/MERA_PROOF.md` |
-| Backend AUSD domain integrity check passes live | **PROVEN by CI** | `proof/AGORA_AUSD_PROOF.md` |
 | iOS onboarding UI test (launch → Mera account → phone → OTP → past onboarding) | **PASSES in CI** | `proof/MERA_PROOF.md` |
 | iOS passkey, Face ID, Contacts, QR, universal links | **BLOCKED** — no device; never executed | `proof/MERA_PROOF.md` |
 | Latency figures | **NONE** — instrumented, never measured | `proof/PAYMENT_PROOF.md` |
@@ -173,7 +167,7 @@ Keychain write fail. CI is green on all four checks. See `proof/SECURITY_PROOF.m
 - Design: `docs/ARCHITECTURE.md`, `docs/IOS_ARCHITECTURE.md`, `docs/PRD_ADDENDUM_v1.1.md`,
   `docs/RESEARCH_NOTES.md`
 - Security: `docs/SECURITY.md`, `docs/THREAT_MODEL.md`, `docs/FORGE_PROOF_PLAN.md`
-- Integrations: `docs/SPONSOR_MATRIX.md` (Agora / Mera / Envio / Alchemy mapping),
+- Integrations: `docs/SPONSOR_MATRIX.md` (Mera / Envio / Alchemy mapping),
   `docs/MERA_INTEGRATION.md`, `docs/ENVIO_INTEGRATION.md`, `docs/ALCHEMY_INTEGRATION.md`,
   `docs/PASSKEY_SETUP.md`
 - Operations: `docs/OBSERVABILITY.md`
@@ -186,7 +180,7 @@ Everything below is an external service/secret — there are no remaining archit
 |---|---|---|
 | Alchemy Monad API key | Production RPC (reads, receipts, relaying) | `MONAD_RPC_URL` |
 | Alchemy Gas Manager policy | Production gas sponsorship (relayer alternative) | infra / `docs/SPONSOR_MATRIX.md` |
-| Relayer private key (MON-funded) | Submits gasless AUSD transfers | `RELAYER_PRIVATE_KEY` |
+| Relayer private key (MON-funded) | Submits gasless USDC transfers | `RELAYER_PRIVATE_KEY` |
 | Claim authorizer key (secp256k1, KMS/HSM) | Authorizes pre-user claim collection | `CLAIM_AUTHORIZER_PRIVATE_KEY` (backend) / `CLAIM_AUTHORIZER_ADDRESS` (contracts) |
 | Deployed router + vault addresses | On-chain payment surface | `PRISM_PAYMENT_ROUTER`, `PRISM_CLAIM_VAULT` |
 | Twilio Verify (SID/token/service) | Real SMS OTP | `TWILIO_*` |

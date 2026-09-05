@@ -7,7 +7,6 @@ struct SendMoneyView: View {
   @StateObject private var coordinator = PaymentCoordinator()
   @State private var amount = ""
   @State private var memo = ""
-  @State private var asset: Stablecoin = .ausd
   @State private var showAuth = false
   @State private var error: String?
 
@@ -24,7 +23,9 @@ struct SendMoneyView: View {
         }
         Spacer().frame(height: 24)
         AmountText(dollars: displayAmount, size: 76).padding(.horizontal, 22)
-        StablecoinPicker(selection: $asset, locked: target.requestedAsset != nil)
+        Text("USDC")
+          .font(PrismTheme.body(12, weight: .semibold))
+          .foregroundStyle(PrismTheme.mintDeep)
           .padding(.top, 8)
         HStack(spacing: 10) {
           Image(systemName: "pencil")
@@ -61,7 +62,6 @@ struct SendMoneyView: View {
       }
     }
     .onAppear {
-      if let requestedAsset = target.requestedAsset { asset = requestedAsset }
       if let requestId = target.requestId {
         Task {
           if let req = (try? await PrismAPI.shared.requests())?.first(where: {
@@ -85,7 +85,7 @@ struct SendMoneyView: View {
       : (Decimal(string: amount) ?? 0).formatted(
         .currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))
   }
-  private var displayAssetAmount: String { "\(displayAmount) \(asset.rawValue)" }
+  private var displayAssetAmount: String { "\(displayAmount) USDC" }
   private func decimalText(_ atomic: String) -> String {
     let n = Decimal(string: atomic) ?? 0
     return NSDecimalNumber(decimal: n / 1_000_000).stringValue
@@ -95,7 +95,7 @@ struct SendMoneyView: View {
   private func send(pin: String?, face: Bool) async {
     guard let atomic else { return }
     await coordinator.pay(
-      resolution: target.resolution, amountAtomic: atomic, asset: asset, requestId: target.requestId, memo: memo,
+      resolution: target.resolution, amountAtomic: atomic, requestId: target.requestId, memo: memo,
       pin: pin, useFaceID: face)
     switch coordinator.state {
     case .sent(let tx):

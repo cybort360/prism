@@ -79,30 +79,6 @@
   },
   "proven": [
     {
-      "claim": "Agora AUSD on Monad testnet uses EIP-712 domain name 'Agora Dollar' version '1'",
-      "status": "PROVEN",
-      "contract": "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC",
-      "chainId": 10143,
-      "block": 59477252,
-      "onchainValue": "DOMAIN_SEPARATOR() = 0x7ff7d6b4bdc3e260c85cf89f8779b1ac80120e3c277f7db4900739a507f03ea1",
-      "independentReadback": "locally recomputed over 4 candidate domains; only 'Agora Dollar'/'1' matches",
-      "note": "the token's ERC-20 name() returns 'AUSD', which disagrees with its EIP-712 domain name; the codebase uses the correct one",
-      "evidence": "proof/AGORA_AUSD_PROOF.md"
-    },
-    {
-      "claim": "Live AUSD exposes the (v,r,s) ERC-3009 functions PrismPaymentRouter and PrismClaimVault call",
-      "status": "PROVEN",
-      "implementation": "0xc1e3c7d486d6a92fbe920232e439eec2ceb112da",
-      "selectors": [
-        "0xe3ee160e",
-        "0xef55bec6",
-        "0xe94a0102",
-        "0x5a049a70"
-      ],
-      "independentReadback": "live eth_call reverts InvalidSignature() (0x8baa579f) on a junk signature",
-      "evidence": "proof/AGORA_AUSD_PROOF.md"
-    },
-    {
       "claim": "@category-labs/mera is a real published library and Prism uses its official entry points",
       "status": "PROVEN",
       "independentReadback": "npm registry: versions 0.1.0/0.2.0, latest 0.2.0, modified 2026-08-12",
@@ -129,13 +105,6 @@
       "status": "PROVEN",
       "independentReadback": "CI macos-15 job completed `npm run build` and XcodeGen before reaching Swift compilation",
       "evidence": "proof/MERA_PROOF.md"
-    },
-    {
-      "claim": "The backend's runtime AUSD domain integrity check passes against the live token",
-      "status": "PROVEN",
-      "independentReadback": "CI run 33852798608 backend log: integrity.chainId ok:true onchain:10143; integrity.ausdDomain ok:true",
-      "note": "corroborates the cast-based domain proof through a second, independent implementation (viem in Node) on a different machine",
-      "evidence": "proof/AGORA_AUSD_PROOF.md"
     },
     {
       "claim": "The WKWebView Mera bridge derives an account and produces a signature the backend accepts (simulator)",
@@ -169,7 +138,7 @@
       "state": "FIXED",
       "title": "A lost relayer response caused a blind re-broadcast (MUT-16)",
       "impact": "A retry after a lost response re-entered the relayer and re-broadcast the same authorization. On-chain guards prevented a double-spend, but it burned relayer gas; fundClaim additionally marked a claim failed while its funding may have been landing.",
-      "fix": "operations move to a 'broadcasting' state before the relay call; errors are classified pre-broadcast vs ambiguous; an ambiguous retry reads AUSD.authorizationState(payer, nonce) and resolves to 'confirming' instead of resending",
+      "fix": "operations move to a 'broadcasting' state before the relay call; errors are classified pre-broadcast vs ambiguous; an ambiguous retry reads USDC.authorizationState(payer, nonce) and resolves to 'confirming' instead of resending",
       "regressionTests": "backend/test/mutation-audit.test.js MUT-16 x3; verified to fail against the pre-fix code"
     },
     {
@@ -230,11 +199,11 @@
         "funded DEPLOYER_PRIVATE_KEY",
         "funded RELAYER_PRIVATE_KEY",
         "CLAIM_AUTHORIZER_ADDRESS",
-        "test AUSD"
+        "test USDC"
       ],
       "hardBlockers": [
         "faucet.monad.xyz sits behind a Vercel bot checkpoint (HTTP 429); no unauthenticated claim endpoint",
-        "AUSD mint(address,uint256) is role-gated: eth_call from an arbitrary address reverts AddressIsNotMinterRole"
+        "test USDC requires external faucet access"
       ],
       "evidence": "proof/TESTNET_DEPLOYMENT.md"
     },

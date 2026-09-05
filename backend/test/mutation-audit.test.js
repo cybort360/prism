@@ -53,7 +53,7 @@ function seedPair(store, payer, recipient) {
 async function signBoth(payer, env) {
   return {
     prismSignature: await payer.signTypedData(paymentEnvelopeTypedData(env)),
-    ausdSignature: await payer.signTypedData(transferAuthorizationTypedData({
+    tokenSignature: await payer.signTypedData(transferAuthorizationTypedData({
       from: env.payer, to: env.recipient, value: env.amount, validAfter: 0, validBefore: env.validBefore, nonce: env.nonce
     }))
   };

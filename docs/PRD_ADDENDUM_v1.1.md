@@ -8,11 +8,11 @@ older notes, this document wins.
 | Area | v1 (original scaffold) | v1.1 (this build) | Why |
 |---|---|---|---|
 | Consumer signing | Custom Secure-Enclave **P-256** key + **ERC-4337** `PrismAccount` + bundler + paymaster | **Mera passkey-derived secp256k1 account** (official `@category-labs/mera`) | One consumer signing layer; no seed phrase; passkey recovery; standard signatures |
-| Payment primitive | ERC-4337 `UserOperation` executing a token transfer | **AUSD ERC-3009 `receiveWithAuthorization`** via `PrismPaymentRouter`, relayer-submitted | Gasless for the user (AUSD>0, MON=0) with no bundler/account contract |
-| Asset | USDC | **AUSD (Agora Dollar)** | Metropolis payment asset / Agora bounty |
+| Payment primitive | ERC-4337 `UserOperation` executing a token transfer | **USDC ERC-3009 `receiveWithAuthorization`** via `PrismPaymentRouter`, relayer-submitted | Gasless for the user (USDC>0, MON=0) with no bundler/account contract |
+| Asset | USDC | **USDC** | Recognized consumer stablecoin |
 | Claim vault | P-256-authorizer vault funded via 4337 `execute` | ERC-3009-funded vault with **secp256k1** authorizer | Matches the new signing/asset model; simpler `ecrecover` |
 | Gas | Paymaster sponsors a UserOp | MON-funded **relayer** (prod: **Alchemy Gas Manager**) | Standard ERC-3009 relaying |
-| Indexing | (implicit) | **Envio HyperIndex** of router/vault/AUSD events | Real product activity feed / Envio bounty |
+| Indexing | (implicit) | **Envio HyperIndex** of router/vault/USDC events | Real product activity feed / Envio bounty |
 | Recovery | On-chain P-256 key rotation | **Passkey re-derivation** (same account on a new device) | No on-chain rotation, no seed phrase |
 
 The old path is not deleted from history — it is archived for reference under
@@ -33,7 +33,7 @@ Mera.
 
 - **Onboarding** creates a Mera passkey account with Face ID / Touch ID; the app proves control of
   that account to the backend (`bind_account` signature) — no key material is uploaded.
-- **Paying** signs an EIP-712 AUSD authorization inside a scoped Mera session after the local PIN /
+- **Paying** signs an EIP-712 USDC authorization inside a scoped Mera session after the local PIN /
   Face ID gate; the relayer settles it on Monad.
 - **Receiving as a new user** works through the claim vault: money waits in escrow and is released
   to the recipient's Mera account once they join and verify the alias.

@@ -176,7 +176,7 @@ struct ActivityView: View {
 
       VStack(alignment: .trailing, spacing: 4) {
         if let amount = item.amountAtomic {
-          Text((item.direction == "incoming" ? "+" : "-") + Money.assetAmount(fromAtomic: amount, symbol: item.tokenSymbol))
+          Text((item.direction == "incoming" ? "+" : "-") + Money.assetAmount(fromAtomic: amount))
             .font(PrismTheme.body(14, weight: .semibold))
             .foregroundStyle(item.direction == "incoming" ? PrismTheme.positive : PrismTheme.ink)
         }
@@ -239,7 +239,7 @@ struct ActivityView: View {
       return
     }
 
-    let amount = item.amountAtomic.map { Money.assetAmount(fromAtomic: $0, symbol: item.tokenSymbol) } ?? "—"
+    let amount = item.amountAtomic.map { Money.assetAmount(fromAtomic: $0) } ?? "—"
     model.presentReceipt = ReceiptPresentation(
       title: title(item),
       amount: amount,

@@ -14,11 +14,11 @@ faking completion.
 
 | Contract.event | Writes |
 |---|---|
-| `PrismPaymentRouter.PaymentSettled(paymentId, payer, recipient, token, amount, requestId, resolutionHash)` | `Payment`, two `AccountActivity` rows, and `RequestSettlement` when applicable |
-| `PrismClaimVault.ClaimFunded(claimId, sender, token, amount, expiry, recipientReference)` | `Claim` Funded, `AccountActivity` sender row |
-| `PrismClaimVault.ClaimCollected(claimId, recipient, token, amount)` | `Claim` Claimed, `AccountActivity` recipient row |
-| `PrismClaimVault.ClaimRefunded(claimId, sender, token, amount)` | `Claim` Refunded, `AccountActivity` sender row |
-| `AUSD.Transfer` or `USDC.Transfer` touching router/vault | `VaultTransfer` |
+| `PrismPaymentRouter.PaymentSettled(paymentId, payer, recipient, amount, requestId, resolutionHash)` | `Payment`, two `AccountActivity` rows, and `RequestSettlement` when applicable |
+| `PrismClaimVault.ClaimFunded(claimId, sender, amount, expiry, recipientReference)` | `Claim` Funded, `AccountActivity` sender row |
+| `PrismClaimVault.ClaimCollected(claimId, recipient, amount)` | `Claim` Claimed, `AccountActivity` recipient row |
+| `PrismClaimVault.ClaimRefunded(claimId, sender, amount)` | `Claim` Refunded, `AccountActivity` sender row |
+| `USDC.Transfer` touching router/vault | `VaultTransfer` |
 
 No phone number, phone hash, or handle is ever indexed — only opaque paymentId/claimId/references.
 
