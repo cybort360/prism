@@ -34,7 +34,6 @@ const activityService = new ActivityService({ store, identityService });
 const proofService = new ProofService({ paymentService });
 
 // Replay/idempotency guard for webhook event ids.
-const seenWebhookEvents = new Set();
 
 // --- router with :param support (exact routes win over param routes) ---------
 const exact = new Map();
@@ -165,9 +164,16 @@ route('POST', '/v1/webhooks/alchemy', async ({ body, rawBody, headers }) => {
   if (body === undefined || typeof body !== 'object') throw httpError(400, 'malformed webhook body');
   const eventId = typeof body.id === 'string' ? body.id : null;
   if (eventId) {
-    if (seenWebhookEvents.has(eventId)) return { ok: true, deduped: true }; // replay/idempotent
-    seenWebhookEvents.add(eventId);
-    if (seenWebhookEvents.size > 5000) seenWebhookEvents.delete(seenWebhookEvents.values().next().value);
+    // Persist the dedupe set so replay protection survives a restart, and reserve the id atomically
+    // inside one synchronous mutate so concurrent deliveries can't both pass (F-06 durability).
+    let fresh = false;
+    store.mutate((d) => {
+      d.webhookEvents ??= {};
+      if (!d.webhookEvents[eventId]) { d.webhookEvents[eventId] = new Date().toISOString(); fresh = true; }
+      const keys = Object.keys(d.webhookEvents);
+      if (keys.length > 5000) for (const k of keys.slice(0, keys.length - 5000)) delete d.webhookEvents[k];
+    });
+    if (!fresh) return { ok: true, deduped: true }; // replay/idempotent
   }
   const hashes = extractTxHashes(body);
   const reconciled = [];
