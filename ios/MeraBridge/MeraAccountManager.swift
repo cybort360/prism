@@ -73,9 +73,10 @@ final class MeraAccountManager: ObservableObject {
     try await service.signTypedData(typedData).hexString
   }
 
-  /// Proof of control of `address`, matching the backend's `bind_account` canonical payload.
-  func bindingProofHex(for address: String) async throws -> String {
-    try await signMessageHex(Self.canonicalJSONString(["action": "bind_account", "account": address.lowercased()]))
+  /// Proof of control of `address`, matching the backend's `bind_account` canonical payload. The
+  /// server-issued single-use `nonce` makes the proof non-replayable (F-07).
+  func bindingProofHex(for address: String, nonce: String) async throws -> String {
+    try await signMessageHex(Self.canonicalJSONString(["action": "bind_account", "account": address.lowercased(), "nonce": nonce]))
   }
 
   func signCanonicalHex(_ object: [String: Any]) async throws -> String {

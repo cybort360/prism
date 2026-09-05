@@ -44,9 +44,10 @@ test('HTTP contract exposes Swift-required routes and rejects unsigned identity 
     assert.equal(cfg.chainId, '10143');
 
     const owner = meraAccount(PK_A);
+    const { nonce } = await (await fetch(`${base}/v1/auth/challenge`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
     const authResponse = await fetch(`${base}/v1/auth/device`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ account: owner.address, bindingProof: await owner.bindingProof(), handle: null })
+      body: JSON.stringify({ account: owner.address, bindingProof: await owner.bindingProof(nonce), challenge: nonce, handle: null })
     });
     assert.equal(authResponse.status, 200);
     const auth = await authResponse.json();

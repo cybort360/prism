@@ -7,7 +7,7 @@ import { ClaimService } from '../src/services/claimService.js';
 import { ResolverService } from '../src/services/resolverService.js';
 import { IdentityService } from '../src/services/identityService.js';
 import { transferAuthorizationTypedData, verifyTypedData } from '../src/chain/eth.js';
-import { meraAccount, PK_A } from './helpers.js';
+import { meraAccount, bindArgs, PK_A } from './helpers.js';
 
 const RECIPIENT = '0x00000000000000000000000000000000000000b0';
 
@@ -43,7 +43,7 @@ test('phone rotation invalidates the previous resolution version', async () => {
   const config = { resolverPepper: 'pepper', dataEncryptionKeyHex: '11'.repeat(32), serviceKeyEncryptionKeyHex: '22'.repeat(32) };
   const identityService = new IdentityService({ store, config });
   const owner = meraAccount(PK_A);
-  const identity = await identityService.upsertVerifiedPhone({ phone: '+2348031234567', account: owner.address, bindingProof: await owner.bindingProof() });
+  const identity = await identityService.upsertVerifiedPhone({ phone: '+2348031234567', ...(await bindArgs(identityService, owner)) });
   const resolver = new ResolverService({ store, config, keyService: new KeyService(store, config), identityService });
   const before = resolver.resolvePhone('requester', '+2348031234567');
   assert.equal(before.found, true);

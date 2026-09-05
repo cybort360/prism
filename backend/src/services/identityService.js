@@ -15,10 +15,10 @@ export class IdentityService {
     this.config = config;
   }
 
-  async upsertVerifiedPhone({ phone, account, bindingProof, requestedHandle }) {
+  async upsertVerifiedPhone({ phone, account, bindingProof, requestedHandle, challengeNonce }) {
     phone = normalizeE164(phone);
     account = this._assertAccount(account);
-    await this._assertAccountControl(account, bindingProof);
+    await this._assertAccountControl(account, bindingProof, challengeNonce);
     const key = phoneLookupKey(phone, this.config.resolverPepper);
     let identity = this.store.mutate(data => {
       const existingId = data.phoneIndex[key];
@@ -38,9 +38,9 @@ export class IdentityService {
     return identity;
   }
 
-  async createDeviceIdentity({ account, bindingProof, requestedHandle }) {
+  async createDeviceIdentity({ account, bindingProof, requestedHandle, challengeNonce }) {
     account = this._assertAccount(account);
-    await this._assertAccountControl(account, bindingProof);
+    await this._assertAccountControl(account, bindingProof, challengeNonce);
     let identity = this.store.mutate(data => {
       const duplicate = Object.values(data.identities).find(x => x.account.toLowerCase() === account.toLowerCase());
       if (duplicate) return duplicate;
@@ -182,15 +182,43 @@ export class IdentityService {
     return checksum(account);
   }
 
-  // Onboarding proof: the app proves current control of the Mera account by personal_sign.
-  async _assertAccountControl(account, bindingProof) {
-    const payload = canonicalJson({ action: 'bind_account', account: account.toLowerCase() });
+  // Issue a single-use, short-lived binding challenge. The app signs it to prove current control of
+  // the Mera account; the server-issued nonce makes the proof non-replayable (F-07).
+  issueBindingChallenge() {
+    const nonce = `0x${crypto.randomBytes(32).toString('hex')}`;
+    const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+    this.store.mutate((d) => {
+      d.challenges ??= {};
+      d.challenges[nonce] = { action: 'bind_account', expiresAt, createdAt: new Date().toISOString() };
+    });
+    return { nonce, expiresAt };
+  }
+
+  // Atomically consume a binding challenge exactly once. Throws if missing, expired, or already used.
+  _consumeBindingChallenge(nonce) {
+    if (!nonce) { const e = new Error('binding challenge required'); e.statusCode = 401; throw e; }
+    let ok = false;
+    this.store.mutate((d) => {
+      d.challenges ??= {};
+      const c = d.challenges[nonce];
+      if (c) delete d.challenges[nonce];                       // single-use: consume regardless of validity
+      if (c && c.action === 'bind_account' && Date.parse(c.expiresAt) > Date.now()) ok = true;
+    });
+    if (!ok) { const e = new Error('binding challenge invalid or already used'); e.statusCode = 401; throw e; }
+  }
+
+  // Onboarding proof: the app proves current control of the Mera account by signing a server-issued
+  // single-use challenge. Verify the signature first (a bad signature must not burn the nonce), then
+  // atomically consume the challenge so the proof can never be replayed.
+  async _assertAccountControl(account, bindingProof, challengeNonce) {
+    const payload = canonicalJson({ action: 'bind_account', account: account.toLowerCase(), nonce: challengeNonce });
     const ok = await verifyAccountMessage(account, payload, bindingProof ?? '');
     if (!ok) {
       const e = new Error('Mera account control signature required');
       e.statusCode = 401;
       throw e;
     }
+    this._consumeBindingChallenge(challengeNonce);
   }
 
   async _assertAccountMutation(identity, payload, signature) {

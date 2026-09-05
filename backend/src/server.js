@@ -74,15 +74,18 @@ route('GET', '/v1/config', async () => ({
 }));
 
 // --- onboarding --------------------------------------------------------------
+// A single-use, short-lived challenge the app signs with its Mera account so the binding proof can
+// never be replayed (F-07). No auth: proving control of the account is the whole point.
+route('POST', '/v1/auth/challenge', async () => identityService.issueBindingChallenge());
 route('POST', '/v1/auth/otp/start', async ({ body, ip }) => otpService.start(body.phone, ip));
 route('POST', '/v1/auth/device', async ({ body }) => {
-  const identity = await identityService.createDeviceIdentity({ account: body.account, bindingProof: body.bindingProof, requestedHandle: body.handle });
+  const identity = await identityService.createDeviceIdentity({ account: body.account, bindingProof: body.bindingProof, requestedHandle: body.handle, challengeNonce: body.challenge });
   return { session: issueSession({ prismId: identity.prismId }, config.sessionSecret), identity: identityService.publicView(identity) };
 });
 route('POST', '/v1/auth/otp/check', async ({ body, ip }) => {
   const checked = await otpService.check(body.phone, body.code, ip);
   if (!checked.approved) throw httpError(401, 'invalid verification code');
-  const identity = await identityService.upsertVerifiedPhone({ phone: body.phone, account: body.account, bindingProof: body.bindingProof, requestedHandle: body.handle });
+  const identity = await identityService.upsertVerifiedPhone({ phone: body.phone, account: body.account, bindingProof: body.bindingProof, requestedHandle: body.handle, challengeNonce: body.challenge });
   return { session: issueSession({ prismId: identity.prismId }, config.sessionSecret), identity: identityService.publicView(identity) };
 });
 

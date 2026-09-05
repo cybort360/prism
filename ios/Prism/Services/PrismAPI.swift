@@ -10,9 +10,10 @@ final class PrismAPI: @unchecked Sendable {
   private init() {}
 
   // MARK: request bodies
-  struct DeviceAuthBody: Encodable { let account: String; let bindingProof: String; let handle: String? }
+  struct DeviceAuthBody: Encodable { let account: String; let bindingProof: String; let challenge: String; let handle: String? }
   struct OTPStartBody: Encodable { let phone: String }
-  struct OTPCheckBody: Encodable { let phone: String; let code: String; let account: String; let bindingProof: String; let handle: String? }
+  struct OTPCheckBody: Encodable { let phone: String; let code: String; let account: String; let bindingProof: String; let challenge: String; let handle: String? }
+  struct EmptyChallengeBody: Encodable {}
   struct SignedHandleBody: Encodable { let handle: String; let accountSignature: String }
   struct PrivacyBody: Encodable { let phoneDiscoverable: Bool; let handleSearchable: Bool }
   struct ProfileBody: Encodable { let displayName: String }
@@ -34,12 +35,20 @@ final class PrismAPI: @unchecked Sendable {
 
   // MARK: onboarding
 
+  /// Fetch a single-use binding challenge and sign it, so the account-control proof can't be replayed.
+  @MainActor
+  private func freshBindingProof(for address: String) async throws -> (proof: String, nonce: String) {
+    let challenge: BindingChallenge = try await api.send("/v1/auth/challenge", body: EmptyChallengeBody())
+    let proof = try await mera.bindingProofHex(for: address, nonce: challenge.nonce)
+    return (proof, challenge.nonce)
+  }
+
   @MainActor
   func createDeviceIdentity() async throws -> AuthResponse {
     let account = try await mera.ensureAccount()
-    let proof = try await mera.bindingProofHex(for: account.address)
+    let (proof, nonce) = try await freshBindingProof(for: account.address)
     let response: AuthResponse = try await api.send(
-      "/v1/auth/device", body: DeviceAuthBody(account: account.address, bindingProof: proof, handle: nil))
+      "/v1/auth/device", body: DeviceAuthBody(account: account.address, bindingProof: proof, challenge: nonce, handle: nil))
     try KeychainStore.shared.setString(response.session, for: "session")
     return response
   }
@@ -47,9 +56,9 @@ final class PrismAPI: @unchecked Sendable {
   @MainActor
   func createHandleIdentity(handle: String) async throws -> AuthResponse {
     let account = try await mera.ensureAccount()
-    let proof = try await mera.bindingProofHex(for: account.address)
+    let (proof, nonce) = try await freshBindingProof(for: account.address)
     let response: AuthResponse = try await api.send(
-      "/v1/auth/device", body: DeviceAuthBody(account: account.address, bindingProof: proof, handle: handle))
+      "/v1/auth/device", body: DeviceAuthBody(account: account.address, bindingProof: proof, challenge: nonce, handle: handle))
     try KeychainStore.shared.setString(response.session, for: "session")
     return response
   }
@@ -61,10 +70,10 @@ final class PrismAPI: @unchecked Sendable {
   @MainActor
   func checkOTP(phone: String, code: String) async throws -> AuthResponse {
     let account = try await mera.ensureAccount()
-    let proof = try await mera.bindingProofHex(for: account.address)
+    let (proof, nonce) = try await freshBindingProof(for: account.address)
     let response: AuthResponse = try await api.send(
       "/v1/auth/otp/check",
-      body: OTPCheckBody(phone: phone, code: code, account: account.address, bindingProof: proof, handle: nil))
+      body: OTPCheckBody(phone: phone, code: code, account: account.address, bindingProof: proof, challenge: nonce, handle: nil))
     try KeychainStore.shared.setString(response.session, for: "session")
     return response
   }

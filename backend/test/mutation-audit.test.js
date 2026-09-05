@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-import { meraAccount, PK_A, PK_B } from './helpers.js';
+import { meraAccount, bindArgs, PK_A, PK_B } from './helpers.js';
 
 // A fully-wired backend (config reads env at import time).
 process.env.MONAD_CHAIN_ID = '10143';
@@ -102,7 +102,7 @@ test('MUT-04 a resolver response issued for someone else cannot be replayed', as
 test('MUT-13 bulk alias lookup is rate limited, and lookups require an authenticated requester', async () => {
   const { store, resolverService, identityService } = stack();
   const owner = meraAccount(PK_A);
-  await identityService.upsertVerifiedPhone({ phone: '+2348031234567', account: owner.address, bindingProof: await owner.bindingProof() });
+  await identityService.upsertVerifiedPhone({ phone: '+2348031234567', ...(await bindArgs(identityService, owner)) });
 
   // Every resolver entry point is requester-scoped: there is no anonymous lookup to call.
   for (const fn of ['resolvePhone', 'resolveHandle', 'resolvePrismId']) {

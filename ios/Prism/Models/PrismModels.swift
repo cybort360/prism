@@ -34,6 +34,11 @@ struct AuthResponse: Codable {
   let session: String
   let identity: PrismIdentity
 }
+/// A single-use, short-lived challenge the app signs to prove Mera-account control (non-replayable).
+struct BindingChallenge: Codable {
+  let nonce: String
+  var expiresAt: String? = nil
+}
 struct BalanceResponse: Codable {
   let token: String
   let symbol: String

@@ -8,7 +8,7 @@ import { ClaimService } from '../src/services/claimService.js';
 import { ResolverService } from '../src/services/resolverService.js';
 import { IdentityService } from '../src/services/identityService.js';
 import { logger } from '../src/lib/logger.js';
-import { meraAccount, PK_A } from './helpers.js';
+import { meraAccount, bindArgs, PK_A } from './helpers.js';
 
 /**
  * Automated privacy leak checks (FORGE PRIVACY AUDIT).
@@ -67,7 +67,7 @@ test('LEAK-01 no raw phone number is ever persisted to the datastore', async () 
   await otp.check(PHONE, OTP_CODE, '203.0.113.7');
   await otp.start(OTHER_PHONE, '203.0.113.8');           // a number that never becomes a user
   const identity = await identityService.upsertVerifiedPhone({
-    phone: PHONE, account: owner.address, bindingProof: await owner.bindingProof()
+    phone: PHONE, ...(await bindArgs(identityService, owner))
   });
   resolver.resolvePhone(identity.prismId, PHONE);
   resolver.resolvePhone(identity.prismId, OTHER_PHONE);  // a miss still touches rate-limit state
@@ -92,7 +92,7 @@ test('LEAK-02 the stored phone is encrypted, and is not a bare hash of the numbe
   const { file, store, config, identityService } = newContext();
   const owner = meraAccount(PK_A);
   const identity = await identityService.upsertVerifiedPhone({
-    phone: PHONE, account: owner.address, bindingProof: await owner.bindingProof()
+    phone: PHONE, ...(await bindArgs(identityService, owner))
   });
   const stored = JSON.parse(fs.readFileSync(file, 'utf8')).identities[identity.prismId];
 
@@ -122,7 +122,7 @@ test('LEAK-03 logs carry no phone, OTP, PIN, or key material', async () => {
     await otp.start(PHONE, '203.0.113.7');
     await otp.check(PHONE, OTP_CODE, '203.0.113.7');
     const identity = await identityService.upsertVerifiedPhone({
-      phone: PHONE, account: owner.address, bindingProof: await owner.bindingProof()
+      phone: PHONE, ...(await bindArgs(identityService, owner))
     });
     const resolution = resolver.resolvePhone(identity.prismId, PHONE);
     // Log the way production does: opaque identifiers only.
@@ -142,7 +142,7 @@ test('LEAK-04 the resolver attestation exposes no phone-derived value to the req
   const owner = meraAccount(PK_A);
   const resolver = new ResolverService({ store, config, keyService, identityService });
   const identity = await identityService.upsertVerifiedPhone({
-    phone: PHONE, account: owner.address, bindingProof: await owner.bindingProof()
+    phone: PHONE, ...(await bindArgs(identityService, owner))
   });
 
   const resolution = resolver.resolvePhone(identity.prismId, PHONE);
@@ -169,7 +169,7 @@ test('LEAK-06 the identity public view masks the phone rather than returning it'
   const { store, config, identityService } = newContext();
   const owner = meraAccount(PK_A);
   const identity = await identityService.upsertVerifiedPhone({
-    phone: PHONE, account: owner.address, bindingProof: await owner.bindingProof()
+    phone: PHONE, ...(await bindArgs(identityService, owner))
   });
   const view = identityService.publicView(identity);
   assert.equal(JSON.stringify(view).includes(PHONE), false, 'public view returned the full phone');
