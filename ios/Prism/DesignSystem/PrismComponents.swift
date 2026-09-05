@@ -307,6 +307,20 @@ struct ErrorBanner: View {
   }
 }
 
+struct SuccessBanner: View {
+  let message: String
+  var body: some View {
+    HStack(alignment: .top, spacing: 10) {
+      Image(systemName: "checkmark.circle.fill").foregroundStyle(PrismTheme.positive)
+      Text(message).font(PrismTheme.body(12.5)).foregroundStyle(PrismTheme.ink)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .padding(14)
+    .background(PrismTheme.positive.opacity(0.09))
+    .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+  }
+}
+
 enum PrismStatusTone { case positive, pending, danger, neutral }
 
 struct PrismStatusPill: View {

@@ -27,10 +27,6 @@ struct UnregisteredSendView: View {
 
         Spacer().frame(height: 21)
         AmountText(dollars: displayAmount, size: 77)
-        Text("USDC")
-          .font(PrismTheme.body(12, weight: .semibold))
-          .foregroundStyle(PrismTheme.mintDeep)
-          .padding(.top, 8)
 
         HStack(spacing: 9) {
           Image(systemName: "pencil").font(.system(size: 13)).foregroundStyle(PrismTheme.muted)
@@ -80,7 +76,7 @@ struct UnregisteredSendView: View {
       }
     }
     .sheet(isPresented: $showAuth) {
-      PaymentAuthorizationSheet(amount: "\(displayAmount) USDC") { pin, face in
+      PaymentAuthorizationSheet(amount: displayAmount) { pin, face in
         Task { await fund(pin: pin, face: face) }
       }
     }
@@ -106,7 +102,7 @@ struct UnregisteredSendView: View {
       dismiss()
       model.presentReceipt = ReceiptPresentation(
         title: "Money waiting",
-        amount: "\(displayAmount) USDC",
+        amount: displayAmount,
         subtitle: "Waiting for \(contact.name) to join and claim",
         transactionHash: transactionHash,
         status: "Waiting to be claimed"

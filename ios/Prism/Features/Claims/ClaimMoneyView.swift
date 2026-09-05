@@ -36,10 +36,6 @@ struct ClaimMoneyView: View {
       AmountText(dollars: Money.dollars(fromAtomic: claim.amountAtomic), size: 70)
         .padding(.top, 8)
 
-      Text("USDC")
-        .font(PrismTheme.body(12, weight: .semibold))
-        .foregroundStyle(PrismTheme.mintDeep)
-        .padding(.top, 4)
 
       if let memo = claim.memo, !memo.isEmpty {
         Text(memo)

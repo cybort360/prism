@@ -355,8 +355,8 @@ enum Money {
       .currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))
   }
   static func assetAmount(fromAtomic value: String, decimals: Int = 6) -> String {
-    let amount = dollars(fromAtomic: value, decimals: decimals)
-    return "\(amount) USDC"
+    // Consumer UI shows plain dollars — the settlement token is never surfaced to the user.
+    return dollars(fromAtomic: value, decimals: decimals)
   }
   static func atomic(fromDollars text: String, decimals: Int = 6) -> String? {
     let cleaned = text.replacingOccurrences(of: "$", with: "").replacingOccurrences(

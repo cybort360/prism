@@ -23,10 +23,6 @@ struct SendMoneyView: View {
         }
         Spacer().frame(height: 24)
         AmountText(dollars: displayAmount, size: 76).padding(.horizontal, 22)
-        Text("USDC")
-          .font(PrismTheme.body(12, weight: .semibold))
-          .foregroundStyle(PrismTheme.mintDeep)
-          .padding(.top, 8)
         HStack(spacing: 10) {
           Image(systemName: "pencil")
           TextField("Add a note", text: $memo)
@@ -85,7 +81,7 @@ struct SendMoneyView: View {
       : (Decimal(string: amount) ?? 0).formatted(
         .currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))
   }
-  private var displayAssetAmount: String { "\(displayAmount) USDC" }
+  private var displayAssetAmount: String { displayAmount }
   private func decimalText(_ atomic: String) -> String {
     let n = Decimal(string: atomic) ?? 0
     return NSDecimalNumber(decimal: n / 1_000_000).stringValue

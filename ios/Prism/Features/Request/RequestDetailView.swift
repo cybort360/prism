@@ -30,10 +30,6 @@ struct RequestDetailView: View {
       AmountText(dollars: Money.dollars(fromAtomic: request.amountAtomic), size: 67)
         .padding(.top, 22)
 
-      Text("USDC")
-        .font(PrismTheme.body(12, weight: .semibold))
-        .foregroundStyle(PrismTheme.mintDeep)
-        .padding(.top, 6)
 
       Text(request.memo.isEmpty ? "Payment request" : request.memo)
         .font(PrismTheme.body(14))

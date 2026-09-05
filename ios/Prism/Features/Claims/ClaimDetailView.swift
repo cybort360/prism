@@ -31,10 +31,6 @@ struct ClaimDetailView: View {
       AmountText(dollars: Money.dollars(fromAtomic: claim.amountAtomic), size: 67)
         .padding(.top, 24)
 
-      Text("USDC")
-        .font(PrismTheme.body(12, weight: .semibold))
-        .foregroundStyle(PrismTheme.mintDeep)
-        .padding(.top, 6)
 
       Text(claimStatus)
         .font(PrismTheme.body(14.5, weight: .semibold))

@@ -650,6 +650,7 @@ struct ReachabilityEditorView: View {
   @State private var otpSent = false
   @State private var busy = false
   @State private var error: String?
+  @State private var success: String?
   var body: some View {
     NavigationStack {
       ScrollView {
@@ -660,7 +661,9 @@ struct ReachabilityEditorView: View {
             Text("Phone").tag(0)
             Text("@handle").tag(1)
           }.pickerStyle(.segmented)
+          .onChange(of: mode) { _, _ in error = nil; success = nil }
           if mode == 0 { phoneEditor } else { handleEditor }
+          if let success { SuccessBanner(message: success) }
           if let error { ErrorBanner(message: error) }
         }.padding(22)
       }.navigationTitle("Reachability").navigationBarTitleDisplayMode(.inline).toolbar {
@@ -708,8 +711,9 @@ struct ReachabilityEditorView: View {
     }
   }
   private func startPhone() async {
+    success = nil
     guard let p = ContactService.normalize(phone) else {
-      error = "Enter a valid E.164 phone number."
+      error = "Enter a valid phone number."
       return
     }
     busy = true
@@ -723,23 +727,33 @@ struct ReachabilityEditorView: View {
   }
   private func finishPhone() async {
     busy = true
+    error = nil; success = nil
     defer { busy = false }
     do {
       let i = try await PrismAPI.shared.checkPhoneBinding(phone: phone, code: code)
       model.updateIdentity(i)
       otpSent = false
       code = ""
-      error = nil
-    } catch { self.error = error.localizedDescription }
+      success = "Your phone number is verified and connected."
+      PrismHaptics.success()
+    } catch {
+      self.error = error.localizedDescription
+      PrismHaptics.error()
+    }
   }
   private func saveHandle() async {
     busy = true
+    error = nil; success = nil
     defer { busy = false }
     do {
       let i = try await PrismAPI.shared.setHandle(handle)
       model.updateIdentity(i)
       handle = ""
-      error = nil
-    } catch { self.error = error.localizedDescription }
+      success = "@\(i.handle ?? "") is now your public handle."
+      PrismHaptics.success()
+    } catch {
+      self.error = error.localizedDescription
+      PrismHaptics.error()
+    }
   }
 }

@@ -31,10 +31,6 @@ struct RequestMoneyView: View {
 
         Spacer().frame(height: 24)
         AmountText(dollars: displayAmount, size: 78)
-        Text("USDC")
-          .font(PrismTheme.body(12, weight: .semibold))
-          .foregroundStyle(PrismTheme.mintDeep)
-          .padding(.top, 8)
 
         HStack(spacing: 9) {
           Image(systemName: "pencil").font(.system(size: 13, weight: .medium)).foregroundStyle(PrismTheme.muted)
@@ -76,7 +72,7 @@ struct RequestMoneyView: View {
               Image(systemName: "checkmark").font(.system(size: 29, weight: .semibold)).foregroundStyle(PrismTheme.mintDeep)
             )
             Text("Request sent").font(PrismTheme.display(34))
-            Text("\(displayAmount) USDC requested from \(target.contact.name).")
+            Text("\(displayAmount) requested from \(target.contact.name).")
               .font(PrismTheme.body(14))
               .foregroundStyle(PrismTheme.muted)
               .multilineTextAlignment(.center)

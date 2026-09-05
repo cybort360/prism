@@ -18,16 +18,6 @@ struct HomeView: View {
         AmountText(
           dollars: totalBalance, size: 70
         ).padding(.top, 6)
-        if let balance {
-          Text(Money.assetAmount(fromAtomic: balance.amountAtomic, decimals: balance.decimals))
-          .font(PrismTheme.body(10.5, weight: .semibold))
-          .foregroundStyle(PrismTheme.mintDeep)
-          .padding(.horizontal, 10)
-          .padding(.vertical, 6)
-          .background(PrismTheme.mintSoft)
-          .clipShape(Capsule())
-          .padding(.top, 10)
-        }
         if let metric = weeklyMetric {
           PrismMetricPill(text: metric.text, positive: metric.positive).padding(.top, 11)
         } else if loading {
@@ -45,7 +35,7 @@ struct HomeView: View {
 
   private var header: some View {
     HStack(spacing: 11) {
-      PrismAvatar(initials: "OA", size: 42)
+      PrismAvatar(initials: initials, size: 42)
       Text("Hello, \(displayName)").font(PrismTheme.body(16, weight: .semibold))
       Spacer()
       Button {
@@ -64,6 +54,13 @@ struct HomeView: View {
   private var displayName: String {
     if let name = model.identity?.displayName?.split(separator: " ").first { return String(name) }
     return model.identity?.handle?.replacingOccurrences(of: "@", with: "").capitalized ?? "User"
+  }
+  private var initials: String {
+    let source: String
+    if let name = model.identity?.displayName, !name.isEmpty { source = name }
+    else { source = model.identity?.handle?.replacingOccurrences(of: "@", with: "") ?? "" }
+    let value = source.split(separator: " ").prefix(2).compactMap { $0.first }.map(String.init).joined().uppercased()
+    return value.isEmpty ? "U" : value
   }
   private var actions: some View {
     HStack(spacing: 10) {
