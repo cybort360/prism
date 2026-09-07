@@ -1,12 +1,10 @@
 {
-  "network": "monad-testnet",
   "chainId": 10143,
-  "status": "not-yet-broadcast",
-  "note": "Populated by contracts/script/Deploy.s.sol on `forge script ... --broadcast`. Requires the external DEPLOYER_PRIVATE_KEY (MON-funded) and CLAIM_AUTHORIZER_ADDRESS. Addresses live here, never in Swift source.",
-  "usdc": "0x534b2f3A21130d7a60830c2Df862319e593943A3",
-  "paymentRouter": null,
-  "claimVault": null,
-  "claimAuthorizer": null,
-  "deployer": null,
-  "deployedAt": null
+  "claimAuthorizer": "0x27b17d6901885a7049a4c774e1EA1eBaf4146641",
+  "claimVault": "0xBe3D0b0404674e032D153182a58b1901D1d6Eae3",
+  "deployedAt": 1788793448,
+  "deployer": "0x234D418a69d88eEE7965C11D6994B60dd567a117",
+  "network": "monad-testnet",
+  "paymentRouter": "0x423a9Da22b1509e7593F4A60f62e6929B56f62b7",
+  "usdc": "0x534b2f3A21130d7a60830c2Df862319e593943A3"
 }
