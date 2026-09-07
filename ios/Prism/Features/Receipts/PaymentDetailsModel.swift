@@ -61,8 +61,18 @@ struct PaymentDisplay {
     return m
   }
 
-  /// Consumer status label. Green "settled" wording only when the lifecycle actually reached completed.
+  /// Consumer status label — human language only, never the internal enum. Green "settled" wording
+  /// only when the lifecycle actually reached completed; in-flight uses progressive verbs; attention
+  /// states get calm, specific recovery guidance.
   var statusLabel: String {
+    // Attention / reconciliation get specific language (the ambiguous-submit and provider-disagreement paths).
+    if payment.lifecycleState == .requiresAttention {
+      switch payment.failureCode {
+      case "SUBMISSION_AMBIGUOUS": return "Checking whether this was submitted"
+      case "PROVIDER_DISAGREEMENT", "RECONCILIATION_REQUIRED": return "Verifying final details"
+      default: return "Needs your attention"
+      }
+    }
     switch payment.lifecycleState {
     case .completed:
       switch payment.kind {
@@ -73,14 +83,43 @@ struct PaymentDisplay {
       }
     case .refunded: return "Refunded"
     case .claimWaiting, .claimable: return "Protected for \(shortName(payment.recipient))"
-    case .requiresAttention: return "Needs your attention"
     case .failedTerminal, .reverted, .cancelled: return "Failed"
     case .refundAvailable: return "Refund available"
     case .expired: return "Expired"
-    case .created, .resolving, .resolved, .awaitingAuthorization, .authorized: return "Preparing"
-    case .submitted, .processing: return "Sending"
-    case .confirming, .confirmed, .indexing, .indexed, .reconciling, .reconciled: return "Confirming"
+    case .created, .resolving, .resolved, .awaitingAuthorization, .authorized:
+      return inflightLabel(started: false)
+    case .submitted, .processing:
+      return inflightLabel(started: true)
+    case .confirming, .confirmed, .indexing, .indexed, .reconciling, .reconciled:
+      return settlingLabel
     default: return "In progress"
+    }
+  }
+
+  private func inflightLabel(started: Bool) -> String {
+    switch payment.kind {
+    case .claimFunding: return "Protecting \(payment.dollars) for \(shortName(payment.recipient))…"
+    case .claimSettlement: return "Verifying…"
+    case .refund: return "Returning your money…"
+    default: return started ? "Sending…" : "Preparing…"
+    }
+  }
+  /// A fuller, calm sentence for attention states — shown as a subtle banner, not an error.
+  var attentionMessage: String? {
+    guard payment.lifecycleState == .requiresAttention else { return nil }
+    switch payment.failureCode {
+    case "SUBMISSION_AMBIGUOUS": return "Prism is checking whether this payment was submitted. Don't retry yet."
+    case "PROVIDER_DISAGREEMENT", "RECONCILIATION_REQUIRED": return "Prism is verifying the final payment details."
+    default: return "This payment needs your attention."
+    }
+  }
+
+  private var settlingLabel: String {
+    switch payment.kind {
+    case .claimFunding: return "Protecting \(payment.dollars) for \(shortName(payment.recipient))…"
+    case .claimSettlement: return "Receiving…"
+    case .refund: return "Returning your money…"
+    default: return "Settling…"
     }
   }
 
@@ -88,7 +127,13 @@ struct PaymentDisplay {
   var statusTone: StatusTone {
     switch payment.lifecycleState {
     case .completed, .refunded: return .positive
-    case .failedTerminal, .reverted, .cancelled, .requiresAttention, .expired: return .danger
+    case .failedTerminal, .reverted, .cancelled, .expired: return .danger
+    case .requiresAttention:
+      // "Checking / verifying" is calm, not alarming; only an unresolved attention state is danger.
+      switch payment.failureCode {
+      case "SUBMISSION_AMBIGUOUS", "PROVIDER_DISAGREEMENT", "RECONCILIATION_REQUIRED": return .pending
+      default: return .danger
+      }
     case .claimWaiting, .claimable, .refundAvailable: return .neutral
     default: return .pending
     }

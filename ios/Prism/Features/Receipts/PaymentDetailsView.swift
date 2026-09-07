@@ -65,6 +65,13 @@ struct PaymentDetailsView: View {
         Text(memo).font(PrismTheme.body(14)).foregroundStyle(PrismTheme.muted).padding(.top, 2)
       }
       statusPill(d).padding(.top, 12)
+      if let attention = d.attentionMessage {
+        Text(attention)
+          .font(PrismTheme.body(12.5)).foregroundStyle(PrismTheme.pending)
+          .multilineTextAlignment(.center)
+          .padding(.horizontal, 20).padding(.vertical, 10).padding(.top, 12)
+          .background(PrismTheme.ice).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+      }
       if let date = d.dateLine, let time = d.timeLine {
         Text("\(date) · \(time)").font(PrismTheme.body(12)).foregroundStyle(PrismTheme.faint).padding(.top, 10)
       }

@@ -1,7 +1,10 @@
 import http from 'node:http';
 import { config, assertSafeConfig } from './config.js';
 import { JsonStore } from './lib/jsonStore.js';
-import { issueSession, verifySession, normalizeE164 } from './lib/crypto.js';
+import { issueSession, verifySession, normalizeE164, sha256, hex } from './lib/crypto.js';
+
+// Request fingerprint: same Idempotency-Key + different request body is rejected, not replayed.
+const fingerprint = (...parts) => hex(sha256(Buffer.from(parts.join('|'))));
 import { consumeRateLimit } from './lib/rateLimit.js';
 import { withIdempotency } from './lib/idempotency.js';
 import { logger } from './lib/logger.js';
@@ -126,7 +129,7 @@ route('POST', '/v1/payments/submit', async ({ user, body, idempotencyKey }) => {
   rateLimit(`pay-submit:${user.prismId}`, 60);
   const tokenSignature = body.tokenSignature;
   requireHex(body.paymentId, 'paymentId'); requireSig(body.prismSignature, 'prismSignature'); requireSig(tokenSignature, 'tokenSignature');
-  return withIdempotency(store, { scope: 'pay-submit', key: idempotencyKey, actor: user.prismId }, () =>
+  return withIdempotency(store, { scope: 'pay-submit', key: idempotencyKey, actor: user.prismId, fingerprint: fingerprint(body.paymentId, body.prismSignature, tokenSignature) }, () =>
     paymentService.submitPayment({ paymentId: body.paymentId, prismSignature: body.prismSignature, tokenSignature, actorPrismId: user.prismId }));
 }, true);
 route('GET', '/v1/payments/:id', async ({ user, params }) => paymentService.reconcile(params.id, user.prismId), true);
@@ -146,16 +149,16 @@ route('GET', '/v1/claims', async ({ user }) => claimService.listFor(identityServ
 route('GET', '/v1/claims/eligible', async ({ user }) => claimService.eligibleClaimsFor(identityService.get(user.prismId)), true);
 route('POST', '/v1/claims/:id/fund', async ({ user, params, body, idempotencyKey }) => {
   requireSig(body.signature, 'signature');
-  return withIdempotency(store, { scope: 'claim-fund', key: idempotencyKey, actor: user.prismId }, () =>
+  return withIdempotency(store, { scope: 'claim-fund', key: idempotencyKey, actor: user.prismId, fingerprint: fingerprint(params.id, body.signature) }, () =>
     paymentService.fundClaim({ senderPrismId: user.prismId, claimId: params.id, signature: body.signature }));
 }, true);
 route('POST', '/v1/claims/:id/claim', async ({ user, params, body, idempotencyKey }) => {
   requireSig(body.recipientIntentSignature, 'recipientIntentSignature');
-  return withIdempotency(store, { scope: 'claim-collect', key: idempotencyKey, actor: user.prismId }, () =>
+  return withIdempotency(store, { scope: 'claim-collect', key: idempotencyKey, actor: user.prismId, fingerprint: fingerprint(params.id, body.recipientIntentSignature) }, () =>
     paymentService.collectClaim({ recipientPrismId: user.prismId, claimId: params.id, recipientIntentSignature: body.recipientIntentSignature }));
 }, true);
 route('POST', '/v1/claims/:id/refund', async ({ user, params, idempotencyKey }) =>
-  withIdempotency(store, { scope: 'claim-refund', key: idempotencyKey, actor: user.prismId }, () =>
+  withIdempotency(store, { scope: 'claim-refund', key: idempotencyKey, actor: user.prismId, fingerprint: fingerprint('refund', params.id) }, () =>
     paymentService.refundClaim({ senderPrismId: user.prismId, claimId: params.id })), true);
 route('GET', '/v1/claims/:id', async ({ user, params }) => paymentService.reconcileClaim(params.id, user.prismId), true);
 

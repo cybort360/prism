@@ -192,8 +192,9 @@ test('MUT-16 a lost relayer response reconciles against the chain and never re-b
 
     await assert.rejects(() => paymentService.submitPayment({ paymentId: prepared.paymentId, ...sigs, actorPrismId: 'payer' }), /socket hang up/);
     assert.equal(broadcasts, 1);
-    // The operation must remember that a broadcast was attempted.
-    assert.equal(store.read().operations[prepared.paymentId].state, 'broadcasting');
+    // The operation must enter requires_attention (ambiguous), never a blind resubmit.
+    assert.equal(store.read().operations[prepared.paymentId].state, 'requires_attention');
+    assert.equal(store.read().operations[prepared.paymentId].failureCode, 'SUBMISSION_AMBIGUOUS');
 
     // The client retries. The backend must ask the chain, not re-send.
     const retry = await paymentService.submitPayment({ paymentId: prepared.paymentId, ...sigs, actorPrismId: 'payer' });

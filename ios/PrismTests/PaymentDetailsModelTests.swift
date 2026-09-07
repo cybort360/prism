@@ -26,11 +26,28 @@ final class PaymentDetailsModelTests: XCTestCase {
       .fx(.confirming, .monad, "Confirming", "2026-09-05T02:30:40.000Z")
     ]
     let d = PaymentDisplay(payment: .fixture(lifecycleState: .confirming, completedAt: nil), events: events)
-    XCTAssertEqual(d.statusLabel, "Confirming")
+    XCTAssertEqual(d.statusLabel, "Settling…")                 // progressive verb, not the enum
     XCTAssertEqual(d.statusTone, .pending)
     XCTAssertFalse(d.payment.isSettled)
     XCTAssertNotEqual(d.timeline.last?.state, .done)           // "Delivered" not reached
     XCTAssertTrue(d.timeline.contains { $0.state == .current }) // one animated current step
+  }
+
+  func testProgressiveLabels() {
+    XCTAssertEqual(PaymentDisplay(payment: .fixture(lifecycleState: .submitted, completedAt: nil)).statusLabel, "Sending…")
+    XCTAssertEqual(PaymentDisplay(payment: .fixture(kind: .refund, direction: .received, lifecycleState: .submitted, completedAt: nil)).statusLabel, "Returning your money…")
+    XCTAssertEqual(PaymentDisplay(payment: .fixture(kind: .claimSettlement, direction: .received, lifecycleState: .confirming, completedAt: nil)).statusLabel, "Receiving…")
+    let protecting = PaymentDisplay(payment: .fixture(kind: .claimFunding, lifecycleState: .submitted, recipient: .fx("David"), completedAt: nil))
+    XCTAssertEqual(protecting.statusLabel, "Protecting $20.00 for David…")
+  }
+
+  func testAmbiguousAndReconciliationAreCalm() {
+    let ambiguous = PaymentDisplay(payment: .fixture(lifecycleState: .requiresAttention, completedAt: nil, failureCode: "SUBMISSION_AMBIGUOUS"))
+    XCTAssertEqual(ambiguous.statusLabel, "Checking whether this was submitted")
+    XCTAssertEqual(ambiguous.statusTone, .pending)             // calm, not alarming
+    let recon = PaymentDisplay(payment: .fixture(lifecycleState: .requiresAttention, completedAt: nil, failureCode: "PROVIDER_DISAGREEMENT"))
+    XCTAssertEqual(recon.statusLabel, "Verifying final details")
+    XCTAssertEqual(recon.statusTone, .pending)
   }
 
   func testFailed() {

@@ -8,7 +8,7 @@ import { usdcAuthorizationUsed } from '../chain/eth.js';
 import { logger } from '../lib/logger.js';
 import { startTimer, record as recordMetric, increment } from '../lib/metrics.js';
 import { envioIndexer } from '../indexers/index.js';
-import { appendEvent, ensureEvents, canonicalPayment, receiptFor, lifecycleState } from '../lib/lifecycle.js';
+import { appendEvent, ensureEvents, canonicalPayment, receiptFor, lifecycleState, assertTransition } from '../lib/lifecycle.js';
 
 const AUTH_WINDOW_SECONDS = 5 * 60;
 const ZERO32 = `0x${'00'.repeat(32)}`;
@@ -131,7 +131,7 @@ export class PaymentService {
     if (actorPrismId && record.intent.senderPrismId !== actorPrismId) throw httpError(403, 'payment belongs to another caller');
     // A previous attempt broadcast but never returned a hash. Ask the chain whether it landed
     // before doing anything else — never blindly re-broadcast an authorization (MUT-16).
-    if (record.state === 'broadcasting') return this._resolveAmbiguousBroadcast(record);
+    if (record.state === 'broadcasting' || record.state === 'requires_attention') return this._resolveAmbiguousBroadcast(record);
     if (record.state !== 'prepared') return { paymentId, state: record.state, txHash: record.txHash ?? null };
     if (Date.parse(record.expiresAt) < Date.now()) throw httpError(400, 'prepared payment expired');
 
@@ -160,11 +160,20 @@ export class PaymentService {
     try {
       txHash = await relaySettle({ env, prismSignature, tokenSignature }); // Alchemy: simulate + submit
     } catch (error) {
-      // A pre-broadcast failure (simulation revert, bad args) is safe to retry; anything else may
-      // have reached the network, so the record stays 'broadcasting' and the next call reconciles.
+      // A pre-broadcast failure (simulation revert, bad args) provably never reached the network, so
+      // it is safe to re-arm for retry. Anything else is AMBIGUOUS — the tx may already be moving
+      // money — so we enter requires_attention and NEVER blindly resubmit; the next call reconciles
+      // from chain truth first.
       if (isPreBroadcastFailure(error)) {
-        this.store.mutate(d => { d.operations[paymentId].state = 'prepared'; delete d.operations[paymentId].broadcastAt; });
+        this._transitionPayment(paymentId, 'broadcasting', 'prepared', {
+          extra: { broadcastAt: null }, failureCode: 'SUBMISSION_FAILED',
+          event: { state: 'failedRetryable', source: 'relayer', title: 'Submission failed — safe to retry' }
+        });
       } else {
+        this._transitionPayment(paymentId, 'broadcasting', 'requires_attention', {
+          failureCode: 'SUBMISSION_AMBIGUOUS',
+          event: { state: 'requiresAttention', source: 'relayer', title: 'Checking whether this payment was submitted' }
+        });
         logger.error('payment.broadcast.ambiguous', { paymentId, error: error.message });
       }
       throw error;
@@ -186,15 +195,21 @@ export class PaymentService {
    */
   async _resolveAmbiguousBroadcast(record) {
     const { operationId, env } = record;
+    // Chain truth: the ERC-3009 nonce is consumed in the same tx that moves the money. Only after
+    // PROVING absence (nonce unused) may a retry be re-armed — never a blind resubmit.
     const used = await usdcAuthorizationUsed(env.payer, env.nonce);
     if (used) {
-      // Landed (or is landing). Hand back a non-terminal state so the client polls instead of retrying.
-      this.store.mutate(d => { d.operations[operationId].state = 'confirming'; });
+      this._transitionPayment(operationId, record.state, 'confirming', {
+        extra: { failureCode: null, failureMessage: null },
+        event: { state: 'confirming', source: 'monad', title: 'Payment reached the chain — confirming' }
+      });
       logger.warn('payment.broadcast.reconciled', { paymentId: operationId, authorizationUsed: true });
       return { paymentId: operationId, state: 'confirming', txHash: record.txHash ?? null };
     }
-    // The authorization was never consumed, so nothing settled. Re-arm for a genuine retry.
-    this.store.mutate(d => { d.operations[operationId].state = 'prepared'; delete d.operations[operationId].broadcastAt; });
+    this._transitionPayment(operationId, record.state, 'prepared', {
+      extra: { broadcastAt: null, failureCode: null, failureMessage: null },
+      event: { state: 'created', source: 'backend', title: 'Confirmed not submitted — safe to retry' }
+    });
     logger.warn('payment.broadcast.reconciled', { paymentId: operationId, authorizationUsed: false });
     return { paymentId: operationId, state: 'prepared', txHash: null };
   }
@@ -351,18 +366,30 @@ export class PaymentService {
       return { operationId, state: 'confirming', txHash: record.txHash };
     }
     const success = receipt.status === 'success' || receipt.status === '0x1' || receipt.status === 1;
-    this.store.mutate(d => {
-      const r = d.operations[operationId];
-      r.state = success ? 'completed' : 'failed';
-      r.transactionHash = receipt.transactionHash ?? record.txHash;
-      r.blockNumber = receipt.blockNumber ? receipt.blockNumber.toString() : null;
-      r.completedAt = new Date().toISOString();
-      r.completedAtMs = Date.now();
+    const clearRevert = receipt.status === 'reverted' || receipt.status === '0x0' || receipt.status === 0 || receipt.status === false;
+    if (!success && !clearRevert) {
+      // The receipt is neither a clear success nor a clear revert — the providers disagree or returned
+      // something unexpected. Never silently pick a convenient result: enter reconciliation.
+      record = this._transitionPayment(operationId, record.state, 'reconciliation_required', {
+        failureCode: 'PROVIDER_DISAGREEMENT',
+        failureMessage: `indeterminate receipt status: ${String(receipt.status)}`,
+        event: { state: 'requiresAttention', source: 'backend', title: 'Verifying final payment details' }
+      });
+      logger.warn('operation.reconciliation_required', { operationId, status: receipt.status });
+      return publicOp(record);
+    }
+    // Guarded transition: submitted/confirming -> completed/failed only, driven by the real receipt.
+    record = this._transitionPayment(operationId, record.state, success ? 'completed' : 'failed', {
+      extra: {
+        transactionHash: receipt.transactionHash ?? record.txHash,
+        blockNumber: receipt.blockNumber ? receipt.blockNumber.toString() : null,
+        completedAt: new Date().toISOString(), completedAtMs: Date.now()
+      },
+      event: success
+        ? { state: 'confirmed', source: 'monad', title: 'Confirmed on-chain', evidence: receipt.transactionHash ?? record.txHash }
+        : { state: 'reverted', source: 'monad', title: 'Reverted on-chain', evidence: record.txHash },
+      failureCode: success ? null : 'TRANSACTION_REVERTED'
     });
-    record = this.store.read().operations[operationId];
-    // Source-of-truth events: the chain receipt is what confirms; effects reconcile; only then completed.
-    if (success) this._event(operationId, { state: 'confirmed', source: 'monad', title: 'Confirmed on-chain', evidence: record.transactionHash });
-    else this._event(operationId, { state: 'reverted', source: 'monad', title: 'Reverted on-chain', evidence: record.transactionHash });
     // Latency + failure-rate metrics for the payment path.
     if (record.kind === 'payment') {
       increment('payment', success);
@@ -409,6 +436,30 @@ export class PaymentService {
   /** Append an ordered lifecycle event to an operation, persisted so history survives a relaunch. */
   _event(operationId, spec) {
     this.store.mutate((d) => { const r = d.operations[operationId]; if (r) appendEvent(r, spec); });
+  }
+
+  /**
+   * The one guarded state transition. Rejects an illegal transition (e.g. submitted -> completed
+   * without confirmation, or any mutation of a terminal op) and an optimistic-lock mismatch, then
+   * applies extra fields, records the failure code, and appends the lifecycle event — atomically.
+   */
+  _transitionPayment(operationId, expectedCurrentState, nextState, { extra = {}, event = null, failureCode = null, failureMessage = null } = {}) {
+    let error = null;
+    this.store.mutate((d) => {
+      const r = d.operations[operationId];
+      if (!r) { error = httpError(404, 'operation not found'); return; }
+      if (expectedCurrentState != null && r.state !== expectedCurrentState) {
+        error = httpError(409, `state changed: expected ${expectedCurrentState}, found ${r.state}`); return;
+      }
+      try { assertTransition(r.state, nextState); } catch (e) { error = e; return; }
+      Object.assign(r, extra);
+      r.state = nextState;
+      if (failureCode) r.failureCode = failureCode;
+      if (failureMessage) r.failureMessage = failureMessage;
+      if (event) appendEvent(r, event);
+    });
+    if (error) throw error;
+    return this.store.read().operations[operationId];
   }
 
   /** The canonical projection of an operation: { payment, events, receipt }. */

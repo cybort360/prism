@@ -48,13 +48,72 @@ const LIFECYCLE_BY_STATE = {
   submitted: 'submitted',
   confirming: 'confirming',
   completed: 'completed',
-  failed: 'failedTerminal'
+  failed: 'failedTerminal',
+  requires_attention: 'requiresAttention',
+  reconciliation_required: 'requiresAttention',
+  expired: 'expired'
 };
+
+// --- guarded transitions ----------------------------------------------------
+// The coarse persisted op.state machine. The rich lifecycle lives in events[]; this graph guards the
+// stored state so "submitted" can never jump to "completed" without a confirmation, a refunded claim
+// can never become "claimed", a completed op is immutable, etc. Only real observed transitions.
+export const ALLOWED_TRANSITIONS = {
+  prepared: ['broadcasting', 'failed', 'expired'],
+  broadcasting: ['submitted', 'prepared', 'confirming', 'requires_attention', 'failed'],
+  submitted: ['confirming', 'completed', 'failed', 'reconciliation_required'],
+  confirming: ['completed', 'failed', 'reconciliation_required'],
+  requires_attention: ['confirming', 'prepared', 'completed', 'failed'],
+  reconciliation_required: ['completed', 'failed', 'requires_attention'],
+  completed: [],                    // terminal — indexing is a flag/event, not a state change
+  failed: [],
+  expired: ['refunding', 'expired'],
+  refunding: ['completed', 'failed']
+};
+
+export function canTransition(from, to) {
+  if (from === to) return true;     // idempotent re-reads never mutate, always safe
+  return (ALLOWED_TRANSITIONS[from] ?? []).includes(to);
+}
+export function assertTransition(from, to) {
+  if (!canTransition(from, to)) {
+    const e = new Error(`illegal payment transition: ${from} -> ${to}`);
+    e.statusCode = 409;
+    throw e;
+  }
+}
+
+// --- failure taxonomy -------------------------------------------------------
+// Every failure code maps to a coarse persisted state + a consumer-facing canonical state. Some
+// "failures" (indexing delay, RPC blip) are NOT terminal and must not read as failed.
+export const FAILURE_TAXONOMY = {
+  RESOLUTION_FAILED: { state: 'failed', canonical: 'failedRetryable', retryable: true },
+  IDENTITY_CHANGED: { state: 'failed', canonical: 'identityChanged', retryable: false },
+  AUTHORIZATION_CANCELLED: { state: 'prepared', canonical: 'cancelled', retryable: true },
+  AUTHORIZATION_FAILED: { state: 'prepared', canonical: 'failedRetryable', retryable: true },
+  INSUFFICIENT_USDC: { state: 'failed', canonical: 'failedRetryable', retryable: true },
+  SIGNATURE_EXPIRED: { state: 'failed', canonical: 'expired', retryable: true },
+  RELAY_UNAVAILABLE: { state: 'prepared', canonical: 'failedRetryable', retryable: true },
+  SUBMISSION_FAILED: { state: 'prepared', canonical: 'failedRetryable', retryable: true },
+  SUBMISSION_AMBIGUOUS: { state: 'requires_attention', canonical: 'requiresAttention', retryable: false },
+  TRANSACTION_REVERTED: { state: 'failed', canonical: 'reverted', retryable: false },
+  RPC_UNAVAILABLE: { state: 'confirming', canonical: 'confirming', retryable: false },
+  PROVIDER_DISAGREEMENT: { state: 'reconciliation_required', canonical: 'requiresAttention', retryable: false },
+  INDEXING_DELAYED: { state: 'completed', canonical: 'completed', retryable: false },
+  RECONCILIATION_REQUIRED: { state: 'reconciliation_required', canonical: 'requiresAttention', retryable: false },
+  CLAIM_VERIFICATION_FAILED: { state: 'failed', canonical: 'failedTerminal', retryable: false },
+  CLAIM_EXPIRED: { state: 'expired', canonical: 'expired', retryable: false }
+};
+export function failureCanonical(code) { return FAILURE_TAXONOMY[code]?.canonical ?? 'failedTerminal'; }
+export function isRetryable(code) { return FAILURE_TAXONOMY[code]?.retryable ?? false; }
 
 export function lifecycleState(op) {
   // Consumer completion = money settled on-chain + effects reconciled (backend 'completed').
   // Envio indexing is a later, non-blocking projection surfaced by the separate `indexed` flag/event
   // — it never downgrades a delivered payment.
+  if ((op.state === 'failed' || op.state === 'requires_attention' || op.state === 'reconciliation_required') && op.failureCode) {
+    return failureCanonical(op.failureCode);
+  }
   return LIFECYCLE_BY_STATE[op.state] ?? 'requiresAttention';
 }
 
@@ -132,8 +191,11 @@ export function canonicalPayment(op, { viewerPrismId = null, identityService, cl
     transactionHash: op.transactionHash ?? op.txHash ?? null,
     blockNumber: op.blockNumber ?? null,
     gasSponsored: true, // Prism relayer pays MON; users hold MON = 0.
-    failureCode: op.state === 'failed' ? (op.failureCode ?? 'reverted') : null,
-    failureMessage: op.failureMessage ?? null
+    // Surface the failure/attention code (not just terminal failures) so the UI can show the right
+    // recovery language. Retryable is derived from the taxonomy.
+    failureCode: op.failureCode ?? (op.state === 'failed' ? 'TRANSACTION_REVERTED' : null),
+    failureMessage: op.failureMessage ?? null,
+    retryable: op.failureCode ? isRetryable(op.failureCode) : (op.state === 'prepared')
   };
 }
 

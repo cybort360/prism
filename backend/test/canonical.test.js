@@ -125,8 +125,9 @@ test('a failed operation preserves failure metadata', async () => {
     mock.setReceipt(op.txHash, { status: 'reverted', transactionHash: op.txHash, blockNumber: 2n });
     await paymentService.reconcile(paymentId, 'payer');
     const { payment, events } = paymentService.canonicalFor(paymentId, 'payer');
-    assert.equal(payment.lifecycleState, 'failedTerminal');
-    assert.equal(payment.failureCode, 'reverted');
+    assert.equal(payment.lifecycleState, 'reverted');
+    assert.equal(payment.failureCode, 'TRANSACTION_REVERTED');
+    assert.equal(payment.retryable, false);
     assert.ok(events.some((e) => e.state === 'reverted' || e.state === 'failedTerminal'));
   } finally { resetChainProvider(); }
 });

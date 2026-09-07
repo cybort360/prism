@@ -197,7 +197,7 @@ extension PrismPayment {
     amountAtomic: String? = "20000000", memo: String? = "Dinner",
     sender: PrismParty = .fx("You"), recipient: PrismParty = .fx("Tobi Bakare", handle: "@tobi"),
     requestId: String? = nil, claimId: String? = nil, transactionHash: String? = "0x72f5a9b3c1d4e6f70123456789abcdef0123456789abcdef0123456789ab91a",
-    blockNumber: String? = "38420119", completedAt: String? = "2026-09-05T02:31:00.000Z"
+    blockNumber: String? = "38420119", completedAt: String? = "2026-09-05T02:31:00.000Z", failureCode: String? = nil
   ) -> PrismPayment {
     PrismPayment(
       paymentId: "0xpay", operationId: "0xpay", kind: kind, direction: direction, entryMethod: entryMethod,
@@ -206,7 +206,7 @@ extension PrismPayment {
       lifecycleState: lifecycleState, createdAt: "2026-09-05T02:30:00.000Z", authorizedAt: "2026-09-05T02:30:20.000Z",
       submittedAt: "2026-09-05T02:30:30.000Z", confirmedAt: completedAt, indexedAt: nil, reconciledAt: completedAt,
       completedAt: lifecycleState == .completed ? completedAt : nil, transactionHash: transactionHash,
-      blockNumber: blockNumber, gasSponsored: true, failureCode: nil, failureMessage: nil)
+      blockNumber: blockNumber, gasSponsored: true, failureCode: failureCode, failureMessage: nil)
   }
   static var fixtureEvents: [PrismLifecycleEvent] {
     [.fx(.created, .app, "Payment created", "2026-09-05T02:30:00.000Z"),
