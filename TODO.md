@@ -22,7 +22,8 @@ Blocked on external keys/funds; nothing here is a code defect.
       `router.paymentUsed` = true. See `proof/TESTNET_DEPLOYMENT.md`.
 - [x] **One real claim funding + collection** on-chain. DONE — fund tx `0x322a32da…`, collect tx
       `0xe6e8c97e…`; vault escrowed then released 2.00 USDC, recipient MON = 0. See proof doc.
-- [ ] **One refund** on-chain — refundable claim `0x7bbec937…` funded; pending its 1-hour expiry.
+- [x] **One refund** on-chain. DONE — after expiry, refund tx `0xe5d3a758…` (block 60559611),
+      `ClaimRefunded`, USDC vault→sender 1.50, claim status Refunded, relayer paid gas.
 - [ ] **Live Alchemy** as the Monad RPC — real `eth_call`/receipt readback; webhook delivery if available.
 - [~] **Live Envio** indexing. Config now points at the deployed router/vault (`indexer/envio/config.yaml`,
       start_block 60506000) and codegen builds; the Hasura/Postgres stack runs. Local `envio start`

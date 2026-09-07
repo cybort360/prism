@@ -69,12 +69,14 @@ Both receipts status `1`; relayer `0x234D…a117` paid gas; the claim recipient'
 (gasless). Eligibility was matched by the recipient's verified phone, and the vault verified both the
 authorizer's eligibility signature and the recipient's own `ClaimIntent`.
 
-**Refund:** a refundable claim `0x7bbec9376c5e230846585aa5fdff01ecaf512cef28c0822fb0b45c9f1ed54856`
-was funded (tx `0xa5833a9ddc476ef48c1e606e3e4ce3c300bfb899da6e44038626a52327746057`) with the minimum
-1-hour expiry; the on-chain refund tx is pending that expiry (refund is also proven in
-`contracts/test` and `backend/test/claim-ops.test.js`).
+**Refund (after expiry):** claim `0x7bbec9376c5e230846585aa5fdff01ecaf512cef28c0822fb0b45c9f1ed54856`
+was funded (`0xa5833a9ddc476ef48c1e606e3e4ce3c300bfb899da6e44038626a52327746057`), and after its 1-hour
+expiry the sender refunded it: refund tx
+`0xe5d3a758bdf87a7db21deaa3fa13ab5ed12162794e16f933b3c1be224711abf0` (block 60559611, status `1`),
+`ClaimRefunded` emitted, USDC vault→sender 1.50, claim status now `3` (Refunded), relayer paid gas.
+The full claim lifecycle (fund → collect, fund → refund) is proven live.
 
 ## Still open (see TODO.md)
 
-Live refund tx (pending the funded claim's 1-hour expiry), live Envio indexing of `PaymentSettled`,
-live Alchemy webhook delivery, physical-device flows, and published latency figures.
+Live Envio indexing of `PaymentSettled`, live Alchemy webhook delivery, physical-device flows, and
+published latency figures.
