@@ -8,6 +8,7 @@ import { usdcAuthorizationUsed } from '../chain/eth.js';
 import { logger } from '../lib/logger.js';
 import { startTimer, record as recordMetric, increment } from '../lib/metrics.js';
 import { envioIndexer } from '../indexers/index.js';
+import { appendEvent, ensureEvents, canonicalPayment, receiptFor, lifecycleState } from '../lib/lifecycle.js';
 
 const AUTH_WINDOW_SECONDS = 5 * 60;
 const ZERO32 = `0x${'00'.repeat(32)}`;
@@ -42,7 +43,7 @@ export class PaymentService {
 
   // ---- direct payments -----------------------------------------------------
 
-  async preparePayment({ senderPrismId, resolution, amountAtomic, requestId = null, memo = '' }) {
+  async preparePayment({ senderPrismId, resolution, amountAtomic, requestId = null, memo = '', entryMethod = null }) {
     const stopPrepare = startTimer('payment_prepare_ms');
     if (!this.config.chain.paymentRouter) throw httpError(503, 'PRISM_PAYMENT_ROUTER not configured');
     const stablecoin = usdcAsset(this.config);
@@ -87,13 +88,18 @@ export class PaymentService {
       intent: {
         kind: 'payment', senderPrismId, recipientPrismId: recipient.prismId, amountAtomic,
         token: stablecoin.address, tokenSymbol: stablecoin.symbol, requestId, memo,
-        aliasVersion: recipient.aliasVersion
+        aliasVersion: recipient.aliasVersion,
+        // entryMethod is a client hint (qr | paymentLink | contact); route comes from the resolver.
+        entryMethod: entryMethod ?? null, route: attestation.route ?? null,
+        resolutionRequestId: attestation.requestId
       },
+      events: [],
       createdAt: new Date().toISOString(),
       preparedAtMs: Date.now(),
       expiresAt: new Date(validBefore * 1000).toISOString(),
       effectsApplied: false
     };
+    appendEvent(record, { state: 'created', source: 'app', title: 'Payment created' });
     this.store.mutate(d => { d.operations[paymentId] = record; });
     logger.info('payment.prepared', {
       paymentId, senderPrismId, recipientPrismId: recipient.prismId,
@@ -147,6 +153,7 @@ export class PaymentService {
     // transaction reaches the network, this marker is the only record that money may already be
     // moving, and it is what turns a retry into a reconcile instead of a second broadcast.
     this.store.mutate(d => { d.operations[paymentId].state = 'broadcasting'; d.operations[paymentId].broadcastAt = new Date().toISOString(); });
+    this._event(paymentId, { state: 'authorized', source: 'userAuthorization', title: 'Authorized on device' });
 
     const stopRelay = startTimer('relay_submit_ms');
     let txHash;
@@ -167,6 +174,7 @@ export class PaymentService {
       const r = d.operations[paymentId];
       r.state = 'submitted'; r.txHash = txHash; r.submittedAt = new Date().toISOString(); r.submittedAtMs = Date.now();
     });
+    this._event(paymentId, { state: 'submitted', source: 'relayer', title: 'Submitted to the network', evidence: txHash });
     logger.info('payment.submitted', { paymentId, txHash });
     return { paymentId, state: 'submitted', txHash };
   }
@@ -217,7 +225,8 @@ export class PaymentService {
     };
 
     const fundOpId = claimOpId('claim-funding', claim.claimId);
-    this.store.mutate(d => { d.operations[fundOpId] = { operationId: fundOpId, kind: 'claim-funding', state: 'prepared', fundingArgs, intent: { kind: 'claim-funding', senderPrismId, claimId: claim.claimId, amountAtomic, token: stablecoin.address, tokenSymbol: stablecoin.symbol }, createdAt: new Date().toISOString(), expiresAt: new Date(validBefore * 1000).toISOString(), effectsApplied: false }; });
+    this.store.mutate(d => { d.operations[fundOpId] = { operationId: fundOpId, kind: 'claim-funding', state: 'prepared', fundingArgs, intent: { kind: 'claim-funding', senderPrismId, claimId: claim.claimId, amountAtomic, token: stablecoin.address, tokenSymbol: stablecoin.symbol }, events: [], createdAt: new Date().toISOString(), expiresAt: new Date(validBefore * 1000).toISOString(), effectsApplied: false }; });
+    this._event(fundOpId, { state: 'created', source: 'app', title: 'Claim funding created' });
     logger.info('claim.prepared', { claimId: claim.claimId, senderPrismId, amountAtomic, token: stablecoin.symbol });
 
     return {
@@ -250,7 +259,8 @@ export class PaymentService {
     this.store.mutate(d => { d.operations[fundOpId].state = 'broadcasting'; d.operations[fundOpId].broadcastAt = new Date().toISOString(); });
     try {
       const txHash = await relayFundClaim({ ...a, signature });
-      this.store.mutate(d => { d.operations[fundOpId].state = 'submitted'; d.operations[fundOpId].txHash = txHash; });
+      this.store.mutate(d => { d.operations[fundOpId].state = 'submitted'; d.operations[fundOpId].txHash = txHash; d.operations[fundOpId].submittedAt = new Date().toISOString(); });
+      this._event(fundOpId, { state: 'submitted', source: 'relayer', title: 'Claim funding submitted', evidence: txHash });
       this.claimService.markFundingSubmitted(claimId, txHash, fundOpId);
       logger.info('claim.funding.submitted', { claimId, txHash });
       return { claimId, state: 'submitted', txHash };
@@ -298,7 +308,9 @@ export class PaymentService {
     const claim = this.store.read().claims[claimId];
     const collectOpId = claimOpId('claim-collection', claimId);
     const intent = { kind: 'claim-collection', recipientPrismId, claimId, token: claim?.token, tokenSymbol: claim?.tokenSymbol, amountAtomic: claim?.amountAtomic };
-    this.store.mutate(d => { d.operations[collectOpId] = { operationId: collectOpId, kind: 'claim-collection', state: 'submitted', txHash, intent, createdAt: new Date().toISOString(), effectsApplied: false }; });
+    this.store.mutate(d => { d.operations[collectOpId] = { operationId: collectOpId, kind: 'claim-collection', state: 'submitted', txHash, intent, events: [], createdAt: new Date().toISOString(), submittedAt: new Date().toISOString(), effectsApplied: false }; });
+    this._event(collectOpId, { state: 'created', source: 'app', title: 'Claim collection created' });
+    this._event(collectOpId, { state: 'submitted', source: 'relayer', title: 'Claim collection submitted', evidence: txHash });
     this.claimService.markClaimSubmitted(claimId, txHash);
     logger.info('claim.collect.submitted', { claimId, txHash });
     return { claimId, state: 'submitted', txHash };
@@ -311,7 +323,9 @@ export class PaymentService {
     const claim = this.store.read().claims[claimId];
     const refundOpId = claimOpId('claim-refund', claimId);
     const intent = { kind: 'claim-refund', senderPrismId, claimId, token: claim?.token, tokenSymbol: claim?.tokenSymbol, amountAtomic: claim?.amountAtomic };
-    this.store.mutate(d => { d.operations[refundOpId] = { operationId: refundOpId, kind: 'claim-refund', state: 'submitted', txHash, intent, createdAt: new Date().toISOString(), effectsApplied: false }; });
+    this.store.mutate(d => { d.operations[refundOpId] = { operationId: refundOpId, kind: 'claim-refund', state: 'submitted', txHash, intent, events: [], createdAt: new Date().toISOString(), submittedAt: new Date().toISOString(), effectsApplied: false }; });
+    this._event(refundOpId, { state: 'created', source: 'app', title: 'Refund created' });
+    this._event(refundOpId, { state: 'submitted', source: 'relayer', title: 'Refund submitted', evidence: txHash });
     this.claimService.markRefundSubmitted(claimId, txHash);
     logger.info('claim.refund.submitted', { claimId, txHash });
     return { claimId, state: 'submitted', txHash };
@@ -333,6 +347,7 @@ export class PaymentService {
     if (!receipt) {
       // Ambiguous: submitted but not yet mined. Never report success; keep it 'confirming'.
       this.store.mutate(d => { if (d.operations[operationId]?.state === 'submitted') d.operations[operationId].state = 'confirming'; });
+      this._event(operationId, { state: 'confirming', source: 'monad', title: 'Confirming on Monad', evidence: record.txHash });
       return { operationId, state: 'confirming', txHash: record.txHash };
     }
     const success = receipt.status === 'success' || receipt.status === '0x1' || receipt.status === 1;
@@ -345,6 +360,9 @@ export class PaymentService {
       r.completedAtMs = Date.now();
     });
     record = this.store.read().operations[operationId];
+    // Source-of-truth events: the chain receipt is what confirms; effects reconcile; only then completed.
+    if (success) this._event(operationId, { state: 'confirmed', source: 'monad', title: 'Confirmed on-chain', evidence: record.transactionHash });
+    else this._event(operationId, { state: 'reverted', source: 'monad', title: 'Reverted on-chain', evidence: record.transactionHash });
     // Latency + failure-rate metrics for the payment path.
     if (record.kind === 'payment') {
       increment('payment', success);
@@ -356,9 +374,12 @@ export class PaymentService {
     if (success && !record.effectsApplied) {
       this._applySuccess(record);
       this.store.mutate(d => { d.operations[operationId].effectsApplied = true; });
+      this._event(operationId, { state: 'reconciled', source: 'backend', title: 'Reconciled from chain state' });
+      this._event(operationId, { state: 'completed', source: 'backend', title: 'Completed' });
       record = this.store.read().operations[operationId];
-    } else if (!success && record.kind === 'claim-funding') {
-      this.claimService.markFundingFailed(record.intent.claimId);
+    } else if (!success) {
+      this._event(operationId, { state: 'failedTerminal', source: 'monad', title: 'Failed on-chain' });
+      if (record.kind === 'claim-funding') this.claimService.markFundingFailed(record.intent.claimId);
     }
     logger.info('operation.reconciled', { operationId, state: record.state, txHash: record.transactionHash });
     if (success) record = await this._checkIndexing(record);
@@ -383,6 +404,22 @@ export class PaymentService {
     const pool = owned.length ? owned : candidates;
     const latest = pool.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
     return this.reconcile(latest.operationId, actorPrismId);
+  }
+
+  /** Append an ordered lifecycle event to an operation, persisted so history survives a relaunch. */
+  _event(operationId, spec) {
+    this.store.mutate((d) => { const r = d.operations[operationId]; if (r) appendEvent(r, spec); });
+  }
+
+  /** The canonical projection of an operation: { payment, events, receipt }. */
+  canonicalFor(operationId, actorPrismId) {
+    const op = this.store.read().operations[operationId];
+    if (!op) throw httpError(404, 'operation not found');
+    const owner = op.intent?.senderPrismId ?? op.intent?.recipientPrismId;
+    if (actorPrismId && owner && owner !== actorPrismId) throw httpError(403, 'operation belongs to another caller');
+    const claim = op.intent?.claimId ? this.store.read().claims[op.intent.claimId] : null;
+    const ctx = { viewerPrismId: actorPrismId, identityService: this.identityService, claim };
+    return { payment: canonicalPayment(op, ctx), events: ensureEvents(op), receipt: receiptFor(op, ctx) };
   }
 
   _applySuccess(record) {
@@ -415,6 +452,7 @@ export class PaymentService {
     });
     record = this.store.read().operations[record.operationId];
     if (record.completedAtMs) recordMetric('envio_index_ms', record.indexedAtMs - record.completedAtMs);
+    this._event(record.operationId, { state: 'indexed', source: 'envio', title: 'Indexed by Envio' });
     logger.info('payment.indexed', { paymentId: record.operationId });
     return record;
   }
@@ -481,6 +519,7 @@ function publicOp(r) {
     operationId: r.operationId, kind: r.kind, state: r.state,
     txHash: r.txHash ?? null, transactionHash: r.transactionHash ?? null, blockNumber: r.blockNumber ?? null,
     // Chain is canonical; `indexed` reflects Envio catch-up so the UI shows an honest indexing state.
-    indexed: r.indexed ?? false, indexedAt: r.indexedAt ?? null
+    indexed: r.indexed ?? false, indexedAt: r.indexedAt ?? null,
+    lifecycleState: lifecycleState(r), events: ensureEvents(r)
   };
 }

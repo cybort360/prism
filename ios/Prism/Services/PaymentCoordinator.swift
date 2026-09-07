@@ -12,10 +12,10 @@ final class PaymentCoordinator: ObservableObject {
 
   // MARK: direct payment
 
-  func pay(resolution: ResolutionResponse, amountAtomic: String, requestId: String? = nil, memo: String, pin: String?, useFaceID: Bool) async {
+  func pay(resolution: ResolutionResponse, amountAtomic: String, requestId: String? = nil, memo: String, entryMethod: PrismEntryMethod? = nil, pin: String?, useFaceID: Bool) async {
     do {
       state = .preparing
-      let prepared = try await api.preparePayment(resolution: resolution, amountAtomic: amountAtomic, requestId: requestId, memo: memo)
+      let prepared = try await api.preparePayment(resolution: resolution, amountAtomic: amountAtomic, requestId: requestId, memo: memo, entryMethod: entryMethod)
       state = .awaitingAuthorization
       try await localApproval(pin: pin, useFaceID: useFaceID)
       state = .sending

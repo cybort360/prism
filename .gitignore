@@ -19,3 +19,4 @@ ios/Prism/Resources/MeraWeb/mera-bridge.js
 contracts/broadcast/
 indexer/envio/generated/
 indexer/envio/node_modules/
+backend/_*.mjs

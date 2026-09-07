@@ -120,7 +120,7 @@ route('POST', '/v1/requests/status', async ({ user, body }) => requestService.se
 // --- direct payments (Prism envelope + USDC ERC-3009 authorization) ---------
 route('POST', '/v1/payments/prepare', async ({ user, body }) => {
   rateLimit(`pay-prepare:${user.prismId}`, 60);
-  return paymentService.preparePayment({ senderPrismId: user.prismId, resolution: body.resolution, amountAtomic: body.amountAtomic, requestId: body.requestId ?? null, memo: body.memo ?? '' });
+  return paymentService.preparePayment({ senderPrismId: user.prismId, resolution: body.resolution, amountAtomic: body.amountAtomic, requestId: body.requestId ?? null, memo: body.memo ?? '', entryMethod: body.entryMethod ?? null });
 }, true);
 route('POST', '/v1/payments/submit', async ({ user, body, idempotencyKey }) => {
   rateLimit(`pay-submit:${user.prismId}`, 60);
@@ -130,6 +130,12 @@ route('POST', '/v1/payments/submit', async ({ user, body, idempotencyKey }) => {
     paymentService.submitPayment({ paymentId: body.paymentId, prismSignature: body.prismSignature, tokenSignature, actorPrismId: user.prismId }));
 }, true);
 route('GET', '/v1/payments/:id', async ({ user, params }) => paymentService.reconcile(params.id, user.prismId), true);
+// Canonical projection of any operation: { payment, events, receipt }. Reconciles first so the
+// canonical view reflects live chain state, then returns the durable projection.
+route('GET', '/v1/payments/:id/canonical', async ({ user, params }) => {
+  await paymentService.reconcile(params.id, user.prismId).catch(() => {});
+  return paymentService.canonicalFor(params.id, user.prismId);
+}, true);
 
 // --- claims (send before signup) --------------------------------------------
 route('POST', '/v1/claims/prepare', async ({ user, body }) => {

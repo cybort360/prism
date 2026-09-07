@@ -21,7 +21,7 @@ final class PrismAPI: @unchecked Sendable {
   struct ResolvePhoneBody: Encodable { let phone: String }
   struct ResolveHandleBody: Encodable { let handle: String }
   struct ResolvePrismBody: Encodable { let prismId: String }
-  struct PreparePaymentBody: Encodable { let resolution: ResolutionResponse; let amountAtomic: String; let requestId: String?; let memo: String }
+  struct PreparePaymentBody: Encodable { let resolution: ResolutionResponse; let amountAtomic: String; let requestId: String?; let memo: String; let entryMethod: String? }
   struct SubmitPaymentBody: Encodable { let paymentId: String; let prismSignature: String; let tokenSignature: String }
   struct DraftRequestBody: Encodable { let payerPrismId: String; let amountAtomic: String; let memo: String }
   struct CommitRequestBody: Encodable { let requestId: String; let signature: String }
@@ -122,8 +122,8 @@ final class PrismAPI: @unchecked Sendable {
 
   // MARK: direct payments (Prism envelope + ERC-3009 USDC)
 
-  func preparePayment(resolution: ResolutionResponse, amountAtomic: String, requestId: String? = nil, memo: String = "") async throws -> PreparedPayment {
-    try await api.send("/v1/payments/prepare", body: PreparePaymentBody(resolution: resolution, amountAtomic: amountAtomic, requestId: requestId, memo: memo))
+  func preparePayment(resolution: ResolutionResponse, amountAtomic: String, requestId: String? = nil, memo: String = "", entryMethod: PrismEntryMethod? = nil) async throws -> PreparedPayment {
+    try await api.send("/v1/payments/prepare", body: PreparePaymentBody(resolution: resolution, amountAtomic: amountAtomic, requestId: requestId, memo: memo, entryMethod: entryMethod?.rawValue))
   }
   /// The Mera account signs the Prism envelope and token authorization, then the relayer submits.
   @MainActor
@@ -136,6 +136,8 @@ final class PrismAPI: @unchecked Sendable {
       idempotencyKey: prepared.paymentId)
   }
   func paymentStatus(_ id: String) async throws -> OperationStatus { try await api.request("/v1/payments/\(id)") }
+  /// The canonical projection of any operation: { payment, events, receipt } — the one payment model.
+  func canonicalPayment(_ id: String) async throws -> PrismCanonicalPayment { try await api.request("/v1/payments/\(id)/canonical") }
 
   func activity() async throws -> [ActivityRecord] { try await api.request("/v1/activity") }
   func requests() async throws -> [PaymentRequestRecord] { try await api.request("/v1/requests") }
