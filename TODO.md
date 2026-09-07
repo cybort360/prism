@@ -20,7 +20,9 @@ Blocked on external keys/funds; nothing here is a code defect.
 - [x] **One real direct payment** settles on-chain. DONE — tx
       `0x254e8281…9c8f7`, block 60506783, payer USDC −1 / recipient +1, payer MON = 0 (gasless),
       `router.paymentUsed` = true. See `proof/TESTNET_DEPLOYMENT.md`.
-- [ ] **One real claim funding + collection**, and **one refund**, on-chain.
+- [x] **One real claim funding + collection** on-chain. DONE — fund tx `0x322a32da…`, collect tx
+      `0xe6e8c97e…`; vault escrowed then released 2.00 USDC, recipient MON = 0. See proof doc.
+- [ ] **One refund** on-chain — refundable claim `0x7bbec937…` funded; pending its 1-hour expiry.
 - [ ] **Live Alchemy** as the Monad RPC — real `eth_call`/receipt readback; webhook delivery if available.
 - [ ] **Live Envio** indexing real `PaymentSettled` / claim events; verify Activity reconciliation.
 - [ ] **Physical-device iPhone flows:** passkey create/recover, Face ID/PIN approval, Contacts, QR,

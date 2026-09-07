@@ -54,7 +54,27 @@ running for this run — honest indexing state, never faked.
 4. Verify on-chain with `cast receipt <tx>`, `cast call <router> 'paymentUsed(bytes32)(bool)' <id>`,
    and `cast balance <payer> --ether` (expect 0).
 
+## Live pre-user claim (gifting): funding + collection
+
+A sender funded a claim addressed to an unregistered phone; the recipient then onboarded with that
+phone (dev OTP) and collected it — dual-signature (backend authorizer eligibility + recipient
+`ClaimIntent`), all gasless.
+
+| Step | Tx | Effect |
+|---|---|---|
+| Fund | `0x322a32da970a4eadb5022fa7655540d674b8d919ffcfe6caab153c5c687e060e` (block 60509080) | USDC payer→vault 2.00; `ClaimFunded` emitted; vault balance 0 → 2.00 |
+| Collect | `0xe6e8c97e9b6751cbac5c96eb7fc1f71073cb31551fde878e79dc7e91bc46762e` (block 60509093) | USDC vault→recipient 2.00; `ClaimCollected` emitted; recipient 0 → 2.00 |
+
+Both receipts status `1`; relayer `0x234D…a117` paid gas; the claim recipient's MON balance is `0`
+(gasless). Eligibility was matched by the recipient's verified phone, and the vault verified both the
+authorizer's eligibility signature and the recipient's own `ClaimIntent`.
+
+**Refund:** a refundable claim `0x7bbec9376c5e230846585aa5fdff01ecaf512cef28c0822fb0b45c9f1ed54856`
+was funded (tx `0xa5833a9ddc476ef48c1e606e3e4ce3c300bfb899da6e44038626a52327746057`) with the minimum
+1-hour expiry; the on-chain refund tx is pending that expiry (refund is also proven in
+`contracts/test` and `backend/test/claim-ops.test.js`).
+
 ## Still open (see TODO.md)
 
-Live claim funding/collection/refund on-chain, live Envio indexing of `PaymentSettled`, live Alchemy
-webhook delivery, physical-device flows, and published latency figures.
+Live refund tx (pending the funded claim's 1-hour expiry), live Envio indexing of `PaymentSettled`,
+live Alchemy webhook delivery, physical-device flows, and published latency figures.
