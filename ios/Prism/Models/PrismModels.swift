@@ -130,9 +130,12 @@ struct PreparedClaim: Codable {
 struct OperationResult: Codable {
   let paymentId: String?
   let claimId: String?
+  var operationId: String? = nil
   let state: String
   let txHash: String?
   var id: String { paymentId ?? claimId ?? "" }
+  /// The canonical operation id for opening PaymentDetailsView (op id for claims, paymentId for direct).
+  var canonicalOperationId: String { operationId ?? id }
 }
 
 /// Reconciled on-chain status from GET /v1/payments/:id or /v1/claims/:id.
@@ -330,6 +333,8 @@ struct ReceiptPresentation: Identifiable {
   let subtitle: String
   let transactionHash: String?
   let status: String
+  /// Canonical operation id, so the compact success can open the full PaymentDetailsView.
+  var operationId: String? = nil
 }
 
 extension String {

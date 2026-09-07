@@ -105,7 +105,8 @@ struct UnregisteredSendView: View {
         amount: displayAmount,
         subtitle: "Waiting for \(contact.name) to join and claim",
         transactionHash: transactionHash,
-        status: "Waiting to be claimed"
+        status: "Waiting to be claimed",
+        operationId: coordinator.lastOperationId
       )
     case .failed(let message):
       error = message

@@ -52,10 +52,10 @@ const LIFECYCLE_BY_STATE = {
 };
 
 export function lifecycleState(op) {
-  const base = LIFECYCLE_BY_STATE[op.state] ?? 'requiresAttention';
-  // Confirmed-on-chain but Envio still catching up is an honest 'indexing' surface, not 'completed'.
-  if (op.state === 'completed' && op.indexed === false) return 'reconciled';
-  return base;
+  // Consumer completion = money settled on-chain + effects reconciled (backend 'completed').
+  // Envio indexing is a later, non-blocking projection surfaced by the separate `indexed` flag/event
+  // — it never downgrades a delivered payment.
+  return LIFECYCLE_BY_STATE[op.state] ?? 'requiresAttention';
 }
 
 export function paymentKind(op) {

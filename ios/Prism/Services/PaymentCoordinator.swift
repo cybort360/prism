@@ -8,6 +8,8 @@ final class PaymentCoordinator: ObservableObject {
     case failed(String)
   }
   @Published var state: State = .idle
+  /// Canonical operation id of the last submitted action — opens PaymentDetailsView from success.
+  @Published var lastOperationId: String?
   private let api = PrismAPI.shared
 
   // MARK: direct payment
@@ -20,6 +22,7 @@ final class PaymentCoordinator: ObservableObject {
       try await localApproval(pin: pin, useFaceID: useFaceID)
       state = .sending
       let result = try await api.submitPayment(prepared)
+      lastOperationId = result.canonicalOperationId
       try await poll { try await self.api.paymentStatus(result.id) }
     } catch { fail(error) }
   }
@@ -34,6 +37,7 @@ final class PaymentCoordinator: ObservableObject {
       try await localApproval(pin: pin, useFaceID: useFaceID)
       state = .sending
       let result = try await api.fundClaim(prepared)
+      lastOperationId = result.canonicalOperationId
       try await poll { try await self.api.claimStatus(result.id) }
     } catch { fail(error) }
   }
@@ -44,6 +48,7 @@ final class PaymentCoordinator: ObservableObject {
       try await localApproval(pin: pin, useFaceID: useFaceID)
       state = .sending
       let result = try await api.collectClaim(claim) // recipient Mera intent + backend eligibility
+      lastOperationId = result.canonicalOperationId
       try await poll { try await self.api.claimStatus(result.id) }
     } catch { fail(error) }
   }
@@ -54,6 +59,7 @@ final class PaymentCoordinator: ObservableObject {
       try await localApproval(pin: pin, useFaceID: useFaceID)
       state = .sending
       let result = try await api.refundClaim(claim.claimId)
+      lastOperationId = result.canonicalOperationId
       try await poll { try await self.api.claimStatus(result.id) }
     } catch { fail(error) }
   }

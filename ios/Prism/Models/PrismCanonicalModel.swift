@@ -178,6 +178,46 @@ extension PrismPayment {
   }
 }
 
+#if DEBUG
+// Test/preview fixtures — compiled only in DEBUG, never in production. Not real receipts.
+extension PrismParty {
+  static func fx(_ name: String, handle: String? = nil) -> PrismParty {
+    PrismParty(prismIdentityId: "id_\(name)", displayName: name, handle: handle, accountAddress: "0x00")
+  }
+}
+extension PrismLifecycleEvent {
+  static func fx(_ state: PrismLifecycleState, _ source: PrismEventSource, _ title: String, _ at: String) -> PrismLifecycleEvent {
+    PrismLifecycleEvent(id: UUID().uuidString, paymentId: "fx", state: state, source: source, occurredAt: at, displayTitle: title, displayDetail: nil, evidenceReference: nil)
+  }
+}
+extension PrismPayment {
+  static func fixture(
+    kind: PrismPaymentKind = .direct, direction: PrismPaymentDirection = .sent,
+    entryMethod: PrismEntryMethod = .contact, lifecycleState: PrismLifecycleState = .completed,
+    amountAtomic: String? = "20000000", memo: String? = "Dinner",
+    sender: PrismParty = .fx("You"), recipient: PrismParty = .fx("Tobi Bakare", handle: "@tobi"),
+    requestId: String? = nil, claimId: String? = nil, transactionHash: String? = "0x72f5a9b3c1d4e6f70123456789abcdef0123456789abcdef0123456789ab91a",
+    blockNumber: String? = "38420119", completedAt: String? = "2026-09-05T02:31:00.000Z"
+  ) -> PrismPayment {
+    PrismPayment(
+      paymentId: "0xpay", operationId: "0xpay", kind: kind, direction: direction, entryMethod: entryMethod,
+      sender: sender, recipient: recipient, amountAtomic: amountAtomic, asset: "USDC", memo: memo,
+      requestId: requestId, claimId: claimId, resolutionId: "r1", resolutionVersion: 1,
+      lifecycleState: lifecycleState, createdAt: "2026-09-05T02:30:00.000Z", authorizedAt: "2026-09-05T02:30:20.000Z",
+      submittedAt: "2026-09-05T02:30:30.000Z", confirmedAt: completedAt, indexedAt: nil, reconciledAt: completedAt,
+      completedAt: lifecycleState == .completed ? completedAt : nil, transactionHash: transactionHash,
+      blockNumber: blockNumber, gasSponsored: true, failureCode: nil, failureMessage: nil)
+  }
+  static var fixtureEvents: [PrismLifecycleEvent] {
+    [.fx(.created, .app, "Payment created", "2026-09-05T02:30:00.000Z"),
+     .fx(.authorized, .userAuthorization, "Authorized on device", "2026-09-05T02:30:20.000Z"),
+     .fx(.submitted, .relayer, "Submitted", "2026-09-05T02:30:30.000Z"),
+     .fx(.confirmed, .monad, "Confirmed on-chain", "2026-09-05T02:30:55.000Z"),
+     .fx(.completed, .backend, "Completed", "2026-09-05T02:31:00.000Z")]
+  }
+}
+#endif
+
 extension PrismReceipt {
   /// Derive a durable receipt from a canonical payment (lossless — used to replace the ephemeral
   /// ReceiptPresentation once views are migrated). Never marks settled unless the payment is settled.

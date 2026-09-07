@@ -229,23 +229,20 @@ struct ActivityView: View {
   }
 
   private func open(_ item: ActivityRecord) {
-    if let id = item.requestId, let request = requests.first(where: { $0.requestId == id }) {
+    // Every money-movement row opens the one canonical PaymentDetailsView.
+    let moneyKinds: Set<String> = ["sent", "received", "claim-funding", "claim-refund", "claim-received"]
+    if moneyKinds.contains(item.kind) {
+      model.presentPaymentDetails = PaymentDetailsPresentation(operationId: item.id, fallback: PrismPayment(activity: item))
+      return
+    }
+    // A request that hasn't produced money movement yet stays on the request detail.
+    if item.kind == "request", let id = item.requestId, let request = requests.first(where: { $0.requestId == id }) {
       model.presentRequestDetail = RequestDetailPresentation(request: request)
       return
     }
-
+    // A still-claimable item (recipient side) opens the claim flow.
     if let id = item.claimId, let claim = claims.first(where: { $0.claimId == id }) {
       model.presentClaimDetail = ClaimDetailPresentation(claim: claim)
-      return
     }
-
-    let amount = item.amountAtomic.map { Money.assetAmount(fromAtomic: $0) } ?? "—"
-    model.presentReceipt = ReceiptPresentation(
-      title: title(item),
-      amount: amount,
-      subtitle: item.memo ?? subtitle(item),
-      transactionHash: item.transactionHash,
-      status: item.status.replacingOccurrences(of: "_", with: " ").capitalized
-    )
   }
 }

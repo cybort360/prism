@@ -57,6 +57,7 @@ struct MainShell: View {
     .sheet(item: $model.presentUnregistered) { contact in UnregisteredSendView(contact: contact) }
     .sheet(item: $model.presentClaim) { claim in ClaimMoneyView(claim: claim) }
     .sheet(item: $model.presentReceipt) { receipt in ReceiptView(receipt: receipt) }
+    .sheet(item: $model.presentPaymentDetails) { p in PaymentDetailsView(presentation: p) }
     .sheet(item: $model.presentIdentityChange) { candidate in
       IdentityChangeReviewView(candidate: candidate)
     }

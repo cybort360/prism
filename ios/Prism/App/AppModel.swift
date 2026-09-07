@@ -11,6 +11,7 @@ final class AppModel: ObservableObject {
   @Published var presentClaim: ClaimRecord?
   @Published var presentUnregistered: ContactPerson?
   @Published var presentReceipt: ReceiptPresentation?
+  @Published var presentPaymentDetails: PaymentDetailsPresentation?
   @Published var presentIdentityChange: IdentityChangeCandidate?
   @Published var presentClaimDetail: ClaimDetailPresentation?
   @Published var presentRequestDetail: RequestDetailPresentation?

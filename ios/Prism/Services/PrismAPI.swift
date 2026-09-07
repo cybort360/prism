@@ -137,7 +137,11 @@ final class PrismAPI: @unchecked Sendable {
   }
   func paymentStatus(_ id: String) async throws -> OperationStatus { try await api.request("/v1/payments/\(id)") }
   /// The canonical projection of any operation: { payment, events, receipt } — the one payment model.
-  func canonicalPayment(_ id: String) async throws -> PrismCanonicalPayment { try await api.request("/v1/payments/\(id)/canonical") }
+  /// Operation ids may contain '#' (claim ops), so the id is percent-encoded for the path.
+  func canonicalPayment(_ id: String) async throws -> PrismCanonicalPayment {
+    let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+    return try await api.request("/v1/payments/\(encoded)/canonical")
+  }
 
   func activity() async throws -> [ActivityRecord] { try await api.request("/v1/activity") }
   func requests() async throws -> [PaymentRequestRecord] { try await api.request("/v1/requests") }

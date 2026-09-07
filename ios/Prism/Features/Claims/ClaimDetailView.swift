@@ -122,7 +122,8 @@ struct ClaimDetailView: View {
         amount: Money.assetAmount(fromAtomic: claim.amountAtomic),
         subtitle: "Unclaimed payment returned",
         transactionHash: tx,
-        status: "Completed"
+        status: "Completed",
+        operationId: coordinator.lastOperationId
       )
     case .failed(let m):
       error = m

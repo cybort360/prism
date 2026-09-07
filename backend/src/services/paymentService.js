@@ -176,7 +176,7 @@ export class PaymentService {
     });
     this._event(paymentId, { state: 'submitted', source: 'relayer', title: 'Submitted to the network', evidence: txHash });
     logger.info('payment.submitted', { paymentId, txHash });
-    return { paymentId, state: 'submitted', txHash };
+    return { paymentId, operationId: paymentId, state: 'submitted', txHash };
   }
 
   /**
@@ -263,7 +263,7 @@ export class PaymentService {
       this._event(fundOpId, { state: 'submitted', source: 'relayer', title: 'Claim funding submitted', evidence: txHash });
       this.claimService.markFundingSubmitted(claimId, txHash, fundOpId);
       logger.info('claim.funding.submitted', { claimId, txHash });
-      return { claimId, state: 'submitted', txHash };
+      return { claimId, operationId: fundOpId, state: 'submitted', txHash };
     } catch (e) {
       // Only a failure that provably never reached the network may be called a failure. Otherwise
       // the funding authorization may already be consumed, and marking it failed would invite a
@@ -313,7 +313,7 @@ export class PaymentService {
     this._event(collectOpId, { state: 'submitted', source: 'relayer', title: 'Claim collection submitted', evidence: txHash });
     this.claimService.markClaimSubmitted(claimId, txHash);
     logger.info('claim.collect.submitted', { claimId, txHash });
-    return { claimId, state: 'submitted', txHash };
+    return { claimId, operationId: collectOpId, state: 'submitted', txHash };
   }
 
   async refundClaim({ senderPrismId, claimId }) {
@@ -328,7 +328,7 @@ export class PaymentService {
     this._event(refundOpId, { state: 'submitted', source: 'relayer', title: 'Refund submitted', evidence: txHash });
     this.claimService.markRefundSubmitted(claimId, txHash);
     logger.info('claim.refund.submitted', { claimId, txHash });
-    return { claimId, state: 'submitted', txHash };
+    return { claimId, operationId: refundOpId, state: 'submitted', txHash };
   }
 
   // ---- reconciliation (ambiguous-submission safe) --------------------------

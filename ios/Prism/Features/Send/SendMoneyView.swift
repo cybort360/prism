@@ -99,7 +99,7 @@ struct SendMoneyView: View {
       dismiss()
       model.presentReceipt = ReceiptPresentation(
         title: "Sent", amount: displayAssetAmount, subtitle: "to \(target.contact.name)",
-        transactionHash: tx, status: "Completed")
+        transactionHash: tx, status: "Completed", operationId: coordinator.lastOperationId)
     case .failed(let m): error = m
     default: break
     }

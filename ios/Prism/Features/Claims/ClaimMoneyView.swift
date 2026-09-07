@@ -121,7 +121,8 @@ struct ClaimMoneyView: View {
         amount: Money.assetAmount(fromAtomic: claim.amountAtomic),
         subtitle: claim.memo?.isEmpty == false ? claim.memo! : "Claim completed",
         transactionHash: tx,
-        status: "Completed"
+        status: "Completed",
+        operationId: coordinator.lastOperationId
       )
     case .failed(let m):
       error = m

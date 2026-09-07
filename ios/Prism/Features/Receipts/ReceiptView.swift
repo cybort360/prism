@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ReceiptView: View {
   @Environment(\.dismiss) private var dismiss
+  @EnvironmentObject private var model: AppModel
   let receipt: ReceiptPresentation
   @State private var showNetwork = false
 
@@ -78,6 +79,19 @@ struct ReceiptView: View {
 
       PrismPrimaryButton(title: "Done", icon: "checkmark") { dismiss() }
         .padding(.top, 18)
+
+      if let opId = receipt.operationId {
+        Button("View details") {
+          dismiss()
+          // Hand off to the canonical detail sheet after the receipt dismiss animation completes.
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            model.presentPaymentDetails = PaymentDetailsPresentation(operationId: opId)
+          }
+        }
+        .font(PrismTheme.body(14, weight: .semibold))
+        .foregroundStyle(PrismTheme.mintDeep)
+        .padding(.top, 12)
+      }
     }
     .padding(.horizontal, 24)
     .padding(.bottom, 24)
