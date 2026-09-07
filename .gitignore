@@ -17,3 +17,5 @@ contracts/lib/forge-std/
 # Mera bridge build artifact (produced by ios/MeraBridge/web `npm run build`)
 ios/Prism/Resources/MeraWeb/mera-bridge.js
 contracts/broadcast/
+indexer/envio/generated/
+indexer/envio/node_modules/

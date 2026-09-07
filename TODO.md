@@ -24,7 +24,12 @@ Blocked on external keys/funds; nothing here is a code defect.
       `0xe6e8c97e…`; vault escrowed then released 2.00 USDC, recipient MON = 0. See proof doc.
 - [ ] **One refund** on-chain — refundable claim `0x7bbec937…` funded; pending its 1-hour expiry.
 - [ ] **Live Alchemy** as the Monad RPC — real `eth_call`/receipt readback; webhook delivery if available.
-- [ ] **Live Envio** indexing real `PaymentSettled` / claim events; verify Activity reconciliation.
+- [~] **Live Envio** indexing. Config now points at the deployed router/vault (`indexer/envio/config.yaml`,
+      start_block 60506000) and codegen builds; the Hasura/Postgres stack runs. Local `envio start`
+      is currently blocked by an ecosystem issue — TypeScript 7 (native preview) is tagged `latest`,
+      so pnpm installs it as ts-node's peer in the generated project and ts-node 10.9.1 crashes on
+      it (`ts.sys` undefined). Not a Prism defect. Options: deploy to Envio's hosted service, or pin
+      TypeScript 5.x for the generated project.
 - [ ] **Physical-device iPhone flows:** passkey create/recover, Face ID/PIN approval, Contacts, QR,
       universal links (can't run in simulator).
 - [ ] **Latency numbers:** capture real P50/P95 from instrumented runs; don't publish figures until then.

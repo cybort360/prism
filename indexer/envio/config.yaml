@@ -8,17 +8,17 @@ description: >-
 # history from block 0. Set the deployed router/vault addresses below (see indexer/envio/README.md).
 networks:
   - id: 10143
-    start_block: 0
+    start_block: 60506000
     contracts:
       - name: PrismPaymentRouter
         address:
-          - "0x0000000000000000000000000000000000000000" # <- deployed PrismPaymentRouter
+          - "0x423a9Da22b1509e7593F4A60f62e6929B56f62b7" # deployed PrismPaymentRouter
         handler: src/EventHandlers.ts
         events:
           - event: "PaymentSettled(bytes32 indexed paymentId, address indexed payer, address indexed recipient, uint256 amount, bytes32 requestId, bytes32 resolutionHash)"
       - name: PrismClaimVault
         address:
-          - "0x0000000000000000000000000000000000000000" # <- deployed PrismClaimVault
+          - "0xBe3D0b0404674e032D153182a58b1901D1d6Eae3" # deployed PrismClaimVault
         handler: src/EventHandlers.ts
         events:
           - event: "ClaimFunded(bytes32 indexed claimId, address indexed sender, uint256 amount, uint256 expiry, bytes32 recipientReference)"
