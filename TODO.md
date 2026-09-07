@@ -15,10 +15,11 @@ is what's left. See `git log` for the P0/P1 commits and the hostile-audit findin
 ## P2 — Evidence tier (needs real infrastructure + secrets)
 Blocked on external keys/funds; nothing here is a code defect.
 
-- [ ] **Deploy contracts to Monad testnet.** Run `contracts/script/Deploy.s.sol --broadcast` with a
-      MON-funded `DEPLOYER_PRIVATE_KEY` + `CLAIM_AUTHORIZER_ADDRESS`; populate
-      `deployments/monad-testnet.json` (paymentRouter, claimVault, claimAuthorizer, deployer, deployedAt).
-- [ ] **One real direct payment** settles on-chain (USDC via router `receiveWithAuthorization`→forward).
+- [x] **Deploy contracts to Monad testnet.** DONE — router `0x423a9Da2…62b7`, vault `0xBe3D0b04…Eae3`
+      live on chainId 10143; `deployments/monad-testnet.json` populated. See `proof/TESTNET_DEPLOYMENT.md`.
+- [x] **One real direct payment** settles on-chain. DONE — tx
+      `0x254e8281…9c8f7`, block 60506783, payer USDC −1 / recipient +1, payer MON = 0 (gasless),
+      `router.paymentUsed` = true. See `proof/TESTNET_DEPLOYMENT.md`.
 - [ ] **One real claim funding + collection**, and **one refund**, on-chain.
 - [ ] **Live Alchemy** as the Monad RPC — real `eth_call`/receipt readback; webhook delivery if available.
 - [ ] **Live Envio** indexing real `PaymentSettled` / claim events; verify Activity reconciliation.
