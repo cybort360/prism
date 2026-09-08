@@ -41,9 +41,9 @@ struct UnregisteredSendView: View {
         .padding(.top, 17)
 
         HStack(alignment: .top, spacing: 9) {
-          Image(systemName: "clock.badge.checkmark")
+          Image(systemName: "lock.shield")
             .foregroundStyle(PrismTheme.mintDeep)
-          Text("Send now. The money waits for up to 7 days. If this number never verifies and claims it, your refund becomes available.")
+          Text("\(contact.name) isn't on Prism yet. The money stays protected for 7 days until \(contact.name) verifies this number and claims it. If it isn't claimed, you'll be able to get it back.")
             .font(PrismTheme.body(11.5))
             .foregroundStyle(PrismTheme.muted)
             .lineSpacing(1.5)
@@ -99,19 +99,34 @@ struct UnregisteredSendView: View {
 
     switch coordinator.state {
     case .sent(let transactionHash):
+      // Remember the recipient locally (name never leaves the device) and build a safe reminder.
+      var invite: String? = nil
+      var expiresLine: String? = nil
+      if let claimId = coordinator.lastClaimId {
+        ClaimRecipientStore.remember(claimId: claimId, name: contact.name)
+        invite = ClaimInvite.message(senderName: senderName, amount: displayAmount, claimId: claimId)
+        let expiry = Date().addingTimeInterval(7 * 24 * 3600)
+        expiresLine = "Expires \(expiry.formatted(date: .abbreviated, time: .omitted))"
+      }
       dismiss()
       model.presentReceipt = ReceiptPresentation(
-        title: "Money waiting",
+        title: "Protected for \(contact.name)",
         amount: displayAmount,
-        subtitle: "Waiting for \(contact.name) to join and claim",
+        subtitle: "Waiting for \(contact.name) to join Prism and claim it",
         transactionHash: transactionHash,
         status: "Waiting to be claimed",
-        operationId: coordinator.lastOperationId
+        operationId: coordinator.lastOperationId,
+        expiresLine: expiresLine,
+        shareMessage: invite
       )
     case .failed(let message):
       error = message
     default:
       break
     }
+  }
+
+  private var senderName: String {
+    model.identity?.displayName ?? model.identity?.handle.map { "@\($0)" } ?? "Someone"
   }
 }

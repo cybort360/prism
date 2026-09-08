@@ -8,7 +8,12 @@ struct ClaimMoneyView: View {
   @State private var showPIN = false
   @State private var busy = false
   @State private var message = ""
-  @State private var error: String?
+  @State private var failure: ClaimFailure?
+
+  private var fromLine: String {
+    if let sender = claim.senderDisplay, !sender.isEmpty { return "from \(sender)" }
+    return "waiting for you"
+  }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -36,6 +41,10 @@ struct ClaimMoneyView: View {
       AmountText(dollars: Money.dollars(fromAtomic: claim.amountAtomic), size: 70)
         .padding(.top, 8)
 
+      Text(fromLine)
+        .font(PrismTheme.body(14, weight: .semibold))
+        .foregroundStyle(PrismTheme.muted)
+        .padding(.top, 4)
 
       if let memo = claim.memo, !memo.isEmpty {
         Text(memo)
@@ -49,7 +58,7 @@ struct ClaimMoneyView: View {
           .padding(.top, 10)
       }
 
-      Text("This money is already set aside for you. Claiming moves it into your Prism balance.")
+      Text("This money is already protected for you. Claiming moves it into your Prism balance.")
         .font(PrismTheme.body(13.5))
         .foregroundStyle(PrismTheme.muted)
         .multilineTextAlignment(.center)
@@ -59,7 +68,7 @@ struct ClaimMoneyView: View {
 
       HStack(spacing: 7) {
         Image(systemName: "lock.fill").font(.system(size: 10))
-        Text("Funds are set aside for you")
+        Text("Protected on Monad")
       }
       .font(PrismTheme.body(10.5, weight: .semibold))
       .foregroundStyle(PrismTheme.mintDeep)
@@ -79,7 +88,7 @@ struct ClaimMoneyView: View {
       Spacer()
 
       PrismPrimaryButton(
-        title: busy ? "Claiming…" : "Claim \(Money.assetAmount(fromAtomic: claim.amountAtomic))",
+        title: busy ? "Claiming…" : "Claim \(Money.dollars(fromAtomic: claim.amountAtomic))",
         enabled: !busy,
         icon: "arrow.down"
       ) {
@@ -97,12 +106,30 @@ struct ClaimMoneyView: View {
         Task { await collect(faceID: false) }
       }
     }
-    .alert("Prism", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-      Button("OK") { error = nil }
+    .alert("Prism", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+      switch failure?.recovery {
+      case .tryAgain:
+        Button("Try again") { retry() }
+        Button("Not now", role: .cancel) { failure = nil }
+      case .verifyAgain:
+        Button("Verify again") { retry() }
+        Button("Not now", role: .cancel) { failure = nil }
+      default:
+        Button("OK") { failure = nil }
+      }
     } message: {
-      Text(error ?? "")
+      Text(failure?.message ?? "")
     }
     .prismScreen()
+  }
+
+  private func retry() {
+    failure = nil
+    if UserDefaults.standard.bool(forKey: "payments.faceID") {
+      Task { await collect(faceID: true) }
+    } else {
+      showPIN = true
+    }
   }
 
   private func collect(faceID: Bool) async {
@@ -118,14 +145,15 @@ struct ClaimMoneyView: View {
       dismiss()
       model.presentReceipt = ReceiptPresentation(
         title: "Money received",
-        amount: Money.assetAmount(fromAtomic: claim.amountAtomic),
-        subtitle: claim.memo?.isEmpty == false ? claim.memo! : "Claim completed",
+        amount: Money.dollars(fromAtomic: claim.amountAtomic),
+        subtitle: fromLine,
         transactionHash: tx,
         status: "Completed",
         operationId: coordinator.lastOperationId
       )
     case .failed(let m):
-      error = m
+      message = ""
+      failure = ClaimFailure.classify(m)
     default:
       break
     }

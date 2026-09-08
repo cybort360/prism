@@ -181,7 +181,7 @@ struct ActivityView: View {
             .foregroundStyle(item.direction == "incoming" ? PrismTheme.positive : PrismTheme.ink)
         }
 
-        Text(item.status.replacingOccurrences(of: "_", with: " ").capitalized)
+        Text(statusLabel(item))
           .font(PrismTheme.body(9.5, weight: .medium))
           .foregroundStyle(statusColor(item))
       }
@@ -206,10 +206,41 @@ struct ActivityView: View {
     String(title(item).replacingOccurrences(of: "@", with: "").prefix(2)).uppercased()
   }
 
+  // Canonical consumer status word for a row. Claim rows read Protected → Delivered / Returned /
+  // Received, matching Payment Details; everything else keeps its plain state.
+  private func statusLabel(_ item: ActivityRecord) -> String {
+    switch item.kind {
+    case "claim-refund":
+      return "Returned"
+    case "claim-received":
+      return item.status.uppercased() == "COMPLETED" ? "Received" : rawLabel(item)
+    case "claim-funding":
+      if let id = item.claimId, let c = claims.first(where: { $0.claimId == id }) {
+        switch c.status {
+        case "claimed", "claim_submitted": return "Delivered"
+        case "refunded", "refund_submitted": return "Returned"
+        case "funded": return c.isExpired ? "Refund available" : "Protected"
+        default: break
+        }
+      }
+      return item.status.uppercased() == "COMPLETED" ? "Protected" : rawLabel(item)
+    default:
+      return rawLabel(item)
+    }
+  }
+
+  private func rawLabel(_ item: ActivityRecord) -> String {
+    item.status.replacingOccurrences(of: "_", with: " ").capitalized
+  }
+
   private func statusColor(_ item: ActivityRecord) -> Color {
+    switch statusLabel(item) {
+    case "Delivered", "Received", "Returned", "Completed", "Paid": return PrismTheme.positive
+    case "Protected", "Refund available": return PrismTheme.amber
+    case "Failed": return PrismTheme.danger
+    default: break
+    }
     let status = item.status.uppercased()
-    if ["COMPLETED", "PAID"].contains(status) { return PrismTheme.positive }
-    if ["FAILED"].contains(status) { return PrismTheme.danger }
     if ["OPEN", "PENDING", "SUBMITTED", "CONFIRMING"].contains(status) { return PrismTheme.amber }
     return PrismTheme.pending
   }

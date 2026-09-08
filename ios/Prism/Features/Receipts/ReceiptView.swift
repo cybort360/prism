@@ -39,7 +39,29 @@ struct ReceiptView: View {
       PrismStatusPill(text: receipt.status, tone: receipt.status.lowercased().contains("fail") ? .danger : .positive)
         .padding(.top, 16)
 
+      if let expiresLine = receipt.expiresLine {
+        Text(expiresLine)
+          .font(PrismTheme.body(12.5))
+          .foregroundStyle(PrismTheme.muted)
+          .padding(.top, 10)
+      }
+
       Spacer()
+
+      if let invite = receipt.shareMessage {
+        ShareLink(item: invite) {
+          HStack(spacing: 8) {
+            Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
+            Text("Remind them").font(PrismTheme.body(15, weight: .semibold))
+          }
+          .foregroundStyle(PrismTheme.mintDeep)
+          .frame(maxWidth: .infinity)
+          .frame(height: 52)
+          .background(PrismTheme.mintSoft)
+          .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+        }
+        .padding(.bottom, 12)
+      }
 
       if receipt.transactionHash != nil {
         VStack(spacing: 0) {

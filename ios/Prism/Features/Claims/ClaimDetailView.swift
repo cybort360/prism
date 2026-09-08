@@ -10,10 +10,22 @@ struct ClaimDetailView: View {
   @State private var message = ""
   @State private var error: String?
 
+  // The recipient's friendly name lives only on the sender's device (never on-chain / on the backend).
+  private var recipientName: String { ClaimRecipientStore.name(for: claim.claimId) ?? "your recipient" }
+
+  private enum Phase { case waiting, expired, delivered, returned }
+  private var phase: Phase {
+    switch claim.status {
+    case "claimed", "claim_submitted": return .delivered
+    case "refunded", "refund_submitted": return .returned
+    default: return claim.isExpired ? .expired : .waiting
+    }
+  }
+
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        Text("Claim").font(PrismTheme.display(35)).tracking(-0.5)
+        Text("Payment").font(PrismTheme.display(35)).tracking(-0.5)
         Spacer()
         PrismHeaderIconButton(icon: "xmark") { dismiss() }
       }
@@ -23,24 +35,24 @@ struct ClaimDetailView: View {
 
       ZStack {
         Circle().fill(PrismTheme.mintSoft).frame(width: 104, height: 104)
-        Image(systemName: claim.refundAvailable == true ? "arrow.uturn.backward" : "clock")
+        Image(systemName: headerIcon)
           .font(.system(size: 34, weight: .medium))
           .foregroundStyle(PrismTheme.mintDeep)
       }
 
-      AmountText(dollars: Money.dollars(fromAtomic: claim.amountAtomic), size: 67)
-        .padding(.top, 24)
+      Text(recipientName.uppercased())
+        .font(PrismTheme.body(11, weight: .semibold))
+        .tracking(1.2)
+        .foregroundStyle(PrismTheme.muted)
+        .padding(.top, 20)
 
+      AmountText(dollars: Money.dollars(fromAtomic: claim.amountAtomic), size: 60)
+        .padding(.top, 8)
 
-      Text(claimStatus)
+      Text(headline)
         .font(PrismTheme.body(14.5, weight: .semibold))
-        .foregroundStyle(PrismTheme.muted)
-        .padding(.top, 7)
-
-      Text(expiryText)
-        .font(PrismTheme.body(12.5))
-        .foregroundStyle(PrismTheme.muted)
-        .padding(.top, 6)
+        .foregroundStyle(PrismTheme.ink)
+        .padding(.top, 8)
 
       if let memo = claim.memo, !memo.isEmpty {
         Text(memo)
@@ -53,34 +65,25 @@ struct ClaimDetailView: View {
           .padding(.top, 12)
       }
 
+      if phase == .expired {
+        Text("\(recipientName) did not claim this payment.\n\(Money.dollars(fromAtomic: claim.amountAtomic)) can now be returned to you.")
+          .font(PrismTheme.body(13))
+          .foregroundStyle(PrismTheme.muted)
+          .multilineTextAlignment(.center)
+          .lineSpacing(2)
+          .padding(.horizontal, 34)
+          .padding(.top, 18)
+      } else {
+        timeline.padding(.top, 22).padding(.horizontal, 8)
+      }
+
       if !message.isEmpty {
-        Text(message).font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted).padding(.top, 17)
+        Text(message).font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted).padding(.top, 16)
       }
 
       Spacer()
 
-      if claim.refundAvailable == true {
-        PrismPrimaryButton(
-          title: busy ? "Refunding…" : "Refund \(Money.assetAmount(fromAtomic: claim.amountAtomic))",
-          enabled: !busy,
-          icon: "arrow.uturn.backward"
-        ) {
-          if UserDefaults.standard.bool(forKey: "payments.faceID") {
-            Task { await refund(faceID: true) }
-          } else {
-            showPIN = true
-          }
-        }
-      } else {
-        PrismCard(padding: 16) {
-          HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "clock").foregroundStyle(PrismTheme.mintDeep)
-            Text("Refund becomes available after expiry if the recipient has not claimed the payment.")
-              .font(PrismTheme.body(12.5))
-              .foregroundStyle(PrismTheme.muted)
-          }
-        }
-      }
+      footer
     }
     .padding(.horizontal, 24)
     .padding(.bottom, 24)
@@ -97,13 +100,111 @@ struct ClaimDetailView: View {
     }
   }
 
-  private var claimStatus: String {
-    claim.status.replacingOccurrences(of: "_", with: " ").capitalized
+  // MARK: header/copy per phase
+
+  private var headerIcon: String {
+    switch phase {
+    case .waiting: return "clock"
+    case .expired: return "arrow.uturn.backward"
+    case .delivered: return "checkmark"
+    case .returned: return "arrow.uturn.backward"
+    }
+  }
+
+  private var headline: String {
+    switch phase {
+    case .waiting: return "Protected — waiting to be claimed"
+    case .expired: return "Expired"
+    case .delivered: return "Delivered to \(recipientName)"
+    case .returned: return "Returned to you"
+    }
+  }
+
+  // MARK: timeline
+
+  private var timeline: some View {
+    let claimedOrDelivered = phase == .delivered
+    let steps: [(String, Bool)] = [
+      ("Payment created", true),
+      ("Funds protected", true),
+      (claimedOrDelivered ? "\(recipientName) claimed it" : "Waiting for \(recipientName)", claimedOrDelivered),
+      ("Delivered", claimedOrDelivered)
+    ]
+    return VStack(alignment: .leading, spacing: 14) {
+      ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+        HStack(spacing: 12) {
+          Image(systemName: step.1 ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 17))
+            .foregroundStyle(step.1 ? PrismTheme.mintDeep : PrismTheme.line)
+          Text(step.0)
+            .font(PrismTheme.body(13.5, weight: step.1 ? .semibold : .regular))
+            .foregroundStyle(step.1 ? PrismTheme.ink : PrismTheme.muted)
+          Spacer()
+        }
+      }
+      HStack(spacing: 12) {
+        Image(systemName: "calendar").font(.system(size: 14)).foregroundStyle(PrismTheme.muted)
+        Text(expiryText).font(PrismTheme.body(12.5)).foregroundStyle(PrismTheme.muted)
+        Spacer()
+      }
+      .padding(.top, 2)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  // MARK: footer action per phase
+
+  @ViewBuilder private var footer: some View {
+    switch phase {
+    case .waiting:
+      ShareLink(item: ClaimInvite.message(senderName: senderName, amount: Money.dollars(fromAtomic: claim.amountAtomic), claimId: claim.claimId)) {
+        HStack(spacing: 8) {
+          Image(systemName: "paperplane.fill").font(.system(size: 14, weight: .semibold))
+          Text("Remind \(recipientName)").font(PrismTheme.body(16, weight: .semibold))
+        }
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity)
+        .frame(height: 56)
+        .background(PrismTheme.ink)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+      }
+    case .expired:
+      PrismPrimaryButton(
+        title: busy ? "Returning…" : "Return \(Money.dollars(fromAtomic: claim.amountAtomic))",
+        enabled: !busy,
+        icon: "arrow.uturn.backward"
+      ) {
+        if UserDefaults.standard.bool(forKey: "payments.faceID") {
+          Task { await refund(faceID: true) }
+        } else {
+          showPIN = true
+        }
+      }
+    case .delivered, .returned:
+      if let opId = deliveredOpId {
+        Button("View payment") {
+          dismiss()
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            model.presentPaymentDetails = PaymentDetailsPresentation(operationId: opId)
+          }
+        }
+        .font(PrismTheme.body(15, weight: .semibold))
+        .foregroundStyle(PrismTheme.mintDeep)
+      }
+    }
+  }
+
+  private var deliveredOpId: String? {
+    claim.claimTransactionHash ?? claim.refundTransactionHash
+  }
+
+  private var senderName: String {
+    model.identity?.displayName ?? model.identity?.handle.map { "@\($0)" } ?? "Someone"
   }
 
   private var expiryText: String {
-    let date = Date(timeIntervalSince1970: TimeInterval(claim.expiry))
-    return "Expires \(date.formatted(date: .abbreviated, time: .shortened))"
+    let verb = claim.isExpired ? "Expired" : "Expires"
+    return "\(verb) \(claim.expiresAt.formatted(date: .abbreviated, time: .shortened))"
   }
 
   private func refund(faceID: Bool) async {
@@ -111,22 +212,23 @@ struct ClaimDetailView: View {
     message = "Returning your money…"
     defer { busy = false }
 
-    // Refund-after-expiry returns funds to the sender; relayer-submitted after local approval.
+    // Refund-after-expiry returns funds to the original sender (contract-enforced); relayer-submitted.
     let coordinator = PaymentCoordinator()
     await coordinator.refundClaim(claim, pin: faceID ? nil : pin, useFaceID: faceID)
     switch coordinator.state {
     case .sent(let tx):
       dismiss()
       model.presentReceipt = ReceiptPresentation(
-        title: "Refunded",
-        amount: Money.assetAmount(fromAtomic: claim.amountAtomic),
-        subtitle: "Unclaimed payment returned",
+        title: "\(Money.dollars(fromAtomic: claim.amountAtomic)) returned",
+        amount: Money.dollars(fromAtomic: claim.amountAtomic),
+        subtitle: "This payment expired before \(recipientName) claimed it",
         transactionHash: tx,
-        status: "Completed",
+        status: "Returned",
         operationId: coordinator.lastOperationId
       )
     case .failed(let m):
-      error = m
+      message = ""
+      error = ClaimFailure.classify(m).message
     default:
       break
     }

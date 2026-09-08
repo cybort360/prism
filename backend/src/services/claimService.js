@@ -75,12 +75,20 @@ export class ClaimService {
     });
   }
 
+  // The sender's PUBLIC display (handle or display name) — safe to show a recipient "from Octane".
+  // Never exposes the sender's phone or address.
+  _senderDisplay(senderPrismId) {
+    const s = this.identityService.get(senderPrismId);
+    if (!s) return null;
+    return s.displayName || (s.handle ? `@${s.handle}` : null);
+  }
+
   eligibleClaimsFor(identity) {
     if (!identity?.phoneLookupKey) return [];
     const now = Math.floor(Date.now() / 1000);
     return Object.values(this.store.read().claims)
       .filter(c => c.recipientPhoneLookupKey === identity.phoneLookupKey && c.status === 'funded' && c.expiry >= now)
-      .map(publicClaim);
+      .map(c => ({ ...publicClaim(c), senderDisplay: this._senderDisplay(c.senderPrismId) }));
   }
 
   listFor(identity) {
@@ -88,7 +96,7 @@ export class ClaimService {
     const now = Math.floor(Date.now() / 1000);
     return Object.values(this.store.read().claims)
       .filter(c => c.senderPrismId === identity.prismId || (identity.phoneLookupKey && c.recipientPhoneLookupKey === identity.phoneLookupKey))
-      .map(c => ({ ...publicClaim(c), refundAvailable: c.senderPrismId === identity.prismId && c.status === 'funded' && c.expiry < now }))
+      .map(c => ({ ...publicClaim(c), senderDisplay: this._senderDisplay(c.senderPrismId), refundAvailable: c.senderPrismId === identity.prismId && c.status === 'funded' && c.expiry < now }))
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   }
 
@@ -111,7 +119,11 @@ export class ClaimService {
     const identity = this.identityService.get(recipientPrismId);
     if (!identity?.accountAddress) throw new Error('recipient account not ready');
     const claim = this.store.read().claims[claimId];
-    if (!claim || claim.status !== 'funded') throw new Error('claim not funded');
+    if (!claim) throw new Error('claim not found');
+    // Distinct terminal states so the app can show precise copy (already received vs. returned).
+    if (claim.status === 'claimed' || claim.status === 'claim_submitted') throw new Error('claim already received');
+    if (claim.status === 'refunded' || claim.status === 'refund_submitted') throw new Error('claim already returned');
+    if (claim.status !== 'funded') throw new Error('claim not funded');
     if (claim.expiry < Math.floor(Date.now() / 1000)) throw new Error('claim expired');
     if (!identity.phoneLookupKey || claim.recipientPhoneLookupKey !== identity.phoneLookupKey) throw new Error('claim not eligible for this alias');
 

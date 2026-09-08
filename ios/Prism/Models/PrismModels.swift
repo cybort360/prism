@@ -272,6 +272,11 @@ struct ClaimRecord: Codable, Identifiable, Equatable {
   var claimTransactionHash: String? = nil
   var refundTransactionHash: String? = nil
   var refundAvailable: Bool? = nil
+  /// Sender's PUBLIC display (handle/name), for the recipient's "from Octane". Never a phone/address.
+  var senderDisplay: String? = nil
+  /// Expiry as a Date for consumer copy.
+  var expiresAt: Date { Date(timeIntervalSince1970: TimeInterval(expiry)) }
+  var isExpired: Bool { expiresAt < Date() }
 }
 struct ClaimEligibility: Codable {
   let claimId: String
@@ -335,6 +340,9 @@ struct ReceiptPresentation: Identifiable {
   let status: String
   /// Canonical operation id, so the compact success can open the full PaymentDetailsView.
   var operationId: String? = nil
+  /// Claim-funded success extras: a human expiry line and a safe share invitation ("Remind …").
+  var expiresLine: String? = nil
+  var shareMessage: String? = nil
 }
 
 extension String {

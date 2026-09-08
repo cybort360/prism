@@ -10,6 +10,9 @@ final class PaymentCoordinator: ObservableObject {
   @Published var state: State = .idle
   /// Canonical operation id of the last submitted action — opens PaymentDetailsView from success.
   @Published var lastOperationId: String?
+  /// The claimId of the last funded claim — lets the sender surface remember the recipient locally
+  /// and build a safe share invitation. Never leaves the device beyond the opaque claimId.
+  @Published var lastClaimId: String?
   private let api = PrismAPI.shared
 
   // MARK: direct payment
@@ -33,6 +36,7 @@ final class PaymentCoordinator: ObservableObject {
     do {
       state = .preparing
       let prepared = try await api.prepareClaim(phone: phone, amountAtomic: amountAtomic, memo: memo)
+      lastClaimId = prepared.claimId
       state = .awaitingAuthorization
       try await localApproval(pin: pin, useFaceID: useFaceID)
       state = .sending

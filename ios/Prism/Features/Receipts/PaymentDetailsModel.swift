@@ -166,9 +166,9 @@ struct PaymentDisplay {
   private var stepTemplate: [(title: String, rank: Int)] {
     switch payment.kind {
     case .claimFunding:
-      return [("Payment created", 1), ("You approved", 3), ("Sent to escrow", 4), ("Confirmed on Monad", 6), ("Protected — waiting to be claimed", 8)]
+      return [("Payment created", 1), ("You approved", 3), ("Funds protected", 4), ("Confirmed on Monad", 6), ("Waiting to be claimed", 8)]
     case .claimSettlement:
-      return [("Claim opened", 1), ("You approved", 3), ("Claimed", 4), ("Confirmed on Monad", 6), ("Received", 8)]
+      return [("Claim opened", 1), ("Recipient verified", 2), ("You approved", 3), ("Claimed", 4), ("Confirmed on Monad", 6), ("Delivered", 8)]
     case .refund:
       return [("Refund created", 1), ("Submitted", 4), ("Confirmed on Monad", 6), ("Returned", 8)]
     default:

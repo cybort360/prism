@@ -177,6 +177,58 @@ contract PrismClaimVaultTest is Test {
         vault.refund(claimId);
     }
 
+    /// @notice The expiry boundary is a clean seam: at the exact expiry instant a claim is still
+    ///         allowed but a refund is not yet, so the two actions never both succeed. Claiming at the
+    ///         boundary wins and permanently blocks any later refund — exactly one terminal state.
+    function testClaimAtExpiryInstantWinsAndBlocksRefund() public {
+        uint256 expiry = block.timestamp + 7 days;
+        _fund(claimId, recipientRef, amount, expiry);
+
+        // At t == expiry the refund window has not opened yet.
+        vm.warp(expiry);
+        vm.expectRevert(PrismClaimVault.NotYetExpired.selector);
+        vault.refund(claimId);
+
+        // The recipient claims at the very boundary.
+        uint256 eligExpiry = block.timestamp + 3600;
+        bytes32 eligNonce = keccak256("race-1");
+        bytes memory elig = _eligSig(claimId, recipient, 1, eligExpiry, eligNonce, authorizerPk);
+        bytes memory intent = _intentSig(claimId, recipient, recipientPk);
+        vm.prank(relayer);
+        vault.claim(claimId, recipient, 1, eligExpiry, eligNonce, elig, intent);
+        assertEq(usdc.balanceOf(recipient), amount);
+
+        // A refund a moment later cannot double-spend the already-claimed money.
+        vm.warp(expiry + 1);
+        vm.expectRevert(PrismClaimVault.NotFunded.selector);
+        vault.refund(claimId);
+
+        (,,,,, PrismClaimVault.ClaimStatus st) = vault.claims(claimId);
+        assertEq(uint256(st), uint256(PrismClaimVault.ClaimStatus.Claimed), "CLAIMED is the single terminal state");
+    }
+
+    /// @notice One instant past expiry the claim window has closed; the refund window is open. The
+    ///         claim reverts and the refund settles — again exactly one terminal state (REFUNDED).
+    function testClaimStrictlyAfterExpiryLosesToRefund() public {
+        uint256 expiry = block.timestamp + 7 days;
+        _fund(claimId, recipientRef, amount, expiry);
+        vm.warp(expiry + 1);
+
+        uint256 eligExpiry = block.timestamp + 3600;
+        bytes32 eligNonce = keccak256("race-2");
+        bytes memory elig = _eligSig(claimId, recipient, 1, eligExpiry, eligNonce, authorizerPk);
+        bytes memory intent = _intentSig(claimId, recipient, recipientPk);
+        vm.prank(relayer);
+        vm.expectRevert(PrismClaimVault.ClaimIsExpired.selector);
+        vault.claim(claimId, recipient, 1, eligExpiry, eligNonce, elig, intent);
+
+        // The sender's money returns; the claim can never also succeed.
+        vault.refund(claimId);
+        assertEq(usdc.balanceOf(sender), 1_000e6, "sender made whole");
+        (,,,,, PrismClaimVault.ClaimStatus st) = vault.claims(claimId);
+        assertEq(uint256(st), uint256(PrismClaimVault.ClaimStatus.Refunded), "REFUNDED is the single terminal state");
+    }
+
     function testRefundDestinationCannotBeChanged() public {
         uint256 expiry = block.timestamp + 7 days;
         _fund(claimId, recipientRef, amount, expiry);
