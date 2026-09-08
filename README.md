@@ -8,6 +8,34 @@ Core loop:
 
 `Person -> Amount -> Face ID / PIN -> Sent`
 
+> **This repo is under the FORGE 1.4 control plane. Start at [`AGENTS.md`](AGENTS.md) and
+> [`/forge`](forge/). Repository files are the source of truth; prior chat summaries are not.**
+
+## Prism Continuity (the load-bearing mechanism)
+
+"Send money to people, not wallet addresses" is the surface promise. The load-bearing idea is
+**Prism Continuity**: **human identifiers are mutable reachability *routes*, not financial identities
+or spending authority.**
+
+```
+HOW I AM FOUND          phone / @handle / QR / link
+        ↓
+WHO I AM                persistent PrismIdentity
+        ↓
+WHO MAY AUTHORIZE       device passkey → Mera-derived secp256k1 account
+MY MONEY
+        ↓
+WHERE MY MONEY LIVES    a Monad account holding USDC
+```
+
+**Critical invariant:** reachability may change without silently changing recipient identity. A
+legitimate alias change that still resolves to the *same* PrismIdentity preserves continuity; an alias
+that now resolves to a *different* identity is visibly blocked for review, never silently redirected.
+See [`forge/PRODUCT.md`](forge/PRODUCT.md), [`forge/INVARIANTS.md`](forge/INVARIANTS.md), and
+[`forge/CORE_HYPOTHESIS.md`](forge/CORE_HYPOTHESIS.md). (Note: the FORGE 1.4 brief's "P256 credential /
+smart account" wording is clarified against the actual Mera secp256k1 account in
+[`forge/ARCHITECTURE.md`](forge/ARCHITECTURE.md).)
+
 ## Payment truth
 
 Prism does not treat transaction submission as payment completion. Every monetary action — direct
@@ -148,6 +176,13 @@ make test        # backend + contracts + iOS
 `make test-contracts`.
 
 ## Proof status
+
+> **Current source of truth: [`forge/PROOF_LEDGER.md`](forge/PROOF_LEDGER.md).** The dated table below
+> is the original 2026-09-03 hostile audit and is now **stale in places** — suite counts have grown to
+> **backend 132 / contracts 43 / iOS 89**, and a Monad-testnet deployment manifest exists
+> (`deployments/monad-testnet.json`). Live end-to-end on Monad is not re-verified in the current phase;
+> see the ledger and [`forge/FAILURES.md`](forge/FAILURES.md) (F-3, F-4). Nothing is marked verified on
+> the strength of code existing.
 
 A hostile audit (`proof/`) was run against this codebase on 2026-09-03. Every row is either backed
 by an executed check or marked blocked with the reason — nothing here is a "works" claim.

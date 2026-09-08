@@ -1,0 +1,54 @@
+# PROOF LEDGER
+
+The single record of what is actually proven. A row is `VERIFIED` **only** with a command that was
+executed and its result. `UNTESTED · PARTIAL · FAILED · VERIFIED · REGRESSED`. Never upgrade a row
+because code exists.
+
+## Suite runs (executed 2026-09-08, this session, on `main`)
+
+| Suite | Command | Result | Status |
+|---|---|---|---|
+| Backend | `cd backend && node --test test/*.test.js` | 132 pass / 0 fail | `VERIFIED` |
+| Contracts | `cd contracts && forge test` | 43 pass / 0 fail (incl. 3 invariants × 256 runs) | `VERIFIED` |
+| iOS unit | `xcodebuild … -only-testing:PrismTests test` | 89 pass / 0 fail | `VERIFIED` |
+
+> These counts supersede the older `31 / 41 / 2` figures still printed in `README.md` (see
+> [`FAILURES.md`](FAILURES.md) F-3 — stale README proof table).
+
+## Continuity claims
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| CONT-1 | Legitimate alias change bumps `aliasVersion`, keeps account | `VERIFIED` | `security-boundaries.test.js` |
+| CONT-2 | Stale resolution invalidated after rotation | `VERIFIED` | `security-boundaries.test.js`; `assertResolution` 409 |
+| CONT-3 | Different-identity alias visibly blocked/reviewed (not redirected) | `PARTIAL` | server 409 tested; **iOS `IdentityTrustStore.warning` untested** |
+
+## Security / privacy / money-truth
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| PRIV-1 | No phone (raw/derived) in calldata/events/storage/proof/logs | `VERIFIED` | `PrismPrivacy.t.sol`, `phone-leak-audit.test.js`, `aurora-privacy.test.js` |
+| AUTH-1 | Mutation after signing rejected (recipient/amount/route bound) | `VERIFIED` | `PrismPaymentRouter.t.sol`, `PrismRouterExternalRecipient.t.sol`, `mutation-audit.test.js` |
+| AUTH-2 | Replay rejected (single-use nonce) | `VERIFIED` | `testReplayRejected`, `mutation-audit.test.js` MUT-08/16 |
+| MONEY-1 | Submission ≠ completion; UI-terminal only after reconciled receipt | `VERIFIED` | `mutation-audit.test.js` MUT-15/16 |
+| MONEY-2 | Backend not the canonical balance authority | `PARTIAL` | architectural; no explicit negative test |
+| GAS-1 | Payer with MON = 0 can pay | `PARTIAL` | `proof/ZERO_MON_PROOF.md` (local); not re-run on testnet this phase |
+
+## On-chain / live (NOT re-verified this phase — do not upgrade without a tx hash)
+
+| ID | Claim | Status | Note |
+|---|---|---|---|
+| CHAIN-1 | Contracts deployed to Monad testnet | `PARTIAL` | `deployments/monad-testnet.json` present (router/vault); deployment not re-executed this phase |
+| CHAIN-2 | End-to-end payment / claim / refund on Monad | `UNTESTED` (this phase) | prior-session tx hashes are **not authoritative** here; re-run and record the hash before marking `VERIFIED` |
+| CHAIN-3 | Envio indexing real events | `UNTESTED` | needs a hosted indexer + a real event |
+| CHAIN-4 | Zero-MON payment demonstrated on testnet | `UNTESTED` | requires a live gasless tx |
+
+## UX
+
+| ID | Claim | Status | Note |
+|---|---|---|---|
+| UX-1 | Cold user completes a normal payment without coaching (thesis #12) | `UNTESTED` | no usability evidence; needs an observed cold run / recording |
+
+## How to add a row
+State the exact command, run it, paste the pass/fail counts (or tx hash), then set the status. If a
+prior claim's enforcement code changed, set it to `REGRESSED` until re-run.

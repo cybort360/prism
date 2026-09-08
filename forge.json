@@ -1,0 +1,38 @@
+{
+  "forgeVersion": "1.4",
+  "project": "PRISM",
+  "network": "Monad",
+  "networks": { "testnet": { "chainId": 10143 }, "mainnet": { "chainId": 143 } },
+  "platform": "iPhone / SwiftUI",
+  "track": "Consumer Products & Payments",
+  "currentPhase": "continuity-vertical-slice",
+  "productSentence": "Send money to people, not wallet addresses.",
+  "loadBearingMechanism": "Prism Continuity",
+  "loadBearingStatement": "Human identifiers are mutable reachability routes, not financial identities or spending authority.",
+  "criticalInvariant": "Reachability may change without silently changing recipient identity. A legitimate alias change that still resolves to the same PrismIdentity preserves continuity; an alias that now resolves to a different PrismIdentity must never silently redirect a payment — it is visibly blocked/reviewed as an identity discontinuity.",
+  "canonicalModel": {
+    "howIAmFound": "phone / @handle / QR / link",
+    "whoIAm": "persistent PrismIdentity",
+    "whoMayAuthorizeMyMoney": "device passkey → Mera-derived secp256k1 account (see ARCHITECTURE.md — NOT an ERC-4337 smart account in the current build)",
+    "whereMyMoneyLives": "Monad account (Mera secp256k1 EOA holding USDC)"
+  },
+  "criticalTestCommands": {
+    "backend": "cd backend && node --test test/*.test.js",
+    "contracts": "cd contracts && forge test",
+    "ios": "cd ios && xcodegen generate && xcodebuild -scheme Prism -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:PrismTests test",
+    "all": "make test"
+  },
+  "claimStatuses": ["UNTESTED", "PARTIAL", "FAILED", "VERIFIED", "REGRESSED"],
+  "knownProofClaims": [
+    { "id": "CONT-1", "claim": "A legitimate alias change (phone rotation) increments aliasVersion but does not change the account", "status": "VERIFIED", "evidence": "backend/test/security-boundaries.test.js — 'phone rotation increments alias version without changing account'" },
+    { "id": "CONT-2", "claim": "A resolution issued before rotation is invalidated (stale resolution unusable)", "status": "VERIFIED", "evidence": "backend/test/security-boundaries.test.js — 'phone rotation invalidates the previous resolution version'; paymentService.assertResolution 409 on aliasVersion/account mismatch" },
+    { "id": "CONT-3", "claim": "An alias resolving to a different PrismIdentity/account is visibly blocked for review, never silently redirected", "status": "PARTIAL", "evidence": "iOS IdentityTrustStore.warning + IdentityChangeReviewView (code present, no iOS unit test); backend assertResolution blocks a changed account at settlement" },
+    { "id": "PRIV-1", "claim": "No raw or phone-derived value appears in calldata, events, storage, proof, or logs", "status": "VERIFIED", "evidence": "contracts/test/PrismPrivacy.t.sol; backend/test/phone-leak-audit.test.js; backend/test/aurora-privacy.test.js" },
+    { "id": "AUTH-1", "claim": "Recipient/amount/route are bound in the signed authorization; mutation after signing is rejected", "status": "VERIFIED", "evidence": "contracts/test/PrismRouterExternalRecipient.t.sol, PrismPaymentRouter.t.sol (testModified*/testReplayRejected); backend mutation-audit" },
+    { "id": "MONEY-1", "claim": "Submission is never treated as completion; UI-terminal only after a reconciled Monad receipt", "status": "VERIFIED", "evidence": "backend/test/mutation-audit.test.js MUT-15/16; PaymentCoordinator polls backend 'completed'" },
+    { "id": "GAS-1", "claim": "A payer holding MON = 0 can pay (relayer sponsors gas)", "status": "PARTIAL", "evidence": "proof/ZERO_MON_PROOF.md (local); live testnet path deployed, end-to-end zero-MON tx not re-verified this phase" },
+    { "id": "SUITE-1", "claim": "Backend / contracts / iOS suites green", "status": "VERIFIED", "evidence": "backend 132, contracts 43, iOS 89 — executed on main this session; re-run with criticalTestCommands" }
+  ],
+  "sourceOfTruth": "Repository files under /forge and the test suites. Prior chat summaries are NOT authoritative.",
+  "deployment": { "monadTestnet": "deployments/monad-testnet.json (router 0x423a…62b7, vault 0xBe3D…Eae3)" }
+}
