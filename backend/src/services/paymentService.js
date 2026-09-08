@@ -524,6 +524,24 @@ export class PaymentService {
     return record;
   }
 
+  /**
+   * Any operation (payment, claim funding/collection/refund) for the canonical proof surface,
+   * gated to a caller who owns/can see it. Reconciles live chain state first so the proof reflects
+   * the latest confirmation, then returns the raw record for ProofService to assemble evidence from.
+   */
+  async proofOperation(operationId, actorPrismId) {
+    let record = this.store.read().operations[operationId];
+    if (!record) throw httpError(404, 'operation not found');
+    const owner = record.intent?.senderPrismId ?? record.intent?.recipientPrismId;
+    if (actorPrismId && owner && owner !== actorPrismId) throw httpError(403, 'operation belongs to another caller');
+    try { await this.reconcile(operationId, actorPrismId); } catch { /* proof reflects last-known state on read failure */ }
+    return this.store.read().operations[operationId];
+  }
+
+  /** Read-only accessors ProofService uses to assemble evidence without reaching into the store. */
+  identity(prismId) { return this.identityService.get(prismId); }
+  claim(claimId) { return claimId ? this.store.read().claims[claimId] : null; }
+
   _paymentAmount(value) {
     if (!/^\d+$/.test(String(value)) || BigInt(value) <= 0n) throw new Error('amount must be positive');
     if (BigInt(value) > this.config.limits.maxPaymentAtomic) throw new Error('amount exceeds Prism payment limit');

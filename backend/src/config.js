@@ -76,7 +76,9 @@ export const config = {
     // Isolated secp256k1 key that authorizes pre-user claim collection (KMS/HSM in production).
     claimAuthorizerPrivateKey: env('CLAIM_AUTHORIZER_PRIVATE_KEY'),
     // Alchemy webhook (Address Activity / Mined Transaction) HMAC signing key for fast live confirmation.
-    alchemyWebhookSigningKey: env('ALCHEMY_WEBHOOK_SIGNING_KEY')
+    alchemyWebhookSigningKey: env('ALCHEMY_WEBHOOK_SIGNING_KEY'),
+    // Public block explorer base for judge-inspectable transaction links.
+    explorerUrl: env('MONAD_EXPLORER_URL', 'https://testnet.monadexplorer.com')
   },
   // The developer/judge proof surface is enabled outside production, or explicitly via PROOF_ENABLED.
   proofEnabled: env('NODE_ENV', 'development') !== 'production' || env('PROOF_ENABLED') === 'true',

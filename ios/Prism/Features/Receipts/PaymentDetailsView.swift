@@ -119,7 +119,7 @@ struct PaymentDetailsView: View {
           .overlay(Image(systemName: "checkmark.seal").foregroundStyle(PrismTheme.mintDeep))
         VStack(alignment: .leading, spacing: 2) {
           Text("Payment Proof").font(PrismTheme.body(14, weight: .semibold)).foregroundStyle(PrismTheme.ink)
-          Text("See how this payment was resolved and verified").font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted)
+          Text("See how Prism verified this payment").font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted)
         }
         Spacer()
         Image(systemName: "arrow.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(PrismTheme.faint)

@@ -143,6 +143,12 @@ final class PrismAPI: @unchecked Sendable {
     return try await api.request("/v1/payments/\(encoded)/canonical")
   }
 
+  /// The canonical, evidence-backed Payment Proof for any operation the caller owns.
+  func canonicalProof(_ id: String) async throws -> PrismPaymentProof {
+    let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+    return try await api.request("/v1/payments/\(encoded)/proof")
+  }
+
   func activity() async throws -> [ActivityRecord] { try await api.request("/v1/activity") }
   func requests() async throws -> [PaymentRequestRecord] { try await api.request("/v1/requests") }
 

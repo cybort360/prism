@@ -34,7 +34,7 @@ const requestService = new RequestService({ store, identityService, config });
 const claimService = new ClaimService({ store, config, identityService });
 const paymentService = new PaymentService({ store, config, identityService, claimService, resolverService, requestService });
 const activityService = new ActivityService({ store, identityService });
-const proofService = new ProofService({ paymentService });
+const proofService = new ProofService({ paymentService, identityService, config });
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -139,6 +139,11 @@ route('GET', '/v1/payments/:id/canonical', async ({ user, params }) => {
   await paymentService.reconcile(params.id, user.prismId).catch(() => {});
   return paymentService.canonicalFor(params.id, user.prismId);
 }, true);
+
+// Canonical Payment Proof: typed, evidence-backed inspectability for one operation the caller owns.
+// The paymentId must map to a Prism operation visible to the authenticated user (never a raw,
+// user-supplied tx hash) — ProofService assembles evidence, the endpoint never trusts client input.
+route('GET', '/v1/payments/:id/proof', async ({ user, params }) => proofService.canonical(params.id, user.prismId), true);
 
 // --- claims (send before signup) --------------------------------------------
 route('POST', '/v1/claims/prepare', async ({ user, body }) => {
