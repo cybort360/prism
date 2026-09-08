@@ -171,6 +171,10 @@ struct PaymentDisplay {
       return [("Claim opened", 1), ("Recipient verified", 2), ("You approved", 3), ("Claimed", 4), ("Confirmed on Monad", 6), ("Delivered", 8)]
     case .refund:
       return [("Refund created", 1), ("Submitted", 4), ("Confirmed on Monad", 6), ("Returned", 8)]
+    case .crossChainSend:
+      // Stops at "Sent from Monad". Delivery happens on another chain and is tracked by the route,
+      // so this screen must not imply it — see AuroraRouteDisplay for that half.
+      return [("Payment created", 1), ("You approved", 3), ("Submitted", 4), ("Sent from Monad", 6)]
     default:
       let verified = payment.kind == .requestPayment ? "Request matched" : "\(shortName(counterparty)) verified"
       return [("Payment created", 1), (verified, 2), ("You approved", 3), ("Submitted", 4), ("Confirmed on Monad", 6), ("Delivered", 8)]
@@ -225,7 +229,10 @@ struct PaymentDisplay {
   // MARK: technical details (collapsed; never secrets)
 
   var technicalRows: [PrismDetailRow] {
-    var rows: [PrismDetailRow] = [.init(label: "Network", value: "Monad")]
+    // Monad is where Prism settles, but it is no longer the only network a payment touches: a
+    // cross-chain send leaves from Monad and lands elsewhere, and the row says so rather than
+    // stating a single network as if it were the whole story.
+    var rows: [PrismDetailRow] = [.init(label: "Network", value: networkLabel)]
     if let tx = payment.transactionHash { rows.append(.init(label: "Transaction", value: shortRef(tx))) }
     if let b = payment.blockNumber { rows.append(.init(label: "Block", value: b)) }
     rows.append(.init(label: "Settlement", value: payment.isSettled ? "Confirmed" : (isFailed ? "Failed" : "Pending")))
@@ -233,6 +240,9 @@ struct PaymentDisplay {
   }
 
   // MARK: helpers
+
+  /// Cross-chain sends leave Monad; everything else begins and ends there.
+  var networkLabel: String { payment.kind == .crossChainSend ? "Monad → another network" : "Monad" }
 
   private func shortName(_ p: PrismParty) -> String { p.displayName == "You" ? "You" : (p.displayName.split(separator: " ").first.map(String.init) ?? p.displayName) }
   func shortRef(_ s: String) -> String { s.count > 14 ? "\(s.prefix(6))…\(s.suffix(4))" : s }

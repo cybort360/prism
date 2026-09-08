@@ -30,6 +30,9 @@ final class PrismAPI: @unchecked Sendable {
   struct FundClaimBody: Encodable { let signature: String }
   struct ClaimIntentBody: Encodable { let recipientIntentSignature: String }
   struct AuroraDepositAddressBody: Encodable { let depositChain: String }
+  struct AuroraQuoteBody: Encodable { let destinationChain: String; let destinationAsset: String; let destinationAddress: String; let amountAtomic: String; let contractAddress: String? }
+  struct AuroraPrepareBody: Encodable { let routeId: String }
+  struct AuroraSubmitBody: Encodable { let routeId: String; let prismSignature: String; let tokenSignature: String }
 
   func config() async throws -> PrismNetworkConfig { try await api.request("/v1/config") }
   func runtimeConfig() async throws -> PrismNetworkConfig { try await config() }
@@ -178,6 +181,45 @@ final class PrismAPI: @unchecked Sendable {
 
   /// USDC that has landed at the user's account on Monad, from the activity index.
   func auroraArrivals() async throws -> AuroraArrivalsResponse { try await api.request("/v1/aurora/arrivals") }
+
+  /// Price a route out of USDC on Monad. Nothing is committed — this is what the user reads before
+  /// they approve anything.
+  func quoteAuroraSend(destinationChain: String, destinationAsset: String, destinationAddress: String, amountAtomic: String, contractAddress: String? = nil) async throws -> AuroraRoute {
+    try await api.send("/v1/aurora/quote", body: AuroraQuoteBody(
+      destinationChain: destinationChain, destinationAsset: destinationAsset,
+      destinationAddress: destinationAddress, amountAtomic: amountAtomic, contractAddress: contractAddress))
+  }
+
+  /// Freeze the quote into a signable payment. Idempotent server-side: a retry returns the same
+  /// payload rather than minting a second envelope against one quote.
+  func prepareAuroraSend(routeId: String) async throws -> PreparedAuroraSend {
+    try await api.send("/v1/aurora/send/prepare", body: AuroraPrepareBody(routeId: routeId))
+  }
+
+  /// Sign both payloads with the Mera account and relay the Monad leg.
+  ///
+  /// This is the same pair of signatures a direct payment uses — the difference is entirely in what
+  /// the envelope's opaque hash slot binds, which for a route is the destination chain, asset,
+  /// recipient and guaranteed minimum. One approval therefore authorizes the whole promise.
+  @MainActor
+  func submitAuroraSend(_ prepared: PreparedAuroraSend) async throws -> OperationResult {
+    try await mera.beginSession(.payments)
+    let prismSignature = try await mera.signTypedDataHex(prepared.typedData.envelope.jsonData())
+    let tokenSignature = try await mera.signTypedDataHex(prepared.typedData.tokenAuthorization.jsonData())
+    return try await api.send(
+      "/v1/aurora/send/submit",
+      body: AuroraSubmitBody(routeId: prepared.route.routeId, prismSignature: prismSignature, tokenSignature: tokenSignature),
+      idempotencyKey: prepared.paymentId)
+  }
+
+  func auroraRoutes() async throws -> AuroraRoutesResponse { try await api.request("/v1/aurora/routes") }
+
+  /// Reconcile both legs. A completed `payment` means the money left the account; only
+  /// `route.state == .delivered` means it arrived.
+  func auroraRouteStatus(_ routeId: String) async throws -> AuroraRouteStatus {
+    let encoded = routeId.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? routeId
+    return try await api.request("/v1/aurora/routes/\(encoded)")
+  }
   func requests() async throws -> [PaymentRequestRecord] { try await api.request("/v1/requests") }
 
   func draftRequest(payerPrismId: String, amountAtomic: String, memo: String) async throws -> RequestDraftResponse {

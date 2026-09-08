@@ -36,7 +36,7 @@ const requestService = new RequestService({ store, identityService, config });
 const claimService = new ClaimService({ store, config, identityService });
 const paymentService = new PaymentService({ store, config, identityService, claimService, resolverService, requestService });
 const activityService = new ActivityService({ store, identityService });
-const auroraService = new AuroraService({ store, config, identityService });
+const auroraService = new AuroraService({ store, config, identityService, paymentService });
 const proofService = new ProofService({ paymentService, identityService, config });
 
 // Replay/idempotency guard for webhook event ids.
@@ -185,6 +185,35 @@ route('GET', '/v1/aurora/deposits', async ({ user }) => auroraService.listDeposi
 route('GET', '/v1/aurora/arrivals', async ({ user }) => auroraService.arrivals(user.prismId), true);
 route('GET', '/v1/aurora/deposits/:address', async ({ user, params }) =>
   auroraService.refreshDeposit({ prismId: user.prismId, depositAddress: params.address }), true);
+
+// --- Aurora Intents: send / spend to any chain -------------------------------
+// USDC on Monad out to any asset on any chain. The Monad leg is an ordinary router settlement whose
+// recipient is Aurora's deposit address; the whole route is bound into the envelope's opaque hash,
+// so the payer's one signature authorizes the destination and not merely the address in between.
+route('POST', '/v1/aurora/quote', async ({ user, body }) => {
+  rateLimit(`aurora-quote:${user.prismId}`, 120);
+  return auroraService.quoteSend({
+    prismId: user.prismId,
+    destinationChain: body.destinationChain,
+    destinationAsset: body.destinationAsset,
+    destinationAddress: body.destinationAddress,
+    amountAtomic: body.amountAtomic,
+    contractAddress: body.contractAddress ?? null
+  });
+}, true);
+route('POST', '/v1/aurora/send/prepare', async ({ user, body }) => {
+  rateLimit(`aurora-prepare:${user.prismId}`, 60);
+  return auroraService.prepareSend({ prismId: user.prismId, routeId: body.routeId });
+}, true);
+route('POST', '/v1/aurora/send/submit', async ({ user, body, idempotencyKey }) => {
+  rateLimit(`aurora-submit:${user.prismId}`, 60);
+  requireSig(body.prismSignature, 'prismSignature'); requireSig(body.tokenSignature, 'tokenSignature');
+  return withIdempotency(store, { scope: 'aurora-send-submit', key: idempotencyKey, actor: user.prismId, fingerprint: fingerprint(body.routeId, body.prismSignature, body.tokenSignature) }, () =>
+    auroraService.submitSend({ prismId: user.prismId, routeId: body.routeId, prismSignature: body.prismSignature, tokenSignature: body.tokenSignature }));
+}, true);
+route('GET', '/v1/aurora/routes', async ({ user }) => auroraService.listRoutes(user.prismId), true);
+route('GET', '/v1/aurora/routes/:id', async ({ user, params }) =>
+  auroraService.reconcileRoute({ prismId: user.prismId, routeId: params.id }), true);
 
 // --- infrastructure: Alchemy webhook, dev proof surface, observability -------
 

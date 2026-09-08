@@ -125,6 +125,81 @@ struct AuroraDepositsResponse: Codable, Equatable {
   let deposits: [AuroraDeposit]
 }
 
+
+// MARK: - Routes (send / spend to anywhere)
+
+/// A priced route out of USDC on Monad. `minAmountOut` is the guaranteed floor the user approves —
+/// `amountOut` is the expectation, and the two are never conflated in the UI.
+struct AuroraRoute: Codable, Identifiable, Equatable {
+  let routeId: String
+  let state: AuroraRouteState
+  let lastStatus: String?
+  let amountInAtomic: String
+  let origin: AuroraRouteEndpoint
+  let destination: AuroraRouteDestination
+  let depositAddress: String?
+  let amountOut: String?
+  let minAmountOut: String?
+  let timeEstimateSeconds: Int?
+  let quoteDeadline: String
+  /// Aurora's own signature over the quote. Kept so "this deposit address came from this signed
+  /// quote" is checkable rather than merely asserted by the backend.
+  let quoteSignature: String?
+  let correlationId: String?
+  let paymentId: String?
+  let createdAt: String
+  let history: [AuroraDepositHistoryEntry]
+  /// False for a preview (dry) quote: real pricing, but no deposit address, so it cannot be funded.
+  let fundable: Bool
+  let settlementAvailable: Bool
+  let notice: AuroraNotice?
+
+  var id: String { routeId }
+}
+
+struct AuroraRouteEndpoint: Codable, Equatable {
+  let chain: String
+  let assetId: String
+  let symbol: String
+  let decimals: Int
+}
+
+struct AuroraRouteDestination: Codable, Equatable {
+  let chain: String
+  let chainLabel: String
+  let address: String
+  let assetId: String
+  let symbol: String
+  let decimals: Int
+  /// False when Prism can check the address's shape but not fully verify it for that chain. The user
+  /// is told, rather than left to assume the address was proven good.
+  let addressVerified: Bool
+}
+
+struct AuroraRoutesResponse: Codable, Equatable {
+  let mode: String
+  let settlementAvailable: Bool
+  let notice: AuroraNotice?
+  let routes: [AuroraRoute]
+}
+
+/// A prepared cross-chain send: the signable payloads plus the route they are bound to.
+struct PreparedAuroraSend: Codable {
+  let paymentId: String
+  let state: String
+  let expiresAt: String
+  let typedData: TypedDataPair
+  let route: AuroraRoute
+}
+
+/// Both legs, reconciled independently. A completed `payment` means the money left the account; it
+/// does NOT mean the route delivered, and the two are never collapsed.
+struct AuroraRouteStatus: Codable {
+  let route: AuroraRoute
+  let payment: OperationStatus?
+  let statusKnown: Bool?
+}
+
 // MARK: - Arrivals
 
 /// USDC that has landed at the user's account on Monad, from the Envio index.
@@ -197,6 +272,41 @@ extension AuroraArrival {
   static func fx(amountAtomic: String = "50000000", txHash: String = "0xaa") -> AuroraArrival {
     AuroraArrival(from: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", amountAtomic: amountAtomic,
                   symbol: "USDC", txHash: txHash, blockNumber: 42, timestamp: 1788793448, source: "monad")
+  }
+}
+
+extension AuroraRoute {
+  static func fixture(
+    state: AuroraRouteState = .quoted,
+    lastStatus: String? = nil,
+    amountInAtomic: String = "50000000",
+    destinationChain: String = "arb",
+    destinationChainLabel: String = "Arbitrum",
+    destinationSymbol: String = "ETH",
+    destinationAddress: String = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+    addressVerified: Bool = true,
+    depositAddress: String? = "0x9f2b41c7d8e30a5b6c1f4907e2d83b5a6c7d8e90",
+    amountOut: String? = "20100000000000000",
+    minAmountOut: String? = "19899000000000000",
+    timeEstimateSeconds: Int? = 45,
+    quoteDeadline: String = "2036-09-08T12:03:00.000Z",
+    history: [AuroraDepositHistoryEntry] = [],
+    fundable: Bool = true,
+    settlementAvailable: Bool = true,
+    notice: AuroraNotice? = nil
+  ) -> AuroraRoute {
+    AuroraRoute(
+      routeId: "route_fx", state: state, lastStatus: lastStatus, amountInAtomic: amountInAtomic,
+      origin: AuroraRouteEndpoint(chain: "monad", assetId: "nep245:monad-usdc", symbol: "USDC", decimals: 6),
+      destination: AuroraRouteDestination(
+        chain: destinationChain, chainLabel: destinationChainLabel, address: destinationAddress,
+        assetId: "nep141:arb.omft.near", symbol: destinationSymbol, decimals: 18,
+        addressVerified: addressVerified),
+      depositAddress: depositAddress, amountOut: amountOut, minAmountOut: minAmountOut,
+      timeEstimateSeconds: timeEstimateSeconds, quoteDeadline: quoteDeadline,
+      quoteSignature: "sig", correlationId: "corr", paymentId: nil,
+      createdAt: "2036-09-08T12:00:00.000Z", history: history, fundable: fundable,
+      settlementAvailable: settlementAvailable, notice: notice)
   }
 }
 #endif

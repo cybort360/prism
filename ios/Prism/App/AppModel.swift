@@ -18,6 +18,7 @@ final class AppModel: ObservableObject {
   @Published var sendPickerPresented = false
   @Published var requestPickerPresented = false
   @Published var addMoneyPresented = false
+  @Published var sendAnywherePresented = false
   @Published var receivePresented = false
   @Published var scanPresented = false
   @Published var toast: String?

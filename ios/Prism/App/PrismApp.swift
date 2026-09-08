@@ -64,6 +64,7 @@ struct MainShell: View {
     .sheet(item: $model.presentClaimDetail) { item in ClaimDetailView(claim: item.claim) }
     .sheet(item: $model.presentRequestDetail) { item in RequestDetailView(request: item.request) }
     .sheet(isPresented: $model.sendPickerPresented) { PersonPickerView(mode: .send) }
+    .sheet(isPresented: $model.sendAnywherePresented) { SendToAnywhereView() }
     .sheet(isPresented: $model.requestPickerPresented) { PersonPickerView(mode: .request) }
     .sheet(isPresented: $model.addMoneyPresented) { AddMoneyView() }
     .sheet(isPresented: $model.receivePresented) { ReceiveView() }

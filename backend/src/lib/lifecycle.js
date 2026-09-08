@@ -188,6 +188,7 @@ export function paymentKind(op) {
     case 'claim-funding': return 'claimFunding';
     case 'claim-collection': return 'claimSettlement';
     case 'claim-refund': return 'refund';
+    case 'aurora-send': return 'crossChainSend';
     default: break;
   }
   const i = op.intent ?? {};

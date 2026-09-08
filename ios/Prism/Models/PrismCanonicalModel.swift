@@ -6,10 +6,24 @@ import Foundation
 
 enum PrismPaymentKind: String, Codable {
   case direct, requestPayment, qrPayment, linkPayment, claimFunding, claimSettlement, refund
+  /// USDC on Monad routed out to another chain and asset. The Monad leg is an ordinary settlement;
+  /// what makes it a different kind is that delivery happens off this chain.
+  case crossChainSend
+
+  init(from decoder: Decoder) throws {
+    let raw = try decoder.singleValueContainer().decode(String.self)
+    self = PrismPaymentKind(rawValue: raw) ?? .direct
+  }
 }
 
 enum PrismEntryMethod: String, Codable {
   case contact, phone, handle, qr, paymentLink, request, claim, internalRecovery
+  case anyChain
+
+  init(from decoder: Decoder) throws {
+    let raw = try decoder.singleValueContainer().decode(String.self)
+    self = PrismEntryMethod(rawValue: raw) ?? .contact
+  }
 }
 
 enum PrismPaymentDirection: String, Codable { case sent, received }

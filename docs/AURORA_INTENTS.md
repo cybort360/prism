@@ -1,11 +1,11 @@
-# Aurora Intents — receive from any chain
+# Aurora Intents — send, spend and receive from any chain
 
 Prism holds one asset on one network: USDC on Monad. That is deliberate — it is what lets the app
 hide chains, gas, and token selection from the person using it. Aurora Intents is how value crosses
 into and out of that without reintroducing any of it.
 
-This document covers **Phase 1: receive from any chain**. Send/spend to any chain is designed but
-not yet built; the closing section says what it will reuse.
+This document covers both directions: **receive from any chain** (any token, any network → USDC on
+Monad) and **send/spend to any chain** (USDC on Monad → any token on any network, to any address).
 
 ## What Aurora is
 
@@ -16,8 +16,8 @@ bridge contract to integrate, no liquidity to hold, and no custody on Prism's si
 
 Two products exist. Prism uses the first:
 
-- **Intents Deposits** — live, permissionless, API keys issued immediately. This is what Phase 1 is
-  built on.
+- **Intents Deposits** — live, permissionless, API keys issued immediately. Despite the name it is a
+  general bidirectional swap router, so it carries both directions on its own.
 - **Intents Connect** — richer (contract calls on the destination chain via intermediary accounts,
   which is what "deposit into a pool on Arbitrum and take the yield back on Monad" would need). Its
   API is pre-release and access is email-gated at contact@aurora.dev. **Deliberately not integrated
@@ -98,8 +98,8 @@ any chain / any token
 ```
 
 Prism signs nothing. The deposit address is derived from the user's own account, so there is no
-authorization for Prism to give — which is why `AuroraService` never touches the Mera bridge and why
-this phase needed no envelope, no contract change, and no new signing primitive.
+authorization for Prism to give — which is why the inbound path never touches the Mera bridge and
+needs no envelope and no signature at all.
 
 ### Attribution and the indexer
 
@@ -193,7 +193,8 @@ Fees split 60/40 with Aurora, with a floor: `Aurora fee = max(2bps, 40% of integ
 ## Testing
 
 ```bash
-cd backend && node --test test/aurora-receive.test.js test/aurora-privacy.test.js
+cd backend && node --test test/aurora-*.test.js
+cd contracts && forge test --match-path 'test/PrismRouterExternalRecipient.t.sol'
 ```
 
 `src/aurora/mockAuroraClient.js` is the substitutable fake, injected with
@@ -205,17 +206,98 @@ its own: a test that asserts a terminal state has to drive it there explicitly.
 The iOS presentation logic (`AuroraDepositDisplay`) is a plain struct with no SwiftUI, covered by
 `PrismTests/AuroraDepositDisplayTests.swift`.
 
-## Phase 2 — send & spend to anywhere (designed, not built)
+## Sending and spending
 
-The mechanism needs **no contract change**. `PrismPaymentRouter.settle()` pulls USDC via ERC-3009
-and forwards to `env.recipient`, and `env.resolutionHash` is an opaque `bytes32` the contract only
-re-emits. So an outbound route is an ordinary Prism payment where:
+Send and Spend are **one engine, two framings** — paying a person or paying a merchant differ only
+in how the screen reads, so there is one flow, one service, one set of tests.
 
-- `env.recipient` = Aurora's quoted `depositAddress` (an EVM address on Monad)
-- `env.resolutionHash` = a `routeHash` binding `{ routeId, depositAddress, destinationChain,
-  destinationAssetId, destinationRecipient, minAmountOut, quoteDeadline }`
+### How it works
 
-That extends key decision #10 across the bridge: the user's one signature authorizes "send N USDC to
-this deposit address **for this exact route**", and a backend that swapped the destination after
-signing produces a different hash and invalidates the envelope. Same relayer, same gasless path,
-same `PaymentSettled` event the indexer already handles, and no indexer change for the outbound leg.
+```
+USDC on Monad
+  -> POST /api/quote           (originAsset = Monad USDC, destinationAsset = <token>@<chain>)
+  -> quote.depositAddress      an ordinary EVM address ON MONAD
+  -> PrismPaymentRouter.settle(recipient = depositAddress)   the existing gasless path
+  -> Aurora converts and delivers on the destination chain
+```
+
+Because `depositType: ORIGIN_CHAIN` and the origin asset is on Monad, Aurora hands back a Monad
+address. Paying it is an ordinary Prism settlement — so **no Solidity was added for this feature**.
+The money leg reuses `submitPayment`, the relayer, `reconcile`, ambiguous-broadcast recovery, and
+idempotency exactly as a direct payment does. `paymentService.prepareExternalSend` is the only new
+primitive, and it exists because there is no Prism identity on the far side to resolve.
+
+`refundTo` is the sender's own Prism account, so a failed route returns their USDC to the balance
+they already have rather than somewhere they have to go and retrieve it.
+
+### `routeHash` — the binding that makes it safe
+
+On its own the envelope would bind only "send N USDC to this address", which says nothing about
+where the money is ultimately going. `routeHash` (in `src/chain/eth.js`, beside `resolutionHash`)
+folds the rest of the promise into the same opaque envelope slot:
+
+```
+{ routeId, depositAddress, destinationChain, destinationAssetId,
+  destinationRecipient, minAmountOut, quoteDeadline }
+```
+
+The payer's one Face ID approval therefore authorizes the whole deal. If the backend — or anyone who
+compromised it — rewrote the destination chain, the token, the recipient, or the guaranteed minimum
+after the user signed, the recomputed hash differs, `ecrecover` returns a different signer, and
+`settle()` reverts. This is decision #10 extended across the bridge rather than weakened for it, and
+`contracts/test/PrismRouterExternalRecipient.t.sol` pins it at the contract level.
+
+Every string field is hashed, so no destination address, chain name, or asset id reaches the chain in
+the clear. The address is lowercased before hashing, so the casing a user happened to paste cannot
+change the binding.
+
+The residual trust is that `depositAddress` really came from Aurora, which cannot be proven on-chain.
+Aurora's quote `signature` and `correlationId` are stored on the route and exposed, so "this address
+came from this signed quote" is checkable after the fact rather than asserted.
+
+### Two independent legs
+
+A confirmed Monad transaction is **not** delivery. The payment operation and the route are separate
+records with separate state machines, and neither derives its state from the other:
+`reconcileRoute` reconciles the Monad leg from chain truth, then asks Aurora about the routed leg,
+and advances the route only on what Aurora actually reports.
+
+### Guards worth knowing about
+
+- **The quote deadline is re-checked at submit**, not only at prepare. A user can sit on the approval
+  sheet; funding a lapsed quote would send real money into a route Aurora may no longer honour at the
+  price they were shown. A stale quote is refused and the route marked `expired` — never silently
+  re-quoted.
+- **Preparing twice resumes the same payment.** A second prepare would otherwise mint a second
+  signable envelope against one quote, and only one of them is the payment anyone is tracking.
+- **The destination address is validated before quoting**, so a malformed address is caught while it
+  is still cheap to fix rather than after a signature exists. Chains Prism cannot fully verify report
+  `addressVerified: false`, and the app warns rather than implying the address was proven good.
+- **In preview mode a route is priced but not fundable.** `dry: true` means Aurora issues no deposit
+  address, so `prepareSend` refuses with that reason and no payment operation is created. The app
+  shows the real price with approval blocked and the reason named.
+
+### Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/v1/aurora/quote` | price a route; commits nothing |
+| `POST` | `/v1/aurora/send/prepare` | freeze the quote into signable payloads |
+| `POST` | `/v1/aurora/send/submit` | verify both signatures, relay the Monad leg |
+| `GET` | `/v1/aurora/routes` | the caller's routes |
+| `GET` | `/v1/aurora/routes/:id` | reconcile both legs |
+
+No indexer change was needed for the outbound leg: it emits the same `PaymentSettled` event, already
+indexed as a `Payment` and an `AccountActivity` row.
+
+### In the app
+
+`SendToAnywhereView`, reached from the send picker — paying someone on another network is still
+"send money", so it is not hidden behind a separate entry point. `PaymentCoordinator.sendCrossChain`
+mirrors `pay` state-for-state, so `OperationStateOverlay` works unchanged, and
+`MeraAccountService` needed **no change**: `signTypedData` is already generic EIP-712 and the domain
+is Monad's either way.
+
+The user is always shown `minAmountOut` ("At least 0.0199 ETH on Arbitrum"), never the `amountOut`
+forecast. `AuroraRouteDisplay.blockedReason` names every reason approval is unavailable, so the
+button is never merely disabled.
