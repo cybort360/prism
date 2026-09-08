@@ -260,6 +260,14 @@ struct ActivityView: View {
   }
 
   private func open(_ item: ActivityRecord) {
+    // The sender's own still-open claim (waiting or expired) opens the actionable claim detail —
+    // remind the recipient, or return the money after expiry. Everything terminal resolves to the
+    // one canonical PaymentDetailsView.
+    if item.kind == "claim-funding", let id = item.claimId,
+       let claim = claims.first(where: { $0.claimId == id }), claim.status == "funded" {
+      model.presentClaimDetail = ClaimDetailPresentation(claim: claim)
+      return
+    }
     // Every money-movement row opens the one canonical PaymentDetailsView.
     let moneyKinds: Set<String> = ["sent", "received", "claim-funding", "claim-refund", "claim-received"]
     if moneyKinds.contains(item.kind) {

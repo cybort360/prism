@@ -194,8 +194,14 @@ struct ClaimDetailView: View {
     }
   }
 
+  // The canonical operation the SENDER owns for this claim (their funding op, or the refund op) —
+  // never the recipient-owned collection op, which the sender may not read.
   private var deliveredOpId: String? {
-    claim.claimTransactionHash ?? claim.refundTransactionHash
+    switch phase {
+    case .returned: return "claim-refund#\(claim.claimId)"
+    case .delivered: return "claim-funding#\(claim.claimId)"
+    default: return nil
+    }
   }
 
   private var senderName: String {
