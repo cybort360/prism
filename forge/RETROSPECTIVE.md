@@ -28,6 +28,15 @@ entry. Kept honest — the point is to not repeat mistakes.
   Two real completed payments + two `assertResolution` 409s. Backend 132 → 133.
 - CONT-4 recorded `VERIFIED`. INV-C1/C2/C3 now have both unit and end-to-end evidence.
 
+## 2026-09-08 — Steps 3 & 4 done (proof refreshed; judge path dry-run)
+- Refreshed README proof drift (F-3 closed): counts → contracts 43 / backend 133; source-of-truth note
+  points at the ledger.
+- Confirmed deployment with real evidence: live `eth_getCode` on Monad testnet shows router/vault/USDC
+  all deployed (2990 / 5905 / 1798 bytes) → CHAIN-1 `VERIFIED`. Live end-to-end (CHAIN-2) still
+  `UNTESTED` this phase — no tx hash produced, so not claimed (F-4 stays open).
+- Dry-ran the judge path; every command reproduced. Only drift: JUDGE_PATH backend count 132 → 133.
+- Continuity vertical slice: **Definition of Done met.**
+
 ## Process lessons (carry forward)
 - **Regenerate the Xcode project after any merge that adds/removes Swift files.** The Aurora #2 and #3
   merges each broke the iOS build because `xcodegen` wasn't re-run and latent (never-compiled) Swift

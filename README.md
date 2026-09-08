@@ -117,8 +117,8 @@ cp .env.example .env
 forge test
 ```
 
-31 tests across unit, fuzz, privacy, and invariant suites. The vault invariant run (256 runs / 128k calls)
-takes ~2 minutes — that is expected, not a hang.
+43 tests across unit, fuzz, privacy, and invariant suites. The vault invariant run (256 runs / 128k calls)
+takes ~1–2 minutes — that is expected, not a hang.
 
 ### Backend
 
@@ -133,7 +133,7 @@ Twilio Verify, the relayer, the claim authorizer, and the Envio endpoint are act
 environment variables. Without them the server runs explicit dev adapters and never claims a real
 OTP or on-chain settlement occurred.
 
-Run tests: `node --test test/*.test.js` (41 tests).
+Run tests: `node --test test/*.test.js` (133 tests).
 
 ### iOS
 
@@ -178,11 +178,12 @@ make test        # backend + contracts + iOS
 ## Proof status
 
 > **Current source of truth: [`forge/PROOF_LEDGER.md`](forge/PROOF_LEDGER.md).** The dated table below
-> is the original 2026-09-03 hostile audit and is now **stale in places** — suite counts have grown to
-> **backend 132 / contracts 43 / iOS 89**, and a Monad-testnet deployment manifest exists
-> (`deployments/monad-testnet.json`). Live end-to-end on Monad is not re-verified in the current phase;
-> see the ledger and [`forge/FAILURES.md`](forge/FAILURES.md) (F-3, F-4). Nothing is marked verified on
-> the strength of code existing.
+> is the original 2026-09-03 hostile audit and is now **stale in places**. Current, re-executed status:
+> suites **backend 133 / contracts 43 / iOS 95**; the router/vault/USDC are **confirmed deployed** on
+> Monad testnet (live `eth_getCode`, 2026-09-08). Live **end-to-end** payment/claim/refund on Monad is
+> **not re-verified in this phase** (no tx hash produced here — do not read the old "BLOCKED" rows as
+> current). See the ledger and [`forge/FAILURES.md`](forge/FAILURES.md) (F-3, F-4). Nothing is marked
+> verified on the strength of code existing.
 
 A hostile audit (`proof/`) was run against this codebase on 2026-09-03. Every row is either backed
 by an executed check or marked blocked with the reason — nothing here is a "works" claim.

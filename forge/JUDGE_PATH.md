@@ -10,7 +10,7 @@ Read [`PRODUCT.md`](PRODUCT.md) and [`INVARIANTS.md`](INVARIANTS.md). The one cl
 ## 1. Run the suites (evidence, not screenshots)
 ```bash
 make test          # or individually:
-cd backend && node --test test/*.test.js        # expect 132 pass
+cd backend && node --test test/*.test.js        # expect 133 pass
 cd contracts && forge test                       # expect 43 pass (invariants take ~70s)
 cd ios && xcodegen generate && \
   xcodebuild -scheme Prism -destination 'platform=iOS Simulator,name=iPhone 17' \

@@ -8,8 +8,7 @@ optional. Nothing is hidden to make a demo look better.
 | ID | Severity | Gap | Where |
 |---|---|---|---|
 | F-2 | MED | No executed **cold-user** evidence for thesis #12 (a first-time user completing a payment without coaching). UX claim only. | — |
-| F-3 | MED | `README.md` "Proof status" table is **stale**: it prints `31 / 41 / 2` tests and marks deployment / e2e / Envio as BLOCKED. Actual suites are `43 / 132 / 89`, and a testnet deployment manifest exists. Documentation drift, not a code defect. | `README.md` |
-| F-4 | MED | On-chain end-to-end (payment/claim/refund) is **not re-verified in this phase**. Prior-session tx hashes are not authoritative under the FORGE 1.4 source-of-truth rule. | `PROOF_LEDGER.md` CHAIN-2 |
+| F-4 | MED | On-chain end-to-end (payment/claim/refund) is **not re-verified in this phase** — no tx hash produced here. Prior-session tx hashes are not authoritative under the FORGE 1.4 source-of-truth rule. (Deployment itself is now confirmed — see CHAIN-1.) | `PROOF_LEDGER.md` CHAIN-2 |
 | F-5 | LOW | Aurora cross-chain is **preview-only**; live `POST /api/quote` has never been called with a real key (NEAR Intents carries Monad mainnet only; PRISM runs testnet). Honestly labelled in-app. | `docs/AURORA_INTENTS.md` |
 | F-6 | LOW | `INV-M2` (backend not the canonical balance authority) has no explicit negative test. | — |
 
@@ -21,6 +20,10 @@ optional. Nothing is hidden to make a demo look better.
 | A-2 | FORGE 1.4 says money lives in a "Monad **smart account**"; the current build uses a **secp256k1 EOA** (Mera, no bundler). The ERC-4337/P-256 smart-account path is **archived**. | Documented in [`ARCHITECTURE.md`](ARCHITECTURE.md). Adopting a smart account would be a product change, out of scope this phase. |
 
 ## Historical (fixed) — kept for memory
+- **F-3 CLOSED 2026-09-08** — README proof-table drift resolved: quick-start counts refreshed
+  (contracts 43, backend 133), and a source-of-truth note points at `forge/PROOF_LEDGER.md` with the
+  current suite counts and the live-deployment confirmation. The dated 2026-09-03 audit table is kept
+  as a historical snapshot, explicitly labelled stale.
 - **F-1 CLOSED 2026-09-08** — the iOS continuity guard (`IdentityTrustStore.warning`, INV-C3) is now
   unit-tested. `ios/PrismTests/IdentityContinuityTests.swift` (6 tests): silent on an alias-version-only
   change to the same identity/account; fires on a changed `prismId` or account; case-insensitive
