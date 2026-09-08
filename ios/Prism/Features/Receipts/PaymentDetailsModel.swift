@@ -206,6 +206,7 @@ struct PaymentDisplay {
     case .request: return "a request"
     case .claim: return "a claim"
     case .internalRecovery: return "recovery"
+    case .anyChain: return "any chain"
     }
   }
 

@@ -205,7 +205,9 @@ extension PrismPayment {
       createdAt: a.createdAt, authorizedAt: nil, submittedAt: nil, confirmedAt: nil,
       indexedAt: nil, reconciledAt: nil, completedAt: completed ? a.createdAt : nil,
       transactionHash: a.transactionHash, blockNumber: nil, gasSponsored: true,
-      failureCode: a.status.uppercased() == "FAILED" ? "failed" : nil, failureMessage: nil)
+      failureCode: a.status.uppercased() == "FAILED" ? "failed" : nil, failureMessage: nil,
+      // Legacy activity rows carry no cross-chain route; a routed send is projected from its operation.
+      route: nil)
   }
 }
 

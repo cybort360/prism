@@ -26,8 +26,8 @@ final class AuroraRouteDisplayTests: XCTestCase {
     let route = AuroraRoute.fixture(amountOut: "20100000000000000", minAmountOut: "19899000000000000")
     let d = AuroraRouteDisplay(route, now: beforeExpiry)
 
-    XCTAssertEqual(d.theyReceive, "0.0199 ETH")
-    XCTAssertEqual(d.theyReceiveLine, "At least 0.0199 ETH on Arbitrum")
+    XCTAssertEqual(d.theyReceive, "0.019899 ETH")
+    XCTAssertEqual(d.theyReceiveLine, "At least 0.019899 ETH on Arbitrum")
     XCTAssertFalse(d.theyReceiveLine?.contains("0.0201") ?? true, "the forecast must not be shown as the promise")
   }
 
@@ -230,7 +230,7 @@ final class CrossChainPaymentDetailsTests: XCTestCase {
 
     XCTAssertEqual(rows["Destination"], "Arbitrum")
     XCTAssertEqual(rows["They receive"], "ETH")
-    XCTAssertEqual(rows["Guaranteed minimum"], "0.0199 ETH")
+    XCTAssertEqual(rows["Guaranteed minimum"], "0.019899 ETH")
     XCTAssertEqual(rows["Route status"], "Converting to ETH")
 
     // "To" must be the destination address, not an invented Prism recipient.

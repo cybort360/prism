@@ -163,13 +163,17 @@ struct AuroraRouteDisplay: Equatable {
     case ..<1000: fractionDigits = 4
     default: fractionDigits = 2
     }
-    return double.formatted(.number.precision(.fractionLength(0...fractionDigits)).locale(Locale(identifier: "en_US")))
+    // Round DOWN (toward zero): this value is shown as a guaranteed minimum ("you receive at least
+    // X"), so it must never be rounded up into a promise the route can't keep.
+    return double.formatted(.number.precision(.fractionLength(0...fractionDigits)).rounded(rule: .down).locale(Locale(identifier: "en_US")))
   }
 }
 
 extension ISO8601DateFormatter {
   /// Backend timestamps carry fractional seconds; the default formatter rejects them.
-  static let aurora: ISO8601DateFormatter = {
+  /// `date(from:)` is thread-safe in practice; `nonisolated(unsafe)` is the codebase's accepted
+  /// escape hatch for this (see ScanToPayView), avoiding a per-call formatter allocation.
+  nonisolated(unsafe) static let aurora: ISO8601DateFormatter = {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return formatter
