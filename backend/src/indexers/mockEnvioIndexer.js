@@ -7,7 +7,8 @@ export function makeMockEnvioIndexer(seed = {}) {
   const activity = seed.activity ?? {};
   const claims = seed.claims ?? {};
   const requests = new Map(Object.entries(seed.requests ?? {}));
-  const calls = { getPayment: 0, isPaymentIndexed: 0, getAccountActivity: 0, getClaims: 0, getRequestSettlement: 0 };
+  const incoming = seed.incoming ?? {};
+  const calls = { getPayment: 0, isPaymentIndexed: 0, getAccountActivity: 0, getClaims: 0, getRequestSettlement: 0, getIncomingTransfers: 0 };
 
   return {
     name: 'mock-envio',
@@ -18,6 +19,7 @@ export function makeMockEnvioIndexer(seed = {}) {
     async isPaymentIndexed(id) { calls.isPaymentIndexed++; return payments.has(id); },
     async getAccountActivity(account) { calls.getAccountActivity++; return activity[account.toLowerCase()] ?? []; },
     async getClaims(account) { calls.getClaims++; return claims[account.toLowerCase()] ?? []; },
+    async getIncomingTransfers(account) { calls.getIncomingTransfers++; return incoming[account.toLowerCase()] ?? []; },
     async getRequestSettlement(id) { calls.getRequestSettlement++; return requests.get(id) ?? null; }
   };
 }

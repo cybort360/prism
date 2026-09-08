@@ -83,6 +83,72 @@ export function assertTransition(from, to) {
   }
 }
 
+// --- Aurora cross-chain route lifecycle -------------------------------------
+// The routed leg of a cross-chain transfer is a SEPARATE state machine from the Monad payment above.
+// It is kept separate on purpose: the payment machine is audited and its transition table must not
+// be widened for a different subsystem's states. A route and its funding payment reference each
+// other by id; neither one's state is derived from the other's.
+// Progress is observed by POLLING a remote state machine, so intermediate states are routinely
+// missed — a fast route can be seen as `quoted` and then `delivered` with nothing in between. The
+// guard therefore enforces "never backwards, never out of a terminal state", not "one step at a
+// time": any forward state in this progression is reachable from any earlier one.
+export const AURORA_PROGRESSION = ['quoted', 'funding', 'funded', 'routing', 'delivered'];
+
+// Branch states are reachable from any non-terminal state, because Aurora can report a refund or a
+// failure at any point. `expired` only applies before funds move, so it hangs off the early states.
+const AURORA_BRANCHES = ['requires_attention', 'refunding', 'refunded', 'route_failed'];
+
+export const AURORA_TERMINAL_STATES = ['delivered', 'refunded', 'route_failed', 'expired'];
+
+export const AURORA_TRANSITIONS = buildAuroraTransitions();
+
+function buildAuroraTransitions() {
+  const table = {};
+  AURORA_PROGRESSION.forEach((state, index) => {
+    const forward = AURORA_PROGRESSION.slice(index + 1);
+    // A quote can lapse before it is funded; once funds are in flight the outcome is a refund or a
+    // failure, never a silent expiry.
+    const expiry = index <= 1 ? ['expired'] : [];
+    table[state] = [...forward, ...AURORA_BRANCHES, ...expiry];
+  });
+  table.requires_attention = ['routing', 'delivered', 'refunding', 'refunded', 'route_failed'];
+  table.refunding = ['refunded', 'route_failed'];
+  for (const terminal of AURORA_TERMINAL_STATES) table[terminal] = [];
+  return table;
+}
+
+/**
+ * Aurora's execution status -> Prism's route state.
+ * INCOMPLETE_DEPOSIT is deliberately `requires_attention`, not a failure: the funds are there, they
+ * are just short of the quoted amount, and a person has to decide what to do.
+ */
+export const AURORA_STATUS_STATE = {
+  PENDING_DEPOSIT: 'funding',
+  KNOWN_DEPOSIT_TX: 'funded',
+  INCOMPLETE_DEPOSIT: 'requires_attention',
+  PROCESSING: 'routing',
+  SUCCESS: 'delivered',
+  REFUNDED: 'refunded',
+  FAILED: 'route_failed'
+};
+
+export function canTransitionRoute(from, to) {
+  if (from === to) return true;     // idempotent status polls never mutate, always safe
+  return (AURORA_TRANSITIONS[from] ?? []).includes(to);
+}
+export function assertRouteTransition(from, to) {
+  if (!canTransitionRoute(from, to)) {
+    const e = new Error(`illegal route transition: ${from} -> ${to}`);
+    e.statusCode = 409;
+    throw e;
+  }
+}
+
+/** Map an Aurora status string onto a route state, or null when the status is unknown to us. */
+export function routeStateForStatus(status) {
+  return AURORA_STATUS_STATE[status] ?? null;
+}
+
 // --- failure taxonomy -------------------------------------------------------
 // Every failure code maps to a coarse persisted state + a consumer-facing canonical state. Some
 // "failures" (indexing delay, RPC blip) are NOT terminal and must not read as failed.

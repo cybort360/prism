@@ -56,6 +56,20 @@ export const envioGraphqlIndexer = {
     return data?.Claim ?? [];
   },
 
+  /**
+   * USDC transfers INTO an account. This is how an inbound cross-chain deposit becomes attributable:
+   * Aurora delivers it as a plain token transfer to the user's Mera account, touching no Prism
+   * contract, so there is no Prism event to key off. Excludes `from` so a user's own outbound
+   * payments don't come back as incoming.
+   */
+  async getIncomingTransfers(account, limit = 50) {
+    const data = await query(
+      `query($acct: String!, $limit: Int!) { UsdcTransfer(where: {to: {_ilike: $acct}}, order_by: {timestamp: desc}, limit: $limit) { id from to value txHash blockNumber timestamp } }`,
+      { acct: account, limit }
+    );
+    return data?.UsdcTransfer ?? [];
+  },
+
   async getRequestSettlement(requestId) {
     const data = await query(
       `query($id: String!) { RequestSettlement(where: {id: {_eq: $id}}) { id paymentId payer recipient amount txHash timestamp } }`,
