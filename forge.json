@@ -36,7 +36,8 @@
     { "id": "CONT-4", "claim": "End-to-end continuity narrative: rotate keeps paying the same person; number reassignment is blocked, never silently redirected", "status": "VERIFIED", "evidence": "backend/test/continuity-narrative.test.js" },
     { "id": "CHAIN-1", "claim": "Router/vault/USDC deployed on Monad testnet", "status": "VERIFIED", "evidence": "live eth_getCode 2026-09-08 (router 2990B, vault 5905B, USDC 1798B)" },
     { "id": "CHAIN-2", "claim": "Real end-to-end direct payment settles on Monad (USDC delivered via router)", "status": "VERIFIED", "evidence": "live tx 0xfc277f341cb6db59389fcc21269decefc7708fccd979a7e5ae508b3754c41f19 (status 0x1, block 60877492); recipient +1.00 USDC" },
-    { "id": "SUITE-1", "claim": "Backend / contracts / iOS suites green", "status": "VERIFIED", "evidence": "backend 133, contracts 43, iOS 95 — executed this session; re-run with criticalTestCommands" }
+    { "id": "CONT-5", "claim": "Shared continuity domain model classifies all five states (FIRST_CONTACT / CONTINUITY_MATCH / IDENTITY_DISCONTINUITY / STALE_RESOLUTION / RESOLVER_UNAVAILABLE_OR_AMBIGUOUS); enforcement delegates to it; red-before-green demonstrated on the discontinuity case", "status": "VERIFIED", "evidence": "backend/test/continuity.test.js 13/13, ios PrismContinuityTests 13/13; assertResolution -> assertFreshResolution" },
+    { "id": "SUITE-1", "claim": "Backend / contracts / iOS suites green", "status": "VERIFIED", "evidence": "backend 146, contracts 43, iOS 109 — executed this session; re-run with criticalTestCommands" }
   ],
   "sourceOfTruth": "Repository files under /forge and the test suites. Prior chat summaries are NOT authoritative.",
   "deployment": { "monadTestnet": "deployments/monad-testnet.json (router 0x423a…62b7, vault 0xBe3D…Eae3)" }

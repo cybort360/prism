@@ -9,6 +9,7 @@ import { logger } from '../lib/logger.js';
 import { startTimer, record as recordMetric, increment } from '../lib/metrics.js';
 import { envioIndexer } from '../indexers/index.js';
 import { appendEvent, ensureEvents, canonicalPayment, receiptFor, lifecycleState, assertTransition } from '../lib/lifecycle.js';
+import { assertFreshResolution } from '../lib/continuity.js';
 
 const AUTH_WINDOW_SECONDS = 5 * 60;
 // Operation kinds settled through PrismPaymentRouter.settle(). Both are a signed PaymentEnvelope
@@ -37,7 +38,10 @@ export class PaymentService {
   assertResolution(resolution, requesterPrismId) {
     const a = this.resolverService.verifyResolution(resolution, requesterPrismId);
     const identity = this.identityService.get(a.prismIdentity);
-    if (!identity || !identity.accountAddress || identity.accountAddress.toLowerCase() !== a.recipientAccount.toLowerCase() || identity.aliasVersion !== a.aliasVersion) {
+    // Continuity enforcement: the signed attestation must still match the LIVE identity (same account
+    // AND same alias version). Delegated to the shared continuity model (assertFreshResolution) so the
+    // enforcement path and the domain classifier can never drift. STALE_RESOLUTION / mismatch → 409.
+    if (!assertFreshResolution(a, identity).ok) {
       const e = new Error('stale or changed recipient identity');
       e.statusCode = 409;
       throw e;

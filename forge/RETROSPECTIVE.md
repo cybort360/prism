@@ -37,6 +37,22 @@ entry. Kept honest — the point is to not repeat mistakes.
 - Dry-ran the judge path; every command reproduced. Only drift: JUDGE_PATH backend count 132 → 133.
 - Continuity vertical slice: **Definition of Done met.**
 
+## 2026-09-09 — Continuity domain model implemented (backend + iOS)
+- Named the vocabulary explicitly (PrismIdentity, ReachabilityAlias, AliasBinding, AliasVersion,
+  ResolutionAttestation, KnownRecipientBinding, DeviceCredential, PrismAccount) and built one shared,
+  pure classifier over five states — `backend/src/lib/continuity.js` and
+  `ios/Prism/Models/PrismContinuity.swift` — mirrored, with deterministic tests on both sides.
+- Enforcement now delegates to the model (`assertResolution` → `assertFreshResolution`), so the
+  classifier and the settlement guard can't drift. Behavior-preserving: full backend suite stayed green.
+- **Refined INV-C3 per the FORGE 1.4 account-rotation requirement:** discontinuity = a *PrismIdentity*
+  change (a different human); a same-identity account rotation under an advancing aliasVersion is
+  continuity, not review; an account change without a version advance fails closed (ambiguous). Updated
+  `IdentityContinuityTests` accordingly (a legitimate semantic refinement, documented — not a weakening).
+  Also fixed those fixtures to carry non-expired attestations now that the classifier checks freshness.
+- **Red-before-green** on the discontinuity case: deliberately made a different identity classify as
+  CONTINUITY_MATCH → the discontinuity test FAILED; restored → 13/13 pass.
+- Before → after: backend 133 → 146, iOS 95 → 109. No `VERIFIED` claimed without an executed run.
+
 ## 2026-09-08 — Remaining live proofs swept
 - **Claim collection live** (CHAIN-6): funded a claim, then collected it with BOTH the authorizer
   eligibility signature AND the recipient's ClaimIntent — recipient +1.00 USDC. Proves an alias/OTP

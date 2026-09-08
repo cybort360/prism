@@ -8,9 +8,21 @@ because code exists.
 
 | Suite | Command | Result | Status |
 |---|---|---|---|
-| Backend | `cd backend && node --test test/*.test.js` | 133 pass / 0 fail | `VERIFIED` |
+| Backend | `cd backend && node --test test/*.test.js` | 146 pass / 0 fail (133 before + 13 continuity) | `VERIFIED` |
 | Contracts | `cd contracts && forge test` | 43 pass / 0 fail (incl. 3 invariants × 256 runs) | `VERIFIED` |
-| iOS unit | `xcodebuild … -only-testing:PrismTests test` | 95 pass / 0 fail (89 + 6 continuity) | `VERIFIED` |
+| iOS unit | `xcodebuild … -only-testing:PrismTests test` | 109 pass / 0 fail (95 before + 13 classifier + 1 refined) | `VERIFIED` |
+
+## Continuity domain model (2026-09-09)
+
+Implemented the PRISM Continuity domain model across backend + iOS (`continuity.js` /
+`PrismContinuity.swift`) with the five semantic states and mirrored, deterministic tests.
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| CONT-5 | The classifier resolves all five states (FIRST_CONTACT / CONTINUITY_MATCH / IDENTITY_DISCONTINUITY / STALE_RESOLUTION / RESOLVER_UNAVAILABLE_OR_AMBIGUOUS) over the 10 scenarios | `VERIFIED` | backend `continuity.test.js` 13/13; iOS `PrismContinuityTests` 13/13 (mirrored) |
+| CONT-6 | Same-identity account rotation (advancing version) is continuity, not a different human; account change without a version advance fails closed | `VERIFIED` | `continuity.test.js` + `IdentityContinuityTests.testAuthenticatedAccountRotationSameIdentityDoesNotWarn` / `testAccountChangeWithoutVersionAdvanceIsReviewed` |
+| CONT-7 | Red-before-green: the discontinuity verifier actually fails against deliberately incorrect behavior | `VERIFIED` | broke `classifyContinuity` (different identity → CONTINUITY_MATCH) → `continuity.test.js` "IDENTITY_DISCONTINUITY" **failed** (1 fail); restored → **13/13 pass** |
+| CONT-8 | Enforcement uses the model (no drift): `assertResolution` delegates to `assertFreshResolution` | `VERIFIED` | full backend suite 146/146 after the refactor (behavior-preserving; `security-boundaries` rotation tests still green) |
 
 > These counts supersede the older `31 / 41 / 2` figures still printed in `README.md` (see
 > [`FAILURES.md`](FAILURES.md) F-3 — stale README proof table).

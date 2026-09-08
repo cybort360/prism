@@ -2,26 +2,28 @@ import XCTest
 
 @testable import Prism
 
-/// Prism Continuity, client half (INV-C1 / INV-C3): reachability may change without silently changing
-/// recipient identity. `IdentityTrustStore.warning` is the visible discontinuity guard — it must stay
-/// silent for a legitimate alias change to the SAME identity, and it must speak up (route to review)
-/// when the alias now resolves to a DIFFERENT PrismIdentity or account.
+/// Prism Continuity, client integration (INV-C1 / INV-C3) through `IdentityTrustStore` — the persisted
+/// trust store + the shared `PrismContinuity` classifier. Reachability may change without silently
+/// changing recipient identity: a same-identity alias change (or an authenticated account rotation) is
+/// silent; a different PrismIdentity — or an unconfirmable account change — must be reviewed.
 final class IdentityContinuityTests: XCTestCase {
 
   private let store = IdentityTrustStore.shared
 
-  // Each test uses a fresh contact id so persisted trust records never collide.
   private func contact(_ id: String = UUID().uuidString) -> ContactPerson {
     ContactPerson(id: id, name: "Tobi", phone: nil, initials: "TB")
   }
 
+  // A valid (non-expired) attestation — expiry is now enforced by the classifier.
   private func resolution(prismId: String, account: String, aliasVersion: Int) -> ResolutionResponse {
-    ResolutionResponse(
+    let now = Date()
+    let iso = ISO8601DateFormatter()
+    return ResolutionResponse(
       found: true, reason: nil,
       attestation: ResolutionAttestation(
         recipientAccount: account, prismIdentity: prismId, aliasVersion: aliasVersion,
         requesterPrismId: "me", requestId: "req_\(UUID().uuidString)", route: "phone",
-        issuedAt: "2026-09-08T00:00:00Z", expiresAt: "2026-09-08T00:05:00Z"),
+        issuedAt: iso.string(from: now), expiresAt: iso.string(from: now.addingTimeInterval(120))),
       signature: "0xsig", resolverKeyId: "resolver-v1")
   }
 
@@ -29,19 +31,18 @@ final class IdentityContinuityTests: XCTestCase {
   private let acctB = "0x2222222222222222222222222222222222222222"
 
   override func tearDown() {
-    // Leave no trust records behind (defensive; ids are unique anyway).
     store.reset(contactId: lastContactId)
     super.tearDown()
   }
   private var lastContactId = ""
 
-  // MARK: INV-C1 — a legitimate alias change preserves continuity
+  // MARK: INV-C1 — a legitimate alias change to the same identity preserves continuity
 
   func testAliasVersionBumpToSameIdentityDoesNotWarn() {
     let c = contact(); lastContactId = c.id
     store.remember(contact: c, resolution: resolution(prismId: "prism-tobi", account: acctA, aliasVersion: 1))
-    // Recipient rotated their phone: same identity, same account, higher alias version.
     let rotated = resolution(prismId: "prism-tobi", account: acctA, aliasVersion: 4)
+    XCTAssertEqual(store.state(for: c, newResolution: rotated), .continuityMatch)
     XCTAssertNil(store.warning(for: c, newResolution: rotated),
       "an alias-only change to the same identity must not trigger a discontinuity review")
   }
@@ -54,39 +55,53 @@ final class IdentityContinuityTests: XCTestCase {
       "address casing must not be read as an identity change")
   }
 
-  // MARK: INV-C3 — a different identity is visibly blocked for review
-
-  func testChangedAccountTriggersReview() {
+  /// A wallet/account rotation belonging to the SAME PrismIdentity, recorded by the resolver as an
+  /// authenticated mutation (advancing alias version), is continuity — NOT a different human.
+  func testAuthenticatedAccountRotationSameIdentityDoesNotWarn() {
     let c = contact(); lastContactId = c.id
     store.remember(contact: c, resolution: resolution(prismId: "prism-tobi", account: acctA, aliasVersion: 1))
-    // Same PrismIdentity id but a different account address → still a discontinuity.
-    let movedAccount = resolution(prismId: "prism-tobi", account: acctB, aliasVersion: 2)
-    XCTAssertNotNil(store.warning(for: c, newResolution: movedAccount),
-      "a changed payment account must be blocked for review, never silently redirected")
+    let rotatedAccount = resolution(prismId: "prism-tobi", account: acctB, aliasVersion: 5)
+    XCTAssertEqual(store.state(for: c, newResolution: rotatedAccount), .continuityMatch)
+    XCTAssertNil(store.warning(for: c, newResolution: rotatedAccount),
+      "a same-identity account rotation under an advancing alias version must not be treated as a different human")
   }
+
+  // MARK: INV-C3 — a different identity, or an unconfirmable change, must be reviewed
 
   func testChangedIdentityTriggersReview() {
     let c = contact(); lastContactId = c.id
     store.remember(contact: c, resolution: resolution(prismId: "prism-tobi", account: acctA, aliasVersion: 1))
-    // The alias now resolves to a DIFFERENT person (number reassigned).
     let differentPerson = resolution(prismId: "prism-someone-else", account: acctB, aliasVersion: 1)
+    XCTAssertEqual(store.state(for: c, newResolution: differentPerson), .identityDiscontinuity)
     XCTAssertNotNil(store.warning(for: c, newResolution: differentPerson),
       "an alias reassigned to a different identity must be blocked for review")
+  }
+
+  /// Same identity but a changed account WITHOUT an advancing alias version is anomalous — the resolver
+  /// hasn't recorded an authenticated rotation, so PRISM must not silently proceed.
+  func testAccountChangeWithoutVersionAdvanceIsReviewed() {
+    let c = contact(); lastContactId = c.id
+    store.remember(contact: c, resolution: resolution(prismId: "prism-tobi", account: acctA, aliasVersion: 2))
+    let unconfirmed = resolution(prismId: "prism-tobi", account: acctB, aliasVersion: 2)
+    XCTAssertEqual(store.state(for: c, newResolution: unconfirmed), .resolverUnavailableOrAmbiguous)
+    XCTAssertNotNil(store.warning(for: c, newResolution: unconfirmed))
   }
 
   // MARK: edges
 
   func testFirstTimeRecipientNeverWarns() {
     let c = contact(); lastContactId = c.id
-    // No prior trusted record → nothing to be discontinuous with.
-    XCTAssertNil(store.warning(for: c, newResolution: resolution(prismId: "prism-tobi", account: acctA, aliasVersion: 1)))
+    let r = resolution(prismId: "prism-tobi", account: acctA, aliasVersion: 1)
+    XCTAssertEqual(store.state(for: c, newResolution: r), .firstContact)
+    XCTAssertNil(store.warning(for: c, newResolution: r))
   }
 
   func testResetClearsTrustSoNextResolutionIsTreatedAsNew() {
     let c = contact(); lastContactId = c.id
     store.remember(contact: c, resolution: resolution(prismId: "prism-tobi", account: acctA, aliasVersion: 1))
     store.reset(contactId: c.id)
-    // After an explicit reset (e.g. the user approved the change), a differing identity no longer warns.
-    XCTAssertNil(store.warning(for: c, newResolution: resolution(prismId: "prism-someone-else", account: acctB, aliasVersion: 1)))
+    let r = resolution(prismId: "prism-someone-else", account: acctB, aliasVersion: 1)
+    XCTAssertEqual(store.state(for: c, newResolution: r), .firstContact)
+    XCTAssertNil(store.warning(for: c, newResolution: r))
   }
 }

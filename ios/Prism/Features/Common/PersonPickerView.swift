@@ -252,14 +252,25 @@ final class IdentityTrustStore: @unchecked Sendable {
   private let key = "trusted.recipient.identities"
   private init() {}
 
+  /// The continuity state for paying this contact, computed by the shared `PrismContinuity` classifier
+  /// against the last trusted binding (persisted, so it survives relaunch).
+  func state(for contact: ContactPerson, newResolution: ResolutionResponse) -> PrismContinuityState {
+    let known = records()[contact.id].map {
+      KnownRecipientBinding(prismId: $0.prismId, account: $0.accountAddress, aliasVersion: $0.aliasVersion)
+    }
+    return PrismContinuity.classify(known: known, resolution: newResolution)
+  }
+
+  /// A review message when the payment must NOT silently proceed — the contact now resolves to a
+  /// different PrismIdentity (discontinuity), or the resolver can't confirm it's the same account
+  /// (ambiguous). A same-identity alias change or an authenticated account rotation is silent (continuity).
   func warning(for contact: ContactPerson, newResolution: ResolutionResponse) -> String? {
-    guard let att = newResolution.attestation, let old = records()[contact.id] else { return nil }
-    guard
-      old.prismId != att.prismIdentity
-        || old.accountAddress.lowercased() != att.recipientAccount.lowercased()
-    else { return nil }
-    return
-      "\(contact.name)’s payment identity changed since your last trusted payment. Prism will not silently send to the new account. Review the identity before paying again."
+    switch state(for: contact, newResolution: newResolution) {
+    case .identityDiscontinuity, .resolverUnavailableOrAmbiguous:
+      return "\(contact.name)’s payment identity changed since your last trusted payment. Prism will not silently send to the new account. Review the identity before paying again."
+    case .firstContact, .continuityMatch, .staleResolution:
+      return nil
+    }
   }
 
   func remember(contact: ContactPerson, resolution: ResolutionResponse) {

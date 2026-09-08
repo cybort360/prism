@@ -24,15 +24,24 @@ A resolution attestation minted for `aliasVersion = N` must be rejected once the
   previous resolution version."*
 
 ### INV-C3 — An alias resolving to a *different* identity is visibly blocked, never silently redirected
-If an alias now resolves to a different `PrismIdentity`/account than the payer last paid, PRISM must
-stop and require review.
-- **Enforcement (client):** `IdentityTrustStore.warning(for:newResolution:)` fires when
-  `old.prismId != att.prismIdentity` **or** `old.accountAddress != att.recipientAccount`, routing to
-  `IdentityChangeReviewView` (triggered in `PersonPickerView`, `PeopleView`).
-- **Enforcement (server):** `assertResolution` blocks a changed account at settlement (409).
-- **Evidence:** `VERIFIED` — server path covered by INV-C2's test; iOS `IdentityContinuityTests`
-  (6 tests) proves `warning` stays silent on an alias-version-only change to the same identity/account
-  and fires on a changed `prismId` or account. F-1 closed.
+If an alias now resolves to a different `PrismIdentity` than the payer last paid, PRISM must stop and
+require review. Continuity is classified by the shared **PRISM Continuity domain model** into five
+states (`backend/src/lib/continuity.js`, `ios/Prism/Models/PrismContinuity.swift`):
+`FIRST_CONTACT · CONTINUITY_MATCH · IDENTITY_DISCONTINUITY · STALE_RESOLUTION ·
+RESOLVER_UNAVAILABLE_OR_AMBIGUOUS`.
+- **Discontinuity is a *PrismIdentity* change** (a different human) — that is what blocks. A same-identity
+  **account rotation** recorded by the resolver as an authenticated mutation (an **advancing
+  aliasVersion**) is `CONTINUITY_MATCH`, not a different human (per the FORGE 1.4 account-rotation
+  requirement). A same-identity account change **without** a version advance is
+  `RESOLVER_UNAVAILABLE_OR_AMBIGUOUS` → also reviewed (fail closed).
+- **Enforcement (client):** `IdentityTrustStore.state/​warning` uses `PrismContinuity.classify`; the
+  warning (→ `IdentityChangeReviewView`) fires on `IDENTITY_DISCONTINUITY` and
+  `RESOLVER_UNAVAILABLE_OR_AMBIGUOUS`.
+- **Enforcement (server):** `assertResolution` delegates to `assertFreshResolution` (the same model),
+  so a stale/changed identity is blocked at settlement (409).
+- **Evidence:** `VERIFIED` — backend `continuity.test.js` (13 tests, all five states + red-before-green
+  on the discontinuity case) and full suite 146/146; iOS `PrismContinuityTests` (13) +
+  `IdentityContinuityTests` (7), suite 109/109. Freshness is checked before identity (fail closed).
 
 ## Authority & money
 
