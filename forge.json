@@ -32,6 +32,8 @@
     { "id": "MONEY-1", "claim": "Submission is never treated as completion; UI-terminal only after a reconciled Monad receipt", "status": "VERIFIED", "evidence": "backend/test/mutation-audit.test.js MUT-15/16; PaymentCoordinator polls backend 'completed'" },
     { "id": "GAS-1", "claim": "A payer holding MON = 0 can pay (relayer sponsors gas)", "status": "PARTIAL", "evidence": "proof/ZERO_MON_PROOF.md (local); live testnet path deployed, end-to-end zero-MON tx not re-verified this phase" },
     { "id": "CONT-4", "claim": "End-to-end continuity narrative: rotate keeps paying the same person; number reassignment is blocked, never silently redirected", "status": "VERIFIED", "evidence": "backend/test/continuity-narrative.test.js" },
+    { "id": "CHAIN-1", "claim": "Router/vault/USDC deployed on Monad testnet", "status": "VERIFIED", "evidence": "live eth_getCode 2026-09-08 (router 2990B, vault 5905B, USDC 1798B)" },
+    { "id": "CHAIN-2", "claim": "Real end-to-end direct payment settles on Monad (USDC delivered via router)", "status": "VERIFIED", "evidence": "live tx 0xfc277f341cb6db59389fcc21269decefc7708fccd979a7e5ae508b3754c41f19 (status 0x1, block 60877492); recipient +1.00 USDC" },
     { "id": "SUITE-1", "claim": "Backend / contracts / iOS suites green", "status": "VERIFIED", "evidence": "backend 133, contracts 43, iOS 95 — executed this session; re-run with criticalTestCommands" }
   ],
   "sourceOfTruth": "Repository files under /forge and the test suites. Prior chat summaries are NOT authoritative.",

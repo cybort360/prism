@@ -37,6 +37,14 @@ entry. Kept honest — the point is to not repeat mistakes.
 - Dry-ran the judge path; every command reproduced. Only drift: JUDGE_PATH backend count 132 → 133.
 - Continuity vertical slice: **Definition of Done met.**
 
+## 2026-09-08 — F-4 closed (real payment on Monad)
+- Ran a real end-to-end direct payment on Monad testnet through the audited `settle()` path using our
+  funded key (20 USDC / 4.6 MON): tx `0xfc27…41f19`, status `0x1`, block 60877492, 1.00 USDC delivered
+  payer→recipient. Independently re-verified via `eth_getTransactionReceipt`. CHAIN-2 → `VERIFIED`.
+- The one-off broadcast script was kept out of the repo (temporary, not committed) — a live-broadcast
+  script shouldn't be runnable by accident.
+- Residual: claim/refund live + a zero-MON payment (separate payer+relayer) remain unproven (F-4b).
+
 ## Process lessons (carry forward)
 - **Regenerate the Xcode project after any merge that adds/removes Swift files.** The Aurora #2 and #3
   merges each broke the iOS build because `xcodegen` wasn't re-run and latent (never-compiled) Swift

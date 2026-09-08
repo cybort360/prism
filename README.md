@@ -180,10 +180,11 @@ make test        # backend + contracts + iOS
 > **Current source of truth: [`forge/PROOF_LEDGER.md`](forge/PROOF_LEDGER.md).** The dated table below
 > is the original 2026-09-03 hostile audit and is now **stale in places**. Current, re-executed status:
 > suites **backend 133 / contracts 43 / iOS 95**; the router/vault/USDC are **confirmed deployed** on
-> Monad testnet (live `eth_getCode`, 2026-09-08). Live **end-to-end** payment/claim/refund on Monad is
-> **not re-verified in this phase** (no tx hash produced here — do not read the old "BLOCKED" rows as
-> current). See the ledger and [`forge/FAILURES.md`](forge/FAILURES.md) (F-3, F-4). Nothing is marked
-> verified on the strength of code existing.
+> Monad testnet (live `eth_getCode`, 2026-09-08), and a **real end-to-end direct payment settled on
+> Monad** — tx `0xfc277f341cb6db59389fcc21269decefc7708fccd979a7e5ae508b3754c41f19` (1.00 USDC
+> delivered via the router). Live **claim/refund** and a **zero-MON** payment are still unproven this
+> phase. See the ledger and [`forge/FAILURES.md`](forge/FAILURES.md). Nothing is marked verified on the
+> strength of code existing.
 
 A hostile audit (`proof/`) was run against this codebase on 2026-09-03. Every row is either backed
 by an executed check or marked blocked with the reason — nothing here is a "works" claim.

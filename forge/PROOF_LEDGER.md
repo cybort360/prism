@@ -40,7 +40,7 @@ because code exists.
 | ID | Claim | Status | Note |
 |---|---|---|---|
 | CHAIN-1 | Contracts deployed to Monad testnet | `VERIFIED` | live `eth_getCode` on `https://testnet-rpc.monad.xyz` (2026-09-08): router `0x423a…62b7` = 2990 B, vault `0xBe3D…Eae3` = 5905 B, USDC `0x534b…43A3` = 1798 B — all non-empty |
-| CHAIN-2 | End-to-end payment / claim / refund on Monad | `UNTESTED` (this phase) | prior-session tx hashes are **not authoritative** here; re-run and record the hash before marking `VERIFIED` |
+| CHAIN-2 | End-to-end **payment** on Monad (router `settle()` delivers USDC) | `VERIFIED` | live tx `0xfc277f341cb6db59389fcc21269decefc7708fccd979a7e5ae508b3754c41f19` — status `0x1`, block 60877492, `to` = router; payer −1.00 USDC, recipient +1.00 USDC. Re-verify: `eth_getTransactionReceipt` or `testnet.monadexplorer.com/tx/0xfc27…`. (Run used payer == relayer, so it does **not** also prove zero-MON — that's GAS-1.) Claim/refund on Monad still `UNTESTED`. |
 | CHAIN-3 | Envio indexing real events | `UNTESTED` | needs a hosted indexer + a real event |
 | CHAIN-4 | Zero-MON payment demonstrated on testnet | `UNTESTED` | requires a live gasless tx |
 

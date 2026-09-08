@@ -8,7 +8,7 @@ optional. Nothing is hidden to make a demo look better.
 | ID | Severity | Gap | Where |
 |---|---|---|---|
 | F-2 | MED | No executed **cold-user** evidence for thesis #12 (a first-time user completing a payment without coaching). UX claim only. | — |
-| F-4 | MED | On-chain end-to-end (payment/claim/refund) is **not re-verified in this phase** — no tx hash produced here. Prior-session tx hashes are not authoritative under the FORGE 1.4 source-of-truth rule. (Deployment itself is now confirmed — see CHAIN-1.) | `PROOF_LEDGER.md` CHAIN-2 |
+| F-4b | LOW | On-chain **claim/refund** and a **zero-MON** payment (separate payer + relayer) are still not re-verified this phase. The direct-payment leg is now proven live (CHAIN-2). | `PROOF_LEDGER.md` CHAIN-2 / GAS-1 |
 | F-5 | LOW | Aurora cross-chain is **preview-only**; live `POST /api/quote` has never been called with a real key (NEAR Intents carries Monad mainnet only; PRISM runs testnet). Honestly labelled in-app. | `docs/AURORA_INTENTS.md` |
 | F-6 | LOW | `INV-M2` (backend not the canonical balance authority) has no explicit negative test. | — |
 
@@ -20,6 +20,11 @@ optional. Nothing is hidden to make a demo look better.
 | A-2 | FORGE 1.4 says money lives in a "Monad **smart account**"; the current build uses a **secp256k1 EOA** (Mera, no bundler). The ERC-4337/P-256 smart-account path is **archived**. | Documented in [`ARCHITECTURE.md`](ARCHITECTURE.md). Adopting a smart account would be a product change, out of scope this phase. |
 
 ## Historical (fixed) — kept for memory
+- **F-4 CLOSED 2026-09-08** — a real end-to-end **direct payment** settled on Monad testnet through
+  the audited `PrismPaymentRouter.settle()`: tx `0xfc277f341cb6db59389fcc21269decefc7708fccd979a7e5ae508b3754c41f19`
+  (status `0x1`, block 60877492), delivering 1.00 USDC payer→recipient via the router. Independently
+  re-verified by `eth_getTransactionReceipt`. CHAIN-2 → `VERIFIED`. Residual (claim/refund live +
+  zero-MON) tracked as F-4b.
 - **F-3 CLOSED 2026-09-08** — README proof-table drift resolved: quick-start counts refreshed
   (contracts 43, backend 133), and a source-of-truth note points at `forge/PROOF_LEDGER.md` with the
   current suite counts and the live-deployment confirmation. The dated 2026-09-03 audit table is kept
