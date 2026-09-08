@@ -37,6 +37,14 @@ entry. Kept honest — the point is to not repeat mistakes.
 - Dry-ran the judge path; every command reproduced. Only drift: JUDGE_PATH backend count 132 → 133.
 - Continuity vertical slice: **Definition of Done met.**
 
+## 2026-09-08 — F-4b closed (zero-MON + claim/refund live on Monad)
+- **Zero-MON payment**: a fresh payer holding USDC and 0 MON paid 1.00 USDC; the relayer sponsored gas;
+  the payer's MON stayed 0. tx `0xd34d…34a16`. GAS-1 → `VERIFIED`.
+- **Claim fund → refund**: funded 1.00 USDC into `PrismClaimVault`, then refunded after expiry back to
+  the original sender (net 0). fund `0xd0d4…01f0f`, refund `0x6828…1f51d`. CHAIN-5 → `VERIFIED`.
+- All independently re-verified via `eth_getTransactionReceipt` (to == router / vault). Temp broadcast
+  script kept out of the repo again.
+
 ## 2026-09-08 — F-4 closed (real payment on Monad)
 - Ran a real end-to-end direct payment on Monad testnet through the audited `settle()` path using our
   funded key (20 USDC / 4.6 MON): tx `0xfc27…41f19`, status `0x1`, block 60877492, 1.00 USDC delivered
