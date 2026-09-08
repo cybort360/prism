@@ -18,7 +18,7 @@ struct ReceiveView: View {
       Spacer()
 
       PrismCard(padding: 18) {
-        QRCodeView(text: paymentURL)
+        QRCodeView(text: shareLink)
           .frame(width: 210, height: 210)
           .padding(4)
       }
@@ -36,7 +36,7 @@ struct ReceiveView: View {
         .padding(.horizontal, 38)
         .padding(.top, 9)
 
-      Text(paymentURL)
+      Text(displayLink)
         .font(PrismTheme.mono(10.5))
         .foregroundStyle(PrismTheme.muted)
         .padding(.top, 15)
@@ -44,7 +44,7 @@ struct ReceiveView: View {
 
       Spacer()
 
-      ShareLink(item: paymentURL) {
+      ShareLink(item: shareLink) {
         Label("Share payment link", systemImage: "square.and.arrow.up")
           .font(PrismTheme.body(14.5, weight: .semibold))
           .frame(maxWidth: .infinity)
@@ -61,7 +61,15 @@ struct ReceiveView: View {
     .prismScreen()
   }
 
-  private var paymentURL: String {
-    "prism://pay/\(model.identity?.prismId ?? "")"
+  /// The public path: a pretty @handle when the user has one (human-verifiable), else the opaque,
+  /// stable prismId route. Both resolve through the same recipient resolver.
+  private var publicPath: String {
+    if let handle = model.identity?.handle, !handle.isEmpty { return handle }
+    return "pay/\(model.identity?.prismId ?? "")"
   }
+  /// A universal link, encoded in the QR and shared. Opening it (scan or tap) resolves the identity
+  /// and opens the Send review — it never carries a wallet address.
+  private var shareLink: String { "https://prism.app/\(publicPath)" }
+  /// The human-readable form shown under the QR.
+  private var displayLink: String { "prism.app/\(publicPath)" }
 }

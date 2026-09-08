@@ -58,6 +58,9 @@ struct SendMoneyView: View {
       }
     }
     .onAppear {
+      // Amount-bound link/QR prefill (editable; the payer still reviews and approves it).
+      if amount.isEmpty, let a = target.initialAmount { amount = a }
+      if memo.isEmpty, let m = target.initialMemo { memo = m }
       if let requestId = target.requestId {
         Task {
           if let req = (try? await PrismAPI.shared.requests())?.first(where: {
@@ -92,7 +95,7 @@ struct SendMoneyView: View {
     guard let atomic else { return }
     await coordinator.pay(
       resolution: target.resolution, amountAtomic: atomic, requestId: target.requestId, memo: memo,
-      pin: pin, useFaceID: face)
+      entryMethod: target.entryMethod, pin: pin, useFaceID: face)
     switch coordinator.state {
     case .sent(let tx):
       IdentityTrustStore.shared.remember(contact: target.contact, resolution: target.resolution)

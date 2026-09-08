@@ -234,6 +234,12 @@ struct SendTarget: Identifiable {
   let contact: ContactPerson
   let resolution: ResolutionResponse
   var requestId: String? = nil
+  /// Prefill (decimal dollars) from an amount-bound link/QR. Editable; the payer still approves it —
+  /// it never mutates the signed payment, which is built from the amount at authorization time.
+  var initialAmount: String? = nil
+  var initialMemo: String? = nil
+  /// How this recipient was reached, recorded on the canonical payment (contact/qr/paymentLink/…).
+  var entryMethod: PrismEntryMethod? = nil
 }
 
 struct PaymentRequestRecord: Codable, Identifiable, Equatable {

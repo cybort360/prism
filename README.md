@@ -8,6 +8,21 @@ Core loop:
 
 `Person -> Amount -> Face ID / PIN -> Sent`
 
+## Payment truth
+
+Prism does not treat transaction submission as payment completion. Every monetary action — direct
+send, request payment, QR payment, payment link, claim funding, recipient claim, refund — is one
+canonical `PrismPayment` represented by:
+
+- **lifecycle** — a guarded state machine + an append-only, real-timestamped event log; "Sent" /
+  "Delivered" appear only after a confirmed Monad receipt.
+- **receipt** — one consumer detail surface (`PaymentDetailsView`); no feature-specific dead-end.
+- **evidence** — an inspectable Payment Proof with a real phone-privacy detector and honest
+  per-check statuses (never a green badge a check didn't earn).
+
+See `docs/PAYMENT_MODEL.md`, `docs/PAYMENT_LIFECYCLE.md`, `docs/RECEIPTS.md`, `docs/CLAIMS.md`,
+`docs/PAYMENT_PROOF.md`, and `docs/QR_AND_LINKS.md`.
+
 ## Architecture
 
 ```text

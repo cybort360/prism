@@ -78,37 +78,76 @@ struct ScanToPayView: View {
   }
 
   private func route(_ raw: String) async {
-    guard let id = PrismDeepLink.prismId(from: raw) else {
-      error = "That QR code is not a Prism payment link."
-      return
-    }
-
-    do {
-      let resolution = try await PrismAPI.shared.resolve(prismId: id)
-      guard resolution.found else { throw APIError.server("This Prism account is unavailable.") }
-      let contact = ContactPerson(
-        id: "qr:\(id)",
-        name: "Prism recipient",
-        phone: nil,
-        initials: "PR",
-        prismState: .onPrism(resolution)
-      )
+    // Resolve through the shared recipient resolver, then open the Send review — never instant send.
+    if let message = await model.openPaymentLink(raw, entryMethod: .qr) {
+      error = message
+    } else {
       dismiss()
-      model.presentSend = SendTarget(contact: contact, resolution: resolution)
-    } catch {
-      self.error = error.localizedDescription
     }
   }
 }
 
+/// A parsed Prism recipient link. Carries what a link/QR can safely say: which identity to resolve
+/// (opaque prismId or pretty @handle) and OPTIONAL amount/reference. The amount and reference only
+/// ever pre-fill a review the payer must still approve — an unsigned URL parameter can never mutate a
+/// signed payment (section 4).
+struct PrismLink: Equatable {
+  var prismId: String? = nil
+  var handle: String? = nil
+  /// Decimal dollars (e.g. "20", "20.00"). Prefill only.
+  var amount: String? = nil
+  /// A display-only reference/note. Never affects signing.
+  var reference: String? = nil
+}
+
 enum PrismDeepLink {
-  static func prismId(from raw: String) -> String? {
-    guard let url = URL(string: raw) else { return nil }
-    if url.scheme == "prism", url.host == "pay" { return url.pathComponents.dropFirst().first }
-    if ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.pathComponents.count >= 3,
-      url.pathComponents[1] == "pay"
-    { return url.pathComponents[2] }
+  /// Reserved path words that are routes, not handles.
+  private static let reserved: Set<String> = ["pay", "u", "claim", "request", "r"]
+
+  /// Back-compat accessor for callers that only need the opaque id.
+  static func prismId(from raw: String) -> String? { parse(raw)?.prismId }
+
+  /// The one parser. Every recipient surface (QR scan, universal link, shared payment link) flows
+  /// through this, so they share identical resolution semantics — no separate identity meaning.
+  static func parse(_ raw: String) -> PrismLink? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let comps = URLComponents(string: trimmed) else { return nil }
+    let scheme = comps.scheme?.lowercased()
+    let parts = comps.path.split(separator: "/").map(String.init).filter { !$0.isEmpty }
+    let q = Dictionary((comps.queryItems ?? []).compactMap { item in item.value.map { (item.name.lowercased(), $0) } }, uniquingKeysWith: { a, _ in a })
+    let amount = normalizedAmount(q["amount"])
+    let ref = q["ref"] ?? q["reference"]
+
+    // prism://pay/<id>  (opaque prismId — the personal QR form)
+    if scheme == "prism", comps.host == "pay", let id = parts.first {
+      return PrismLink(prismId: id, amount: amount, reference: ref)
+    }
+    // prism://u/<handle>
+    if scheme == "prism", comps.host == "u", let h = parts.first, let handle = handleIfValid(h) {
+      return PrismLink(handle: handle, amount: amount, reference: ref)
+    }
+    if scheme == "http" || scheme == "https" {
+      // https://<host>/pay/<id>
+      if parts.count >= 2, parts[0] == "pay" {
+        return PrismLink(prismId: parts[1], amount: amount, reference: ref)
+      }
+      // Pretty: https://prism.app/<handle>  (single non-reserved segment)
+      if parts.count == 1, let handle = handleIfValid(parts[0]) {
+        return PrismLink(handle: handle, amount: amount, reference: ref)
+      }
+    }
     return nil
+  }
+
+  private static func handleIfValid(_ raw: String) -> String? {
+    let h = raw.hasPrefix("@") ? String(raw.dropFirst()) : raw
+    guard h.count >= 2, !reserved.contains(h.lowercased()),
+      h.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "." }) else { return nil }
+    return h
+  }
+  private static func normalizedAmount(_ raw: String?) -> String? {
+    guard let raw, let d = Decimal(string: raw.replacingOccurrences(of: ",", with: "")), d > 0 else { return nil }
+    return raw
   }
 }
 

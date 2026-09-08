@@ -80,15 +80,10 @@ struct MainShell: View {
     }
   }
   private func routeDeepLink(_ url: URL) async {
-    guard let prismId = PrismDeepLink.prismId(from: url.absoluteString) else { return }
-    do {
-      let resolution = try await PrismAPI.shared.resolve(prismId: prismId)
-      guard resolution.found else { throw APIError.server("This Prism account is unavailable.") }
-      let contact = ContactPerson(
-        id: "link:\(prismId)", name: "Prism recipient", phone: nil, initials: "PR",
-        prismState: .onPrism(resolution))
-      model.presentSend = SendTarget(contact: contact, resolution: resolution)
-    } catch { model.notify(error.localizedDescription) }
+    // Universal links and prism:// links share the QR resolver; opens the Send review, never sends.
+    if let message = await model.openPaymentLink(url.absoluteString, entryMethod: .paymentLink) {
+      model.notify(message)
+    }
   }
 
 }

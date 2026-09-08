@@ -64,6 +64,36 @@ final class AppModel: ObservableObject {
 
   func updateIdentity(_ value: PrismIdentity) { identity = value }
 
+  /// Resolve a Prism recipient link/QR through the SAME resolver used by contacts, then open the Send
+  /// review (never an instant send). Returns an error string on failure, or nil on success.
+  /// `entryMethod` records how the recipient was reached (.qr for a scan, .paymentLink for a link).
+  func openPaymentLink(_ raw: String, entryMethod: PrismEntryMethod) async -> String? {
+    guard let link = PrismDeepLink.parse(raw) else { return "That isn't a Prism payment link." }
+    do {
+      let resolution: ResolutionResponse
+      if let id = link.prismId {
+        resolution = try await PrismAPI.shared.resolve(prismId: id)
+      } else if let handle = link.handle {
+        resolution = try await PrismAPI.shared.resolve(handle: handle)
+      } else {
+        return "That isn't a Prism payment link."
+      }
+      guard resolution.found else { return "This Prism account is unavailable." }
+      let display = link.handle.map { "@\($0)" } ?? "Prism recipient"
+      let initials = link.handle.map { String($0.prefix(2)).uppercased() } ?? "PR"
+      let contact = ContactPerson(
+        id: "link:\(link.handle ?? link.prismId ?? UUID().uuidString)",
+        name: display, phone: nil, initials: initials, handle: link.handle.map { "@\($0)" },
+        prismState: .onPrism(resolution))
+      presentSend = SendTarget(
+        contact: contact, resolution: resolution,
+        initialAmount: link.amount, initialMemo: link.reference, entryMethod: entryMethod)
+      return nil
+    } catch {
+      return error.localizedDescription
+    }
+  }
+
   func notify(_ message: String) {
     toast = message
     Task {

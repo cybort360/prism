@@ -66,6 +66,8 @@ struct PaymentProofView: View {
       .background(badge.tone.color.opacity(0.10))
       .clipShape(Capsule())
       .padding(.top, 2)
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel("Proof status: \(badge.text)")
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.top, 6)
@@ -300,6 +302,9 @@ struct PaymentProofView: View {
         Text(badge.text).font(PrismTheme.body(12.5, weight: .semibold)).foregroundStyle(badge.tone.color)
       }
     }
+    // Status is conveyed by text, not colour alone — VoiceOver reads "<check>: <status>".
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("\(key): \(badge.text)")
   }
 
   @ViewBuilder private func timeRow(_ key: String, _ iso: String?) -> some View {
