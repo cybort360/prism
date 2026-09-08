@@ -31,7 +31,8 @@
     { "id": "AUTH-1", "claim": "Recipient/amount/route are bound in the signed authorization; mutation after signing is rejected", "status": "VERIFIED", "evidence": "contracts/test/PrismRouterExternalRecipient.t.sol, PrismPaymentRouter.t.sol (testModified*/testReplayRejected); backend mutation-audit" },
     { "id": "MONEY-1", "claim": "Submission is never treated as completion; UI-terminal only after a reconciled Monad receipt", "status": "VERIFIED", "evidence": "backend/test/mutation-audit.test.js MUT-15/16; PaymentCoordinator polls backend 'completed'" },
     { "id": "GAS-1", "claim": "A payer holding MON = 0 can pay (relayer sponsors gas)", "status": "PARTIAL", "evidence": "proof/ZERO_MON_PROOF.md (local); live testnet path deployed, end-to-end zero-MON tx not re-verified this phase" },
-    { "id": "SUITE-1", "claim": "Backend / contracts / iOS suites green", "status": "VERIFIED", "evidence": "backend 132, contracts 43, iOS 95 — executed this session; re-run with criticalTestCommands" }
+    { "id": "CONT-4", "claim": "End-to-end continuity narrative: rotate keeps paying the same person; number reassignment is blocked, never silently redirected", "status": "VERIFIED", "evidence": "backend/test/continuity-narrative.test.js" },
+    { "id": "SUITE-1", "claim": "Backend / contracts / iOS suites green", "status": "VERIFIED", "evidence": "backend 133, contracts 43, iOS 95 — executed this session; re-run with criticalTestCommands" }
   ],
   "sourceOfTruth": "Repository files under /forge and the test suites. Prior chat summaries are NOT authoritative.",
   "deployment": { "monadTestnet": "deployments/monad-testnet.json (router 0x423a…62b7, vault 0xBe3D…Eae3)" }

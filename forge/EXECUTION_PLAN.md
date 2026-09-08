@@ -19,10 +19,14 @@ Create `/forge/*`, `/AGENTS.md`, `/forge.json`; align README terminology; report
 - plus case-insensitive account match and first-time/reset edges.
 Test-only, no behavior change. iOS suite 89 → 95. CONT-3 / C-CONT-BLOCK → `VERIFIED`.
 
-### Step 2 — Continuity end-to-end narrative
-A scripted/observed run (backend + app or backend-integration test) that walks: pay → recipient
-rotates phone (same account) → pay again succeeds → recipient's alias reassigned to a different
-identity → payment is blocked for review. Record it in [`PROOF_LEDGER.md`](PROOF_LEDGER.md).
+### Step 2 — Continuity end-to-end narrative — ✅ DONE (2026-09-08)
+`backend/test/continuity-narrative.test.js` walks the whole story through the real services:
+Alice pays Bob by phone (resolve→prepare→sign→submit→reconcile→completed) → Bob rotates his number
+(same identity/account, alias bumps) → Alice pays again and it succeeds (INV-C1) → the pre-rotation
+resolution is stale and refused (INV-C2) → Bob's old number is reassigned to Carol (different
+identity/account) → a payment on Alice's trusted Bob resolution is refused, never silently redirected
+(INV-C3). The iOS visible review of the same discontinuity is covered by `IdentityContinuityTests`.
+Recorded as CONT-4 in [`PROOF_LEDGER.md`](PROOF_LEDGER.md). Backend suite 132 → 133.
 
 ### Step 3 — Refresh stale proof (F-3, F-4)
 Update the README proof table to real counts; re-run or honestly downgrade the on-chain rows. Do not

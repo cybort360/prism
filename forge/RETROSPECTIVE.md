@@ -21,6 +21,13 @@ entry. Kept honest — the point is to not repeat mistakes.
 - Test-only, no behavior change. iOS 89 → 95; backend 132 / contracts 43 unchanged.
 - INV-C3 / CONT-3 / C-CONT-BLOCK upgraded `PARTIAL → VERIFIED` with executed evidence.
 
+## 2026-09-08 — Step 2 done (continuity narrative end-to-end)
+- Added `backend/test/continuity-narrative.test.js`: one scenario through the real resolver + identity
+  + payment services — pay Bob → Bob rotates number (same account) → pay again succeeds → stale
+  resolution refused → number reassigned to Carol → payment on the trusted Bob resolution refused.
+  Two real completed payments + two `assertResolution` 409s. Backend 132 → 133.
+- CONT-4 recorded `VERIFIED`. INV-C1/C2/C3 now have both unit and end-to-end evidence.
+
 ## Process lessons (carry forward)
 - **Regenerate the Xcode project after any merge that adds/removes Swift files.** The Aurora #2 and #3
   merges each broke the iOS build because `xcodegen` wasn't re-run and latent (never-compiled) Swift

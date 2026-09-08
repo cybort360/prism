@@ -8,7 +8,7 @@ because code exists.
 
 | Suite | Command | Result | Status |
 |---|---|---|---|
-| Backend | `cd backend && node --test test/*.test.js` | 132 pass / 0 fail | `VERIFIED` |
+| Backend | `cd backend && node --test test/*.test.js` | 133 pass / 0 fail | `VERIFIED` |
 | Contracts | `cd contracts && forge test` | 43 pass / 0 fail (incl. 3 invariants × 256 runs) | `VERIFIED` |
 | iOS unit | `xcodebuild … -only-testing:PrismTests test` | 95 pass / 0 fail (89 + 6 continuity) | `VERIFIED` |
 
@@ -22,6 +22,7 @@ because code exists.
 | CONT-1 | Legitimate alias change bumps `aliasVersion`, keeps account | `VERIFIED` | `security-boundaries.test.js` |
 | CONT-2 | Stale resolution invalidated after rotation | `VERIFIED` | `security-boundaries.test.js`; `assertResolution` 409 |
 | CONT-3 | Different-identity alias visibly blocked/reviewed (not redirected) | `VERIFIED` | server 409 (`assertResolution`) + iOS `IdentityContinuityTests` (warns on changed prismId/account; silent on alias-only change) |
+| CONT-4 | End-to-end narrative: pay → rotate (same account) → pay again succeeds → number reassigned → blocked, never redirected | `VERIFIED` | backend `continuity-narrative.test.js` (real resolve→prepare→sign→submit→reconcile; two completed payments to Bob + two stale-resolution rejections) |
 
 ## Security / privacy / money-truth
 
