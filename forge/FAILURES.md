@@ -8,7 +8,7 @@ optional. Nothing is hidden to make a demo look better.
 | ID | Severity | Gap | Where |
 |---|---|---|---|
 | F-2 | MED | No executed **cold-user** evidence for thesis #12 (a first-time user completing a payment without coaching). UX claim only. | — |
-| F-5 | LOW | Aurora cross-chain is **preview-only**; live `POST /api/quote` has never been called with a real key (NEAR Intents carries Monad mainnet only; PRISM runs testnet). Honestly labelled in-app. | `docs/AURORA_INTENTS.md` |
+| F-5 | LOW · **EXTERNAL BLOCKER** | Aurora cross-chain is **preview-only** and **cannot be proven live this phase**: the send side depends on Aurora's **Intents Connect** API (pre-release / email-gated), and NEAR Intents carries **Monad mainnet only** while PRISM runs testnet — so no route can settle against this deployment regardless of code. Requires an Aurora app key **and** a mainnet deployment. Honestly labelled in-app (preview, no fake delivery); the receive side uses the available Deposits API. Not a defect — a dependency. | `docs/AURORA_INTENTS.md` |
 | F-6 | LOW | `INV-M2` (backend not the canonical balance authority) has no explicit negative test. | — |
 
 ## Architectural conflicts (reported, not silently resolved)

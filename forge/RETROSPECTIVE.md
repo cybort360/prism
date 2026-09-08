@@ -37,6 +37,17 @@ entry. Kept honest — the point is to not repeat mistakes.
 - Dry-ran the judge path; every command reproduced. Only drift: JUDGE_PATH backend count 132 → 133.
 - Continuity vertical slice: **Definition of Done met.**
 
+## 2026-09-08 — Remaining live proofs swept
+- **Claim collection live** (CHAIN-6): funded a claim, then collected it with BOTH the authorizer
+  eligibility signature AND the recipient's ClaimIntent — recipient +1.00 USDC. Proves an alias/OTP
+  alone cannot collect (INV-A1). fund `0x8fd7…daf6`, collect `0x195a…0d2c`.
+- **Cold-user onboarding** (UX-1 → PARTIAL): ran `testPhoneOnboardingReachesHome` against the real
+  Mera bridge + live backend — cold launch reaches Home (24.8s). Honestly kept PARTIAL: it doesn't
+  drive a full payment and "without coaching" needs an observed human. Not overclaimed.
+- **Aurora cross-chain** (F-5): the one item with a hard EXTERNAL blocker — pre-release Intents Connect
+  API + Monad-mainnet-only vs our testnet. Cannot be proven live without an Aurora key + a mainnet
+  deployment. Left in honest preview mode; not faked.
+
 ## 2026-09-08 — F-4b closed (zero-MON + claim/refund live on Monad)
 - **Zero-MON payment**: a fresh payer holding USDC and 0 MON paid 1.00 USDC; the relayer sponsored gas;
   the payer's MON stayed 0. tx `0xd34d…34a16`. GAS-1 → `VERIFIED`.

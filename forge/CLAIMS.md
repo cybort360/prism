@@ -10,7 +10,7 @@ evidence lives in [`PROOF_LEDGER.md`](PROOF_LEDGER.md). **Do not mark `VERIFIED`
 |---|---|---|
 | C-PAY | You can pay a person (Contacts/@handle/QR/link) without seeing a wallet address | `PARTIAL` (flows built + unit-tested; no cold-user run) |
 | C-GAS | You can pay while holding MON = 0 | `PARTIAL` (local proof; not re-run on testnet) |
-| C-CLAIM | You can send to someone not yet on PRISM; they claim it; unclaimed funds return | `VERIFIED` (unit/contract) / on-chain `UNTESTED` this phase |
+| C-CLAIM | You can send to someone not yet on PRISM; they claim it; unclaimed funds return | `VERIFIED` — unit/contract **and** live on Monad: fund→collect (CHAIN-6) and fund→refund (CHAIN-5) |
 | C-XCHAIN | Receive from / send to another chain (Aurora), in preview mode, honestly labelled | `PARTIAL` (tested against mock; live `/api/quote` never called) |
 
 ## Continuity claims (load-bearing)
