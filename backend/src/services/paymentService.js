@@ -580,7 +580,8 @@ export class PaymentService {
     const owner = op.intent?.senderPrismId ?? op.intent?.recipientPrismId;
     if (actorPrismId && owner && owner !== actorPrismId) throw httpError(403, 'operation belongs to another caller');
     const claim = op.intent?.claimId ? this.store.read().claims[op.intent.claimId] : null;
-    const ctx = { viewerPrismId: actorPrismId, identityService: this.identityService, claim };
+    const route = op.intent?.routeId ? (this.store.read().auroraRoutes ?? {})[op.intent.routeId] : null;
+    const ctx = { viewerPrismId: actorPrismId, identityService: this.identityService, claim, route };
     return { payment: canonicalPayment(op, ctx), events: ensureEvents(op), receipt: receiptFor(op, ctx) };
   }
 

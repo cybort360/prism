@@ -301,3 +301,18 @@ is Monad's either way.
 The user is always shown `minAmountOut` ("At least 0.0199 ETH on Arbitrum"), never the `amountOut`
 forecast. `AuroraRouteDisplay.blockedReason` names every reason approval is unavailable, so the
 button is never merely disabled.
+
+Afterwards it is visible in two places, both of which keep the legs distinct:
+
+- **Activity** — `activityService` gives a cross-chain send its own branch (`cross-chain-sent`).
+  It has no Prism recipient, so without one it would have vanished from the feed entirely. The row
+  carries the payment's status *and* the route's, never one standing in for the other.
+- **Payment details** — a **Cross-chain** section listing the destination chain, the token, the
+  guaranteed minimum, the destination address and the route status. It is a separate section from
+  Receipt on purpose: Receipt describes money leaving the account on Monad, and collapsing the two
+  would let a confirmed Monad leg read as a delivery. The receipt's "To" row names the destination
+  address rather than inventing a Prism recipient that does not exist.
+
+There is no standalone route-detail screen: the quote screen shows a live route while it is in
+flight, and Payment details is where it lives afterwards. A third surface would have been a third
+place for the two legs to drift apart.

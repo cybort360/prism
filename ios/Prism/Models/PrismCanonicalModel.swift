@@ -72,6 +72,21 @@ struct PrismLifecycleEvent: Codable, Identifiable, Hashable {
   let evidenceReference: String?
 }
 
+/// Where a cross-chain send is actually going. Nil for every other kind.
+///
+/// `state` is the ROUTED leg and is deliberately separate from the payment's `lifecycleState`,
+/// which describes only the Monad leg. A confirmed Monad transaction is not delivery.
+struct PrismRouteSummary: Codable, Equatable {
+  let routeId: String
+  let state: AuroraRouteState
+  let destinationChain: String?
+  let destinationChainLabel: String?
+  let destinationSymbol: String?
+  let destinationAddress: String?
+  let minAmountOut: String?
+  let destinationDecimals: Int?
+}
+
 struct PrismPayment: Codable, Identifiable, Equatable {
   var id: String { paymentId }
   let paymentId: String
@@ -101,6 +116,8 @@ struct PrismPayment: Codable, Identifiable, Equatable {
   let gasSponsored: Bool?
   let failureCode: String?
   let failureMessage: String?
+  /// Present only on a cross-chain send. Optional, so an older backend simply yields nil.
+  let route: PrismRouteSummary?
 
   /// A receipt must never claim settled merely because it was submitted.
   var isSettled: Bool { lifecycleState.isSettled && completedAt != nil }
@@ -204,6 +221,21 @@ extension PrismLifecycleEvent {
     PrismLifecycleEvent(id: UUID().uuidString, paymentId: "fx", state: state, source: source, occurredAt: at, displayTitle: title, displayDetail: nil, evidenceReference: nil)
   }
 }
+extension PrismRouteSummary {
+  static func fx(
+    state: AuroraRouteState = .routing,
+    chainLabel: String = "Arbitrum",
+    symbol: String = "ETH",
+    address: String = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+    minAmountOut: String? = "19899000000000000"
+  ) -> PrismRouteSummary {
+    PrismRouteSummary(
+      routeId: "route_fx", state: state, destinationChain: "arb", destinationChainLabel: chainLabel,
+      destinationSymbol: symbol, destinationAddress: address, minAmountOut: minAmountOut,
+      destinationDecimals: 18)
+  }
+}
+
 extension PrismPayment {
   static func fixture(
     kind: PrismPaymentKind = .direct, direction: PrismPaymentDirection = .sent,
@@ -211,7 +243,8 @@ extension PrismPayment {
     amountAtomic: String? = "20000000", memo: String? = "Dinner",
     sender: PrismParty = .fx("You"), recipient: PrismParty = .fx("Tobi Bakare", handle: "@tobi"),
     requestId: String? = nil, claimId: String? = nil, transactionHash: String? = "0x72f5a9b3c1d4e6f70123456789abcdef0123456789abcdef0123456789ab91a",
-    blockNumber: String? = "38420119", completedAt: String? = "2026-09-05T02:31:00.000Z", failureCode: String? = nil
+    blockNumber: String? = "38420119", completedAt: String? = "2026-09-05T02:31:00.000Z", failureCode: String? = nil,
+    route: PrismRouteSummary? = nil
   ) -> PrismPayment {
     PrismPayment(
       paymentId: "0xpay", operationId: "0xpay", kind: kind, direction: direction, entryMethod: entryMethod,
@@ -220,7 +253,7 @@ extension PrismPayment {
       lifecycleState: lifecycleState, createdAt: "2026-09-05T02:30:00.000Z", authorizedAt: "2026-09-05T02:30:20.000Z",
       submittedAt: "2026-09-05T02:30:30.000Z", confirmedAt: completedAt, indexedAt: nil, reconciledAt: completedAt,
       completedAt: lifecycleState == .completed ? completedAt : nil, transactionHash: transactionHash,
-      blockNumber: blockNumber, gasSponsored: true, failureCode: failureCode, failureMessage: nil)
+      blockNumber: blockNumber, gasSponsored: true, failureCode: failureCode, failureMessage: nil, route: route)
   }
   static var fixtureEvents: [PrismLifecycleEvent] {
     [.fx(.created, .app, "Payment created", "2026-09-05T02:30:00.000Z"),

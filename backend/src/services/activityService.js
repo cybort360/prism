@@ -9,6 +9,15 @@ export class ActivityService {
         const other=this.identityService.get(incoming?i.senderPrismId:i.recipientPrismId);
         items.push({id:op.operationId,kind:incoming?'received':'sent',direction:incoming?'incoming':'outgoing',counterpartyPrismId:other?.prismId??null,counterpartyHandle:other?.handle?`@${other.handle}`:null,amountAtomic:i.amountAtomic,token:i.token??null,tokenSymbol:i.tokenSymbol??null,memo:i.memo??'',status:consumerState(op.state),createdAt:op.createdAt,transactionHash:op.transactionHash??op.receipt?.receipt?.transactionHash??null,requestId:i.requestId??null,claimId:null});
       }
+      // A cross-chain send has no Prism recipient — the counterparty is an address on another
+      // chain — so it needs its own branch or it would vanish from the feed entirely.
+      if (i.kind==='aurora-send' && i.senderPrismId===prismId) {
+        const route=(data.auroraRoutes??{})[i.routeId];
+        items.push({id:op.operationId,kind:'cross-chain-sent',direction:'outgoing',counterpartyPrismId:null,counterpartyHandle:null,amountAtomic:i.amountAtomic,token:i.token??null,tokenSymbol:i.tokenSymbol??null,memo:route?`To ${route.destination.symbol} on ${route.destination.chainLabel}`:'Sent to another network',status:consumerState(op.state),createdAt:op.createdAt,transactionHash:op.transactionHash??null,requestId:null,claimId:null,routeId:i.routeId??null,
+        // The route's own state, kept distinct from the payment's: `status` above is the Monad leg,
+        // and a completed Monad leg is not delivery.
+        routeState:route?.state??null,destinationChain:route?.destination?.chainLabel??null,destinationSymbol:route?.destination?.symbol??null});
+      }
       if ((i.kind==='claim-funding'||i.kind==='claim-refund') && i.senderPrismId===prismId) {
         const claim=data.claims[i.claimId];
         items.push({id:op.operationId,kind:i.kind,direction:'outgoing',counterpartyPrismId:null,counterpartyHandle:null,claimId:i.claimId,amountAtomic:i.amountAtomic??claim?.amountAtomic??null,token:i.token??claim?.token??null,tokenSymbol:i.tokenSymbol??claim?.tokenSymbol??null,memo:i.kind==='claim-refund'?'Claim refund':'Waiting to be claimed',status:consumerState(op.state),createdAt:op.createdAt,transactionHash:op.transactionHash??null,requestId:null});

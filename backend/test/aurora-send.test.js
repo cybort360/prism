@@ -430,3 +430,65 @@ test('repeated polling does not duplicate route history', async () => {
     assert.deepEqual(states, ['funding', 'routing']);
   });
 });
+
+// MARK: the send has to be visible afterwards
+
+test('a cross-chain send appears in the activity feed with its destination', async () => {
+  await withMocks(async () => {
+    const { auroraService, store, alice } = stack();
+    const { ActivityService } = await import('../src/services/activityService.js');
+    const { IdentityService } = await import('../src/services/identityService.js');
+    const activityService = new ActivityService({ store, identityService: new IdentityService({ store, config }) });
+
+    const route = await quote(auroraService);
+    const prepared = await auroraService.prepareSend({ prismId: 'alice', routeId: route.routeId });
+    await auroraService.submitSend({ prismId: 'alice', routeId: route.routeId, ...(await sign(alice, prepared)) });
+
+    const items = activityService.list('alice');
+    const entry = items.find((i) => i.kind === 'cross-chain-sent');
+    assert.ok(entry, 'the send is in the feed — it has no Prism recipient, so it needs its own branch');
+    assert.equal(entry.amountAtomic, '50000000');
+    assert.equal(entry.destinationChain, 'Arbitrum');
+    assert.equal(entry.destinationSymbol, 'ETH');
+    assert.equal(entry.memo, 'To ETH on Arbitrum');
+    assert.equal(entry.routeId, route.routeId);
+    // The Monad leg and the routed leg are reported separately, never collapsed.
+    assert.equal(entry.routeState, 'funding');
+
+    // And it is not visible to anyone else.
+    assert.equal(activityService.list('bob').length, 0);
+  });
+});
+
+test('the canonical payment carries where the money is going', async () => {
+  await withMocks(async () => {
+    const { auroraService, paymentService, alice } = stack();
+    const route = await quote(auroraService);
+    const prepared = await auroraService.prepareSend({ prismId: 'alice', routeId: route.routeId });
+    await auroraService.submitSend({ prismId: 'alice', routeId: route.routeId, ...(await sign(alice, prepared)) });
+
+    const { payment } = paymentService.canonicalFor(prepared.paymentId, 'alice');
+    assert.equal(payment.kind, 'crossChainSend');
+    assert.equal(payment.route.destinationChainLabel, 'Arbitrum');
+    assert.equal(payment.route.destinationSymbol, 'ETH');
+    assert.equal(payment.route.destinationAddress, THEIR_ARB_ADDRESS);
+    assert.ok(payment.route.minAmountOut, 'the guaranteed floor travels with the receipt');
+    // The route's state is its own; the payment's lifecycleState describes only the Monad leg.
+    assert.equal(payment.route.state, 'funding');
+  });
+});
+
+test('an ordinary payment carries no route', async () => {
+  await withMocks(async () => {
+    const { paymentService, store } = stack();
+    store.mutate((d) => {
+      d.operations.plain = {
+        operationId: 'plain', kind: 'payment', state: 'prepared',
+        intent: { kind: 'payment', senderPrismId: 'alice', recipientPrismId: 'bob', amountAtomic: '1000000' },
+        events: [], createdAt: new Date().toISOString()
+      };
+    });
+    const { payment } = paymentService.canonicalFor('plain', 'alice');
+    assert.equal(payment.route, null);
+  });
+});

@@ -42,6 +42,8 @@ phone / @handle / QR / payment link
   authorization builder + verifier, MON-funded relayer, claim authorizer.
 - `contracts/` — `PrismPaymentRouter`, `PrismClaimVault`, `IERC3009`, a faithful `MockUSDC`, and
   Foundry tests.
+- `backend/src/aurora/` — Aurora Intents adapter: receive from any chain into USDC on Monad, and
+  send/spend out to any token on any chain. Swappable client + runtime asset directory.
 - `indexer/envio/` — Envio HyperIndex config + handlers that index real Monad activity into the
   GraphQL API the backend reads for reconciled history.
 - `web/.well-known/` — the `apple-app-site-association` file that must be hosted at the
@@ -62,6 +64,10 @@ under `archive/` and is not active alongside Mera. See `docs/PRD_ADDENDUM_v1.1.m
 8. Pre-user claims use random claim IDs / references; no phone-derived value is emitted on-chain.
 9. Requests are off-chain until paid; the UI shows success only after an on-chain receipt reconciles.
 10. Recipient/amount are bound into the signed ERC-3009 nonce, so a relayer can't redirect or resize.
+11. Cross-chain routing (Aurora Intents) extends that binding rather than weakening it: for a send to
+    another chain the destination chain, asset, recipient and guaranteed minimum are hashed into the
+    same signed envelope, so one approval authorizes the whole route. No contract change was needed —
+    the router already forwards to `env.recipient`. See `docs/AURORA_INTENTS.md`.
 
 ## Network defaults
 

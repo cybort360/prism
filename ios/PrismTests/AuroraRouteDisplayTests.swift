@@ -224,6 +224,42 @@ final class CrossChainPaymentDetailsTests: XCTestCase {
     XCTAssertTrue(direct.technicalRows.contains { $0.label == "Network" && $0.value == "Monad" })
   }
 
+  func testCrossChainSectionNamesTheRealDestination() {
+    let d = PaymentDisplay(payment: .fixture(kind: .crossChainSend, route: .fx()))
+    let rows = Dictionary(uniqueKeysWithValues: d.crossChainRows.map { ($0.label, $0.value) })
+
+    XCTAssertEqual(rows["Destination"], "Arbitrum")
+    XCTAssertEqual(rows["They receive"], "ETH")
+    XCTAssertEqual(rows["Guaranteed minimum"], "0.0199 ETH")
+    XCTAssertEqual(rows["Route status"], "Converting to ETH")
+
+    // "To" must be the destination address, not an invented Prism recipient.
+    let receipt = Dictionary(uniqueKeysWithValues: d.receiptRows.map { ($0.label, $0.value) })
+    XCTAssertEqual(receipt["On"], "Arbitrum")
+    XCTAssertNotEqual(receipt["To"], "Tobi Bakare")
+  }
+
+  func testOrdinaryPaymentsRenderNoCrossChainSection() {
+    XCTAssertTrue(PaymentDisplay(payment: .fixture()).crossChainRows.isEmpty)
+    XCTAssertNil(PaymentDisplay(payment: .fixture()).routeStatusLabel)
+  }
+
+  /// The route's status is its own. A completed Monad leg beside an undelivered route must not read
+  /// as delivered anywhere on this screen.
+  func testRouteStatusIsSeparateFromTheMonadLeg() {
+    let d = PaymentDisplay(payment: .fixture(kind: .crossChainSend, lifecycleState: .completed, route: .fx(state: .routing)))
+    XCTAssertEqual(d.routeStatusLabel, "Converting to ETH")
+    XCTAssertNotEqual(d.routeStatusTone, .positive)
+
+    let delivered = PaymentDisplay(payment: .fixture(kind: .crossChainSend, route: .fx(state: .delivered)))
+    XCTAssertEqual(delivered.routeStatusLabel, "Delivered")
+    XCTAssertEqual(delivered.routeStatusTone, .positive)
+
+    let refunded = PaymentDisplay(payment: .fixture(kind: .crossChainSend, route: .fx(state: .refunded)))
+    XCTAssertEqual(refunded.routeStatusLabel, "Refunded to your balance")
+    XCTAssertEqual(refunded.routeStatusTone, .danger)
+  }
+
   func testAnUnknownKindOrEntryMethodDecodesLenientlyRatherThanFailing() throws {
     let kind = try JSONDecoder().decode(PrismPaymentKind.self, from: #""some_future_kind""#.data(using: .utf8)!)
     XCTAssertEqual(kind, .direct)
