@@ -61,3 +61,17 @@ type VaultTransfer {
   txHash: String!
   timestamp: Int!
 }
+
+# Every USDC transfer on Monad. Router/vault movements are already covered by VaultTransfer above;
+# this wider entity is what lets Prism attribute an INBOUND cross-chain deposit, which arrives as an
+# ordinary USDC transfer from an Aurora settlement address straight to a user's Mera account and
+# therefore touches no Prism contract at all. HyperSync makes the full-token scan cheap.
+type UsdcTransfer {
+  id: ID! # `${txHash}-${logIndex}`
+  from: String!
+  to: String!
+  value: BigInt!
+  txHash: String!
+  blockNumber: Int!
+  timestamp: Int!
+}

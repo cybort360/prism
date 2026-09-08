@@ -16,10 +16,12 @@ import { RequestService } from './services/requestService.js';
 import { ClaimService } from './services/claimService.js';
 import { PaymentService } from './services/paymentService.js';
 import { ActivityService } from './services/activityService.js';
+import { AuroraService } from './services/auroraService.js';
 import { ProofService } from './services/proofService.js';
 import { usdcBalanceOf, claimAuthorizerAddress, relayerAccount, verifyChainId, verifyUsdcDomain } from './chain/eth.js';
 import { chainProvider } from './providers/index.js';
 import { envioIndexer } from './indexers/index.js';
+import { auroraClient } from './aurora/index.js';
 import { verifyAlchemySignature, extractTxHashes } from './providers/alchemyWebhook.js';
 import { snapshot as metricsSnapshot } from './lib/metrics.js';
 
@@ -34,6 +36,7 @@ const requestService = new RequestService({ store, identityService, config });
 const claimService = new ClaimService({ store, config, identityService });
 const paymentService = new PaymentService({ store, config, identityService, claimService, resolverService, requestService });
 const activityService = new ActivityService({ store, identityService });
+const auroraService = new AuroraService({ store, config, identityService });
 const proofService = new ProofService({ paymentService, identityService, config });
 
 // Replay/idempotency guard for webhook event ids.
@@ -169,6 +172,20 @@ route('GET', '/v1/claims/:id', async ({ user, params }) => paymentService.reconc
 
 route('GET', '/v1/activity', async ({ user }) => activityService.list(user.prismId), true);
 
+// --- Aurora Intents: receive from any chain ----------------------------------
+// Aurora routes a deposit on any supported chain into USDC on Monad at the caller's own account.
+// Prism never takes custody and signs nothing here: the deposit address is derived from the user's
+// account, so the inbound leg needs no authorization from us.
+route('GET', '/v1/aurora/chains', async () => auroraService.chains(), true);
+route('POST', '/v1/aurora/deposits/address', async ({ user, body }) => {
+  rateLimit(`aurora-address:${user.prismId}`, 30);
+  return auroraService.createDepositAddress({ prismId: user.prismId, depositChain: body.depositChain });
+}, true);
+route('GET', '/v1/aurora/deposits', async ({ user }) => auroraService.listDeposits(user.prismId), true);
+route('GET', '/v1/aurora/arrivals', async ({ user }) => auroraService.arrivals(user.prismId), true);
+route('GET', '/v1/aurora/deposits/:address', async ({ user, params }) =>
+  auroraService.refreshDeposit({ prismId: user.prismId, depositAddress: params.address }), true);
+
 // --- infrastructure: Alchemy webhook, dev proof surface, observability -------
 
 // Alchemy webhook (fast live confirmation). Verified by HMAC; deduped; only ever triggers a chain
@@ -207,7 +224,7 @@ route('GET', '/v1/proof/:paymentId', async ({ user, params }) => {
 // Observability snapshot (dev-only): P50/P95 latencies + failure rates.
 route('GET', '/v1/metrics', async () => {
   if (!config.proofEnabled) throw httpError(404, 'not found');
-  return { chain: { provider: chainProvider().name, rpcHost: chainProvider().rpcHost }, envio: { available: envioIndexer().available() }, ...metricsSnapshot() };
+  return { chain: { provider: chainProvider().name, rpcHost: chainProvider().rpcHost }, envio: { available: envioIndexer().available() }, aurora: { available: auroraClient().available(), mode: config.aurora.mode }, ...metricsSnapshot() };
 });
 
 // --- HTTP server -------------------------------------------------------------

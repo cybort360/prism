@@ -1,6 +1,7 @@
 /*
  * Envio HyperIndex handlers for Prism's on-chain payment surface on Monad.
- * Populates Payment, Claim, AccountActivity, RequestSettlement and VaultTransfer — the entities the
+ * Populates Payment, Claim, AccountActivity, RequestSettlement, VaultTransfer and UsdcTransfer — the
+ * entities the
  * Prism backend consumes for reconciled historical activity. Generated types come from `envio codegen`.
  *
  * These handlers only project what the chain already emitted; they never invent financial state.
@@ -100,7 +101,26 @@ async function recordVaultTransfer(event: any, context: any) {
   });
 }
 
-// Only USDC transfers touching the Prism router or vault.
+/**
+ * Every USDC transfer, unfiltered.
+ *
+ * An inbound cross-chain deposit (Aurora Intents routing any chain -> USDC on Monad) lands as a
+ * plain transfer from an Aurora settlement address directly to the recipient's Mera account. It
+ * touches no Prism contract, so the router/vault filter above cannot see it, and there is no event
+ * of Prism's own to key off. Indexing the token in full is what makes that deposit attributable —
+ * the backend queries by `to` to label it in Activity.
+ *
+ * This is projection, not truth: the balance a user sees still comes from an on-chain read.
+ */
+async function recordUsdcTransfer(event: any, context: any) {
+  context.UsdcTransfer.set({
+    id: `${event.transaction.hash}-${event.logIndex}`,
+    from: event.params.from, to: event.params.to, value: event.params.value,
+    txHash: event.transaction.hash, blockNumber: event.block.number, timestamp: event.block.timestamp,
+  });
+}
+
 USDC.Transfer.handler(async ({ event, context }) => {
   await recordVaultTransfer(event, context);
+  await recordUsdcTransfer(event, context);
 });

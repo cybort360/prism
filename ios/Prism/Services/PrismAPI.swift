@@ -29,6 +29,7 @@ final class PrismAPI: @unchecked Sendable {
   struct PrepareClaimBody: Encodable { let recipientPhone: String; let amountAtomic: String; let expirySeconds: Int; let memo: String }
   struct FundClaimBody: Encodable { let signature: String }
   struct ClaimIntentBody: Encodable { let recipientIntentSignature: String }
+  struct AuroraDepositAddressBody: Encodable { let depositChain: String }
 
   func config() async throws -> PrismNetworkConfig { try await api.request("/v1/config") }
   func runtimeConfig() async throws -> PrismNetworkConfig { try await config() }
@@ -150,6 +151,33 @@ final class PrismAPI: @unchecked Sendable {
   }
 
   func activity() async throws -> [ActivityRecord] { try await api.request("/v1/activity") }
+
+  // MARK: cross-chain (Aurora Intents)
+  //
+  // Receiving needs no signature: the deposit address is derived from the user's own account, so
+  // there is nothing for Prism to authorize. That is why none of these touch the Mera bridge.
+
+  /// Chains and assets Aurora can currently route, plus whether a route can actually settle against
+  /// the chain this build talks to.
+  func auroraChains() async throws -> AuroraChainsResponse { try await api.request("/v1/aurora/chains") }
+
+  /// Create (or return) the permanent deposit address for a source chain. Idempotent server-side —
+  /// calling it again for the same chain returns the same address with `alreadyExists: true`.
+  func createAuroraDepositAddress(depositChain: String) async throws -> AuroraDeposit {
+    try await api.send("/v1/aurora/deposits/address", body: AuroraDepositAddressBody(depositChain: depositChain))
+  }
+
+  func auroraDeposits() async throws -> AuroraDepositsResponse { try await api.request("/v1/aurora/deposits") }
+
+  /// Refresh one address against Aurora's live status. A response with `statusKnown == false` means
+  /// the status service could not be reached, not that nothing has happened.
+  func refreshAuroraDeposit(address: String) async throws -> AuroraDeposit {
+    let encoded = address.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? address
+    return try await api.request("/v1/aurora/deposits/\(encoded)")
+  }
+
+  /// USDC that has landed at the user's account on Monad, from the activity index.
+  func auroraArrivals() async throws -> AuroraArrivalsResponse { try await api.request("/v1/aurora/arrivals") }
   func requests() async throws -> [PaymentRequestRecord] { try await api.request("/v1/requests") }
 
   func draftRequest(payerPrismId: String, amountAtomic: String, memo: String) async throws -> RequestDraftResponse {
