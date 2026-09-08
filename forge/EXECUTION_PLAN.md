@@ -12,12 +12,12 @@ migration, live cross-chain settlement, mainnet.
 Create `/forge/*`, `/AGENTS.md`, `/forge.json`; align README terminology; report conflicts.
 **Status: done in this change** (docs only — no feature code touched).
 
-### Step 1 — Close the continuity evidence gap (F-1) — highest priority
-The load-bearing invariant INV-C3 is only half-tested: the server 409 is covered, the **iOS visible
-block** is not. Add a unit test for `IdentityTrustStore.warning(for:newResolution:)` proving:
+### Step 1 — Close the continuity evidence gap (F-1) — ✅ DONE (2026-09-08)
+`ios/PrismTests/IdentityContinuityTests.swift` (6 tests) now proves `IdentityTrustStore.warning`:
 - same `prismId` + same account, higher `aliasVersion` → **no warning** (continuity preserved);
-- changed `prismId` **or** changed account → **warning** (review required).
-This is test-only; it changes no behavior. Then upgrade CONT-3 / C-CONT-BLOCK toward `VERIFIED`.
+- changed `prismId` **or** changed account → **warning** (review required);
+- plus case-insensitive account match and first-time/reset edges.
+Test-only, no behavior change. iOS suite 89 → 95. CONT-3 / C-CONT-BLOCK → `VERIFIED`.
 
 ### Step 2 — Continuity end-to-end narrative
 A scripted/observed run (backend + app or backend-integration test) that walks: pay → recipient

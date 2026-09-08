@@ -10,7 +10,7 @@ because code exists.
 |---|---|---|---|
 | Backend | `cd backend && node --test test/*.test.js` | 132 pass / 0 fail | `VERIFIED` |
 | Contracts | `cd contracts && forge test` | 43 pass / 0 fail (incl. 3 invariants × 256 runs) | `VERIFIED` |
-| iOS unit | `xcodebuild … -only-testing:PrismTests test` | 89 pass / 0 fail | `VERIFIED` |
+| iOS unit | `xcodebuild … -only-testing:PrismTests test` | 95 pass / 0 fail (89 + 6 continuity) | `VERIFIED` |
 
 > These counts supersede the older `31 / 41 / 2` figures still printed in `README.md` (see
 > [`FAILURES.md`](FAILURES.md) F-3 — stale README proof table).
@@ -21,7 +21,7 @@ because code exists.
 |---|---|---|---|
 | CONT-1 | Legitimate alias change bumps `aliasVersion`, keeps account | `VERIFIED` | `security-boundaries.test.js` |
 | CONT-2 | Stale resolution invalidated after rotation | `VERIFIED` | `security-boundaries.test.js`; `assertResolution` 409 |
-| CONT-3 | Different-identity alias visibly blocked/reviewed (not redirected) | `PARTIAL` | server 409 tested; **iOS `IdentityTrustStore.warning` untested** |
+| CONT-3 | Different-identity alias visibly blocked/reviewed (not redirected) | `VERIFIED` | server 409 (`assertResolution`) + iOS `IdentityContinuityTests` (warns on changed prismId/account; silent on alias-only change) |
 
 ## Security / privacy / money-truth
 

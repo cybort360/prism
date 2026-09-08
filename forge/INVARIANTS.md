@@ -30,8 +30,9 @@ stop and require review.
   `old.prismId != att.prismIdentity` **or** `old.accountAddress != att.recipientAccount`, routing to
   `IdentityChangeReviewView` (triggered in `PersonPickerView`, `PeopleView`).
 - **Enforcement (server):** `assertResolution` blocks a changed account at settlement (409).
-- **Evidence:** `PARTIAL` — server path covered by INV-C2's test; **the iOS `IdentityTrustStore`
-  warning logic has no unit test.** See [`FAILURES.md`](FAILURES.md) F-1.
+- **Evidence:** `VERIFIED` — server path covered by INV-C2's test; iOS `IdentityContinuityTests`
+  (6 tests) proves `warning` stays silent on an alias-version-only change to the same identity/account
+  and fires on a changed `prismId` or account. F-1 closed.
 
 ## Authority & money
 

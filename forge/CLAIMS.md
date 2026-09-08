@@ -19,7 +19,7 @@ evidence lives in [`PROOF_LEDGER.md`](PROOF_LEDGER.md). **Do not mark `VERIFIED`
 |---|---|---|
 | C-CONT-KEEP | A legitimate alias change to the same identity keeps payments working | `VERIFIED` (INV-C1) |
 | C-CONT-STALE | A stale resolution can't be used after rotation | `VERIFIED` (INV-C2) |
-| C-CONT-BLOCK | A different-identity alias is blocked/reviewed, never silently redirected | `PARTIAL` (server tested; iOS untested — F-1) |
+| C-CONT-BLOCK | A different-identity alias is blocked/reviewed, never silently redirected | `VERIFIED` (server 409 + iOS `IdentityContinuityTests`) |
 
 ## Safety claims
 
