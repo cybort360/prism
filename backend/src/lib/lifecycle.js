@@ -188,6 +188,7 @@ export function paymentKind(op) {
     case 'claim-funding': return 'claimFunding';
     case 'claim-collection': return 'claimSettlement';
     case 'claim-refund': return 'refund';
+    case 'aurora-send': return 'crossChainSend';
     default: break;
   }
   const i = op.intent ?? {};
@@ -226,7 +227,7 @@ function party(identity) {
 }
 
 /** The canonical PrismPayment projection for a viewer. `identityService` resolves the counterparties. */
-export function canonicalPayment(op, { viewerPrismId = null, identityService, claim = null } = {}) {
+export function canonicalPayment(op, { viewerPrismId = null, identityService, claim = null, route = null } = {}) {
   const i = op.intent ?? {};
   const get = (id) => (id && identityService ? identityService.get(id) : null);
   const senderId = i.senderPrismId ?? claim?.senderPrismId ?? null;
@@ -261,7 +262,20 @@ export function canonicalPayment(op, { viewerPrismId = null, identityService, cl
     // recovery language. Retryable is derived from the taxonomy.
     failureCode: op.failureCode ?? (op.state === 'failed' ? 'TRANSACTION_REVERTED' : null),
     failureMessage: op.failureMessage ?? null,
-    retryable: op.failureCode ? isRetryable(op.failureCode) : (op.state === 'prepared')
+    retryable: op.failureCode ? isRetryable(op.failureCode) : (op.state === 'prepared'),
+    // Where a cross-chain send is actually going. Null for every other kind. The route's own state
+    // is carried separately from `lifecycleState`: that field describes the Monad leg, and a
+    // confirmed Monad leg is not delivery.
+    route: route ? {
+      routeId: route.routeId,
+      state: route.state,
+      destinationChain: route.destination?.chain ?? null,
+      destinationChainLabel: route.destination?.chainLabel ?? null,
+      destinationSymbol: route.destination?.symbol ?? null,
+      destinationAddress: route.destination?.address ?? null,
+      minAmountOut: route.minAmountOut ?? null,
+      destinationDecimals: route.destination?.decimals ?? null
+    } : null
   };
 }
 

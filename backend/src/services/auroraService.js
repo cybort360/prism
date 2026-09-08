@@ -1,8 +1,17 @@
 import { auroraClient } from '../aurora/index.js';
-import { routableChains, resolveAsset, chainLabel, knownChain, isEvmChain } from '../aurora/assets.js';
+import { routableChains, resolveAsset, validateDestinationAddress, chainLabel, knownChain, isEvmChain } from '../aurora/assets.js';
 import { assertRouteTransition, routeStateForStatus, AURORA_TERMINAL_STATES } from '../lib/lifecycle.js';
+import { routeHash } from '../chain/eth.js';
+import { randomHex } from '../lib/crypto.js';
 import { logger } from '../lib/logger.js';
 import { envioIndexer } from '../indexers/index.js';
+
+// How long a quote stays good. Aurora prices a route for a short window; long enough for a person to
+// read the numbers and approve with Face ID, short enough that they are never funding a stale price.
+const QUOTE_WINDOW_MS = 3 * 60_000;
+// 1%. Sent to Aurora as the slippage bound; the quote's minAmountOut is what the user is shown and
+// what gets bound into their signature.
+const SLIPPAGE_BPS = 100;
 
 /**
  * Aurora Intents integration: receive from any chain, send/spend to any chain.
@@ -20,10 +29,11 @@ import { envioIndexer } from '../indexers/index.js';
  *      balance this app reads. Both facts are surfaced to the client, not smoothed over.
  */
 export class AuroraService {
-  constructor({ store, config, identityService }) {
+  constructor({ store, config, identityService, paymentService }) {
     this.store = store;
     this.config = config;
     this.identityService = identityService;
+    this.paymentService = paymentService;
   }
 
   get mode() { return this.config.aurora.mode; }
@@ -240,6 +250,281 @@ export class AuroraService {
     });
   }
 
+  // ---- send / spend: outbound routes ---------------------------------------
+
+  /**
+   * Quote a route out of USDC on Monad into any asset on any chain.
+   *
+   * Nothing is committed here — this only reserves a route record and returns Aurora's real pricing
+   * so the user can see the deal before approving it. The destination address is validated BEFORE
+   * quoting, so a malformed address is rejected while it is still cheap to fix rather than after a
+   * signature exists.
+   */
+  async quoteSend({ prismId, destinationChain, destinationAsset, destinationAddress, amountAtomic, contractAddress = null }) {
+    this._assertAvailable();
+    const chain = String(destinationChain ?? '').trim().toLowerCase();
+    if (!knownChain(chain)) throw httpError(400, `unsupported destination chain '${chain}'`);
+
+    const address = String(destinationAddress ?? '').trim();
+    const validity = validateDestinationAddress(chain, address);
+    if (!validity.ok) throw httpError(400, validity.reason);
+
+    if (!/^\d+$/.test(String(amountAtomic)) || BigInt(amountAtomic) <= 0n) throw httpError(400, 'amount must be positive');
+    if (BigInt(amountAtomic) > this.config.limits.maxPaymentAtomic) throw httpError(400, 'amount exceeds the Prism limit');
+
+    const originChain = this.config.aurora.destinationChain;
+    const origin = await resolveAsset(originChain, 'USDC');
+    if (!origin.ok) throw httpError(503, `cannot resolve USDC on ${chainLabel(originChain)}: ${origin.reason}`);
+    const destination = await resolveAsset(chain, destinationAsset, { contractAddress });
+    if (!destination.ok) throw httpError(400, destination.reason, destination.options);
+
+    const sender = this._account(prismId);
+    const deadline = new Date(Date.now() + QUOTE_WINDOW_MS).toISOString();
+    const quoted = await auroraClient().quote({
+      // preview quotes are dry: real routing and real pricing, but Aurora issues no deposit address,
+      // so the route can be shown and cannot be funded. That is the intended behaviour on testnet.
+      dry: !this.settlementAvailable,
+      swapType: 'EXACT_INPUT',
+      depositType: 'ORIGIN_CHAIN',
+      amount: String(amountAtomic),
+      originAsset: origin.asset.assetId,
+      destinationAsset: destination.asset.assetId,
+      slippageTolerance: SLIPPAGE_BPS,
+      recipient: address,
+      recipientType: 'DESTINATION_CHAIN',
+      // A failed route refunds to the sender's own Prism account, so their money comes back to the
+      // balance they already have rather than somewhere they have to go and retrieve it.
+      refundTo: sender,
+      refundType: 'ORIGIN_CHAIN',
+      deadline
+    });
+    if (!quoted?.quote) throw httpError(502, 'Aurora could not quote this route');
+
+    const routeId = randomHex(16);
+    const record = {
+      routeId,
+      prismId,
+      senderAccount: sender,
+      state: 'quoted',
+      amountInAtomic: String(amountAtomic),
+      origin: { chain: originChain, assetId: origin.asset.assetId, symbol: origin.asset.symbol, decimals: origin.asset.decimals },
+      destination: {
+        chain, chainLabel: chainLabel(chain), address,
+        assetId: destination.asset.assetId, symbol: destination.asset.symbol,
+        decimals: destination.asset.decimals, addressVerified: validity.strict
+      },
+      depositAddress: quoted.quote.depositAddress ?? null,
+      depositMemo: quoted.quote.depositMemo ?? null,
+      amountOut: quoted.quote.amountOut ?? null,
+      minAmountOut: quoted.quote.minAmountOut ?? null,
+      timeEstimateSeconds: quoted.quote.timeEstimate ?? null,
+      quoteDeadline: quoted.quote.deadline ?? deadline,
+      // Aurora's own signature over the quote. Stored so "this deposit address came from this signed
+      // quote" is checkable after the fact rather than merely asserted by us.
+      quoteSignature: quoted.signature ?? null,
+      correlationId: quoted.correlationId ?? null,
+      settlementAvailable: this.settlementAvailable,
+      paymentId: null,
+      depositNotified: false,
+      createdAt: new Date().toISOString(),
+      history: []
+    };
+    this.store.mutate((data) => { data.auroraRoutes ??= {}; data.auroraRoutes[routeId] = record; });
+    logger.info('aurora.route.quoted', { routeId, prismId, destinationChain: chain, dry: !this.settlementAvailable });
+    return this._publicRoute(record);
+  }
+
+  /**
+   * Freeze a quoted route into a signable payment.
+   *
+   * The whole route — deposit address, destination chain, destination asset, recipient, guaranteed
+   * minimum, quote expiry — is folded into `routeHash` and placed in the envelope's opaque hash
+   * slot. The payer's single signature therefore covers the entire promise, not just "send N USDC to
+   * this address". Rewriting any of it afterwards invalidates the signature and the transaction
+   * reverts.
+   */
+  async prepareSend({ prismId, routeId }) {
+    this._assertAvailable();
+    const route = this._ownedRoute(routeId, prismId);
+    if (route.state !== 'quoted') throw httpError(409, `route is already ${route.state}`);
+    // Preparing twice must not mint a second envelope against one quote — both would be signable,
+    // and only one of them is the payment anyone is tracking. A retry returns the same payload.
+    if (route.paymentId) {
+      const resumed = this.paymentService.resumePrepared(route.paymentId, prismId);
+      if (!resumed) throw httpError(409, 'this route already has a payment in flight');
+      return { ...resumed, route: this._publicRoute(route) };
+    }
+    if (!route.depositAddress) {
+      throw httpError(409, 'this route was quoted in preview mode and has no deposit address, so it cannot be funded');
+    }
+    this._assertQuoteFresh(route);
+
+    const bound = routeHash({
+      routeId: route.routeId,
+      depositAddress: route.depositAddress,
+      destinationChain: route.destination.chain,
+      destinationAssetId: route.destination.assetId,
+      destinationRecipient: route.destination.address,
+      minAmountOut: route.minAmountOut ?? '0',
+      quoteDeadline: Math.floor(Date.parse(route.quoteDeadline) / 1000)
+    });
+
+    const prepared = await this.paymentService.prepareExternalSend({
+      senderPrismId: prismId,
+      recipientAddress: route.depositAddress,
+      amountAtomic: route.amountInAtomic,
+      boundHash: bound,
+      kind: 'aurora-send',
+      intent: { routeId: route.routeId, entryMethod: 'anyChain' }
+    });
+
+    this.store.mutate((data) => {
+      const r = data.auroraRoutes[routeId];
+      r.paymentId = prepared.paymentId;
+      r.routeHash = bound;
+    });
+    return { ...prepared, route: this._publicRoute(this._route(routeId)) };
+  }
+
+  /**
+   * Relay the Monad leg. The quote deadline is re-checked here rather than only at prepare: a user
+   * can sit on an approval sheet, and funding a lapsed quote would send real money into a route
+   * Aurora may no longer honour at the price they were shown.
+   */
+  async submitSend({ prismId, routeId, prismSignature, tokenSignature }) {
+    this._assertAvailable();
+    const route = this._ownedRoute(routeId, prismId);
+    if (!route.paymentId) throw httpError(409, 'route has not been prepared');
+    this._assertQuoteFresh(route);
+
+    const result = await this.paymentService.submitPayment({
+      paymentId: route.paymentId, prismSignature, tokenSignature, actorPrismId: prismId
+    });
+    // The Monad leg is away; the routed leg has not started until Aurora sees the deposit.
+    this._transitionRoute(routeId, 'funding', { status: null });
+    return { ...result, route: this._publicRoute(this._route(routeId)) };
+  }
+
+  /**
+   * Reconcile both legs: the Monad payment from chain truth, then the routed leg from Aurora.
+   *
+   * The two are deliberately independent. A confirmed Monad transaction does not mean delivery, and
+   * this never lets one imply the other — the route only advances on what Aurora actually reports.
+   */
+  async reconcileRoute({ prismId, routeId }) {
+    this._assertAvailable();
+    let route = this._ownedRoute(routeId, prismId);
+
+    let payment = null;
+    if (route.paymentId) {
+      payment = await this.paymentService.reconcile(route.paymentId, prismId).catch(() => null);
+    }
+
+    // The funding transaction reverted, so nothing was ever deposited and no route exists to track.
+    if (payment?.state === 'failed') {
+      route = this._transitionRoute(routeId, 'route_failed', { status: 'FUNDING_REVERTED' });
+      return { route: this._publicRoute(route), payment };
+    }
+
+    if (payment?.state === 'completed') {
+      // Best-effort accelerant: tell Aurora which transaction funded the address. It detects the
+      // deposit on its own regardless, so a failure here is not an error and carries no state.
+      if (!route.depositNotified) {
+        const notified = await auroraClient().submitDeposit({
+          txHash: payment.transactionHash ?? payment.txHash, depositAddress: route.depositAddress, memo: route.depositMemo
+        });
+        this.store.mutate((data) => { data.auroraRoutes[routeId].depositNotified = Boolean(notified); });
+      }
+      const status = await auroraClient().status({ depositAddress: route.depositAddress, depositMemo: route.depositMemo });
+      if (status?.status) {
+        const next = routeStateForStatus(status.status);
+        if (next) route = this._transitionRoute(routeId, next, { status: status.status, swapDetails: status.swapDetails });
+        else logger.warn('aurora.status.unknown', { status: status.status });
+        return { route: this._publicRoute(this._route(routeId)), payment, statusKnown: true };
+      }
+      return { route: this._publicRoute(this._route(routeId)), payment, statusKnown: false };
+    }
+
+    return { route: this._publicRoute(route), payment, statusKnown: false };
+  }
+
+  listRoutes(prismId) {
+    const all = this.store.read().auroraRoutes ?? {};
+    const mine = Object.values(all)
+      .filter((r) => r.prismId === prismId)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    return {
+      mode: this.mode,
+      settlementAvailable: this.settlementAvailable,
+      notice: this._previewNotice(),
+      routes: mine.map((r) => this._publicRoute(r))
+    };
+  }
+
+  // ---- route internals -----------------------------------------------------
+
+  _route(routeId) {
+    const route = (this.store.read().auroraRoutes ?? {})[routeId];
+    if (!route) throw httpError(404, 'route not found');
+    return route;
+  }
+
+  _ownedRoute(routeId, prismId) {
+    const route = this._route(routeId);
+    if (route.prismId !== prismId) throw httpError(403, 'route belongs to another caller');
+    return route;
+  }
+
+  /** A lapsed quote is refused outright — never silently re-quoted into a price the user never saw. */
+  _assertQuoteFresh(route) {
+    const deadline = Date.parse(route.quoteDeadline);
+    if (Number.isFinite(deadline) && deadline <= Date.now()) {
+      this._transitionRoute(route.routeId, 'expired', { status: 'QUOTE_EXPIRED' });
+      throw httpError(409, 'this quote has expired — request a new one');
+    }
+  }
+
+  _transitionRoute(routeId, next, { status = null, swapDetails = null } = {}) {
+    return this.store.mutate((data) => {
+      const route = data.auroraRoutes[routeId];
+      if (route.state === next) return route;
+      if (AURORA_TERMINAL_STATES.includes(route.state)) return route;
+      assertRouteTransition(route.state, next);
+      route.state = next;
+      if (status) route.lastStatus = status;
+      if (swapDetails) route.swapDetails = swapDetails;
+      route.lastCheckedAt = new Date().toISOString();
+      route.history.push({ state: next, status, at: new Date().toISOString() });
+      return route;
+    });
+  }
+
+  _publicRoute(route) {
+    return {
+      routeId: route.routeId,
+      state: route.state,
+      lastStatus: route.lastStatus ?? null,
+      amountInAtomic: route.amountInAtomic,
+      origin: route.origin,
+      destination: route.destination,
+      depositAddress: route.depositAddress,
+      amountOut: route.amountOut,
+      minAmountOut: route.minAmountOut,
+      timeEstimateSeconds: route.timeEstimateSeconds,
+      quoteDeadline: route.quoteDeadline,
+      quoteSignature: route.quoteSignature,
+      correlationId: route.correlationId,
+      paymentId: route.paymentId,
+      createdAt: route.createdAt,
+      history: route.history ?? [],
+      // False when the quote was dry: the route is real and priced, but has no deposit address and
+      // cannot be funded against this deployment.
+      fundable: Boolean(route.depositAddress),
+      settlementAvailable: this.settlementAvailable,
+      notice: this._previewNotice()
+    };
+  }
+
   _publicDeposit(record) {
     return {
       depositAddress: record.depositAddress,
@@ -261,4 +546,9 @@ export class AuroraService {
   }
 }
 
-function httpError(statusCode, message) { const e = new Error(message); e.statusCode = statusCode; return e; }
+function httpError(statusCode, message, options = null) {
+  const e = new Error(message);
+  e.statusCode = statusCode;
+  if (options) e.options = options;
+  return e;
+}

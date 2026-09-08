@@ -152,3 +152,9 @@ Envio HyperIndex indexes USDC `Transfer`, router `PrismPayment`, and vault `Clai
 | PIN | protected local state |
 | Request lifecycle | signed Prism backend state |
 | Activity UI | reconciled projection (Envio + receipts) |
+| Cross-chain route delivery | Aurora Intents execution status |
+
+Monad stays canonical for every Prism leg, including the Monad half of a cross-chain send. Aurora is
+canonical only for what happens after the funds leave Monad, and neither ever stands in for the
+other: a confirmed Monad receipt does not imply delivery, and a route status never changes what the
+chain says about the payment. See `docs/AURORA_INTENTS.md`.

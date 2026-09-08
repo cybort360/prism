@@ -44,6 +44,36 @@ struct PersonPickerView: View {
 
       ScrollView(showsIndicators: false) {
         LazyVStack(alignment: .leading, spacing: 0) {
+          // Paying someone on another network is still "send money", so it belongs here rather than
+          // behind a separate entry point the user has to know exists.
+          if mode == .send {
+            Button {
+              dismiss()
+              model.sendAnywherePresented = true
+            } label: {
+              HStack(spacing: 12) {
+                PrismIconTile(icon: "globe")
+                VStack(alignment: .leading, spacing: 3) {
+                  Text("Send to another network")
+                    .font(PrismTheme.body(15, weight: .semibold))
+                    .foregroundStyle(PrismTheme.ink)
+                  Text("Any chain, any token, to a wallet address")
+                    .font(PrismTheme.body(11.5))
+                    .foregroundStyle(PrismTheme.muted)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                  .font(.system(size: 12, weight: .semibold))
+                  .foregroundStyle(PrismTheme.faint)
+              }
+              .padding(.vertical, 14)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 14)
+
+            Divider().overlay(PrismTheme.line)
+          }
+
           PrismSectionLabel(text: query.hasPrefix("@") ? "Handle" : "Contacts")
             .padding(.top, 20)
             .padding(.bottom, 8)

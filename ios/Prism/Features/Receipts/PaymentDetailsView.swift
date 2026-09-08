@@ -30,6 +30,7 @@ struct PaymentDetailsView: View {
             summary(d)
             timeline(d)
             receipt(d)
+            crossChain(d)
             proofRow(d)
             technical(d)
             shareButton(d)
@@ -106,6 +107,35 @@ struct PaymentDetailsView: View {
         ForEach(Array(d.receiptRows.enumerated()), id: \.offset) { idx, r in
           detailRow(r.label, r.value)
           if idx < d.receiptRows.count - 1 { Divider().overlay(PrismTheme.line) }
+        }
+      }
+    }
+  }
+
+  // MARK: CROSS-CHAIN
+  /// Only renders for a cross-chain send. Kept as its own section rather than folded into Receipt,
+  /// because the receipt describes money leaving the account on Monad and this describes where it is
+  /// going — collapsing them would let a confirmed Monad leg read as a delivery.
+  @ViewBuilder
+  private func crossChain(_ d: PaymentDisplay) -> some View {
+    if !d.crossChainRows.isEmpty {
+      section("Cross-chain") {
+        VStack(spacing: 0) {
+          ForEach(Array(d.crossChainRows.enumerated()), id: \.offset) { idx, r in
+            if r.label == "Route status" {
+              HStack {
+                Text(r.label)
+                  .font(PrismTheme.body(13))
+                  .foregroundStyle(PrismTheme.muted)
+                Spacer()
+                PrismStatusPill(text: r.value, tone: d.routeStatusTone)
+              }
+              .padding(.vertical, 13)
+            } else {
+              detailRow(r.label, r.value)
+            }
+            if idx < d.crossChainRows.count - 1 { Divider().overlay(PrismTheme.line) }
+          }
         }
       }
     }

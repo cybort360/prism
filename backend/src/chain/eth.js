@@ -154,6 +154,41 @@ export function resolutionHash({ prismIdentity, recipientAccount, aliasVersion, 
   ));
 }
 
+/**
+ * routeHash: the cross-chain sibling of `resolutionHash`, occupying the same opaque envelope slot.
+ *
+ * A cross-chain send pays an Aurora deposit address on Monad. On its own, the envelope would only
+ * bind "send N USDC to this address" — which says nothing about where that money is ultimately
+ * going. This hash binds the REST of the promise into the same signature: the destination chain,
+ * the destination asset, the recipient on that chain, the guaranteed minimum they receive, and the
+ * quote's expiry.
+ *
+ * So the payer's one approval authorizes the whole deal. If the backend (or anyone who compromised
+ * it) rewrote the destination after the user signed, the recomputed hash differs, the envelope
+ * signature no longer recovers to the payer, and `settle()` reverts. This is decision #10
+ * ("recipient/amount bound in-signature, so a relayer can't redirect or resize") extended across
+ * the bridge rather than weakened for it.
+ *
+ * Every string field is hashed, so no destination address, chain name, or asset id reaches the
+ * chain in the clear — the same posture `resolutionHash` takes with Prism identities.
+ */
+export function routeHash({ routeId, depositAddress, destinationChain, destinationAssetId, destinationRecipient, minAmountOut, quoteDeadline }) {
+  return keccak256(encodeAbiParameters(
+    parseAbiParameters('bytes32, address, bytes32, bytes32, bytes32, uint256, uint256'),
+    [
+      keccak256(Buffer.from(String(routeId))),
+      getAddress(depositAddress),
+      keccak256(Buffer.from(String(destinationChain))),
+      keccak256(Buffer.from(String(destinationAssetId))),
+      // Lowercased before hashing: a destination address is compared case-insensitively for EVM
+      // chains, and the hash must not change with the casing the user happened to paste.
+      keccak256(Buffer.from(String(destinationRecipient).toLowerCase())),
+      BigInt(minAmountOut),
+      BigInt(quoteDeadline)
+    ]
+  ));
+}
+
 // ---- signature splitting ---------------------------------------------------
 
 export function splitSignature(signature) {

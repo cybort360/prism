@@ -11,6 +11,10 @@ import { envioIndexer } from '../indexers/index.js';
 import { appendEvent, ensureEvents, canonicalPayment, receiptFor, lifecycleState, assertTransition } from '../lib/lifecycle.js';
 
 const AUTH_WINDOW_SECONDS = 5 * 60;
+// Operation kinds settled through PrismPaymentRouter.settle(). Both are a signed PaymentEnvelope
+// plus an ERC-3009 receive-authorization; they differ only in what the opaque hash slot binds —
+// a Prism resolution for a direct payment, an Aurora route for a cross-chain send.
+const SETTLE_KINDS = new Set(['payment', 'aurora-send']);
 const ZERO32 = `0x${'00'.repeat(32)}`;
 
 /**
@@ -125,9 +129,116 @@ export class PaymentService {
     };
   }
 
+  /**
+   * Prepare a payment to an address that is NOT a Prism identity.
+   *
+   * Used only by the cross-chain path, where the on-Monad recipient is an Aurora deposit address and
+   * there is no identity to resolve. Everything else is identical to `preparePayment` — same
+   * envelope, same ERC-3009 receive-authorization to the router, same relayer, same reconciliation —
+   * so the money leg reuses the audited path rather than forking it.
+   *
+   * `boundHash` occupies the envelope's opaque hash slot and is what makes this safe to expose: the
+   * caller must bind the meaning of the payment into it (see `routeHash`), so the payer's signature
+   * covers the real destination and not merely the address the funds pass through. Callers are
+   * responsible for that binding; this method deliberately has no opinion about its contents.
+   */
+  async prepareExternalSend({ senderPrismId, recipientAddress, amountAtomic, boundHash, kind, intent = {} }) {
+    if (!this.config.chain.paymentRouter) throw httpError(503, 'PRISM_PAYMENT_ROUTER not configured');
+    const stablecoin = usdcAsset(this.config);
+    amountAtomic = this._paymentAmount(amountAtomic);
+
+    const sender = this.identityService.get(senderPrismId);
+    if (!sender?.accountAddress) throw new Error('sender account not ready');
+    const recipient = checksum(recipientAddress);
+    if (recipient.toLowerCase() === sender.accountAddress.toLowerCase()) throw httpError(400, 'cannot send to your own account');
+
+    const paymentId = randomHex(32);
+    const nonce = randomHex(32);
+    const validBefore = Math.floor(Date.now() / 1000) + AUTH_WINDOW_SECONDS;
+    const env = {
+      paymentId,
+      payer: checksum(sender.accountAddress),
+      recipient,
+      amount: amountAtomic,
+      requestId: ZERO32,
+      resolutionHash: boundHash,
+      validBefore,
+      nonce
+    };
+
+    const record = {
+      operationId: paymentId,
+      kind,
+      state: 'prepared',
+      env,
+      intent: {
+        kind, senderPrismId, recipientPrismId: null, amountAtomic,
+        token: stablecoin.address, tokenSymbol: stablecoin.symbol,
+        requestId: null, memo: '', ...intent
+      },
+      events: [],
+      createdAt: new Date().toISOString(),
+      preparedAtMs: Date.now(),
+      expiresAt: new Date(validBefore * 1000).toISOString(),
+      effectsApplied: false
+    };
+    appendEvent(record, { state: 'created', source: 'app', title: 'Payment created' });
+    this.store.mutate(d => { d.operations[paymentId] = record; });
+    logger.info('payment.prepared.external', { paymentId, kind, senderPrismId, amountAtomic });
+
+    return {
+      paymentId,
+      state: 'prepared',
+      expiresAt: record.expiresAt,
+      asset: publicToken(stablecoin),
+      envelope: env,
+      typedData: {
+        envelope: serialize(paymentEnvelopeTypedData(env)),
+        tokenAuthorization: serialize(receiveAuthorizationTypedData({
+          from: env.payer, to: checksum(this.config.chain.paymentRouter), value: env.amount,
+          validAfter: 0, validBefore, nonce
+        }))
+      }
+    };
+  }
+
+  /**
+   * Re-issue the signable payload for a payment that is still awaiting a signature.
+   *
+   * A client that lost the prepare response must be able to ask again without a second operation
+   * being created — two live envelopes for one intent would both be signable, and only one of them
+   * is the one anybody is tracking. Returns null when the payment has moved past `prepared`, so the
+   * caller can refuse rather than hand out a payload for money that is already in flight.
+   */
+  resumePrepared(paymentId, actorPrismId) {
+    const record = this.store.read().operations[paymentId];
+    if (!record || !SETTLE_KINDS.has(record.kind)) return null;
+    if (actorPrismId && record.intent?.senderPrismId !== actorPrismId) throw httpError(403, 'payment belongs to another caller');
+    if (record.state !== 'prepared') return null;
+    if (Date.parse(record.expiresAt) <= Date.now()) return null;
+
+    const env = record.env;
+    return {
+      paymentId,
+      state: 'prepared',
+      expiresAt: record.expiresAt,
+      asset: publicToken(usdcAsset(this.config)),
+      envelope: env,
+      typedData: {
+        envelope: serialize(paymentEnvelopeTypedData(env)),
+        tokenAuthorization: serialize(receiveAuthorizationTypedData({
+          from: env.payer, to: checksum(this.config.chain.paymentRouter), value: env.amount,
+          validAfter: 0, validBefore: env.validBefore, nonce: env.nonce
+        }))
+      }
+    };
+  }
+
   async submitPayment({ paymentId, prismSignature, tokenSignature, actorPrismId }) {
     const record = this.store.read().operations[paymentId];
-    if (!record || record.kind !== 'payment') throw httpError(404, 'payment not found');
+    // Direct payments and cross-chain sends share this path: both are a signed PaymentEnvelope
+    // settled through the router, and differ only in what their opaque hash slot binds.
+    if (!record || !SETTLE_KINDS.has(record.kind)) throw httpError(404, 'payment not found');
     if (actorPrismId && record.intent.senderPrismId !== actorPrismId) throw httpError(403, 'payment belongs to another caller');
     // A previous attempt broadcast but never returned a hash. Ask the chain whether it landed
     // before doing anything else — never blindly re-broadcast an authorization (MUT-16).
@@ -391,7 +502,7 @@ export class PaymentService {
       failureCode: success ? null : 'TRANSACTION_REVERTED'
     });
     // Latency + failure-rate metrics for the payment path.
-    if (record.kind === 'payment') {
+    if (SETTLE_KINDS.has(record.kind)) {
       increment('payment', success);
       if (success) {
         if (record.submittedAtMs) recordMetric('chain_confirmation_ms', record.completedAtMs - record.submittedAtMs);
@@ -469,7 +580,8 @@ export class PaymentService {
     const owner = op.intent?.senderPrismId ?? op.intent?.recipientPrismId;
     if (actorPrismId && owner && owner !== actorPrismId) throw httpError(403, 'operation belongs to another caller');
     const claim = op.intent?.claimId ? this.store.read().claims[op.intent.claimId] : null;
-    const ctx = { viewerPrismId: actorPrismId, identityService: this.identityService, claim };
+    const route = op.intent?.routeId ? (this.store.read().auroraRoutes ?? {})[op.intent.routeId] : null;
+    const ctx = { viewerPrismId: actorPrismId, identityService: this.identityService, claim, route };
     return { payment: canonicalPayment(op, ctx), events: ensureEvents(op), receipt: receiptFor(op, ctx) };
   }
 
@@ -491,7 +603,7 @@ export class PaymentService {
    * only annotates whether Envio has indexed the PaymentSettled event yet — never fakes completion.
    */
   async _checkIndexing(record) {
-    if (record.kind !== 'payment' || record.state !== 'completed' || record.indexed) return record;
+    if (!SETTLE_KINDS.has(record.kind) || record.state !== 'completed' || record.indexed) return record;
     if (!envioIndexer().available()) return record;
     const indexed = await envioIndexer().isPaymentIndexed(record.operationId);
     if (!indexed) return record;

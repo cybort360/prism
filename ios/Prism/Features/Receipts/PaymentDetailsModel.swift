@@ -171,6 +171,10 @@ struct PaymentDisplay {
       return [("Claim opened", 1), ("Recipient verified", 2), ("You approved", 3), ("Claimed", 4), ("Confirmed on Monad", 6), ("Delivered", 8)]
     case .refund:
       return [("Refund created", 1), ("Submitted", 4), ("Confirmed on Monad", 6), ("Returned", 8)]
+    case .crossChainSend:
+      // Stops at "Sent from Monad". Delivery happens on another chain and is tracked by the route,
+      // so this screen must not imply it — see AuroraRouteDisplay for that half.
+      return [("Payment created", 1), ("You approved", 3), ("Submitted", 4), ("Sent from Monad", 6)]
     default:
       let verified = payment.kind == .requestPayment ? "Request matched" : "\(shortName(counterparty)) verified"
       return [("Payment created", 1), (verified, 2), ("You approved", 3), ("Submitted", 4), ("Confirmed on Monad", 6), ("Delivered", 8)]
@@ -202,6 +206,7 @@ struct PaymentDisplay {
     case .request: return "a request"
     case .claim: return "a claim"
     case .internalRecovery: return "recovery"
+    case .anyChain: return "any chain"
     }
   }
 
@@ -210,7 +215,14 @@ struct PaymentDisplay {
     func add(_ label: String, _ value: String?) { if let v = value, !v.isEmpty { rows.append(.init(label: label, value: v)) } }
     add("Amount", payment.amountAtomic.map { Money.dollars(fromAtomic: $0) })
     add("From", payment.sender.displayName == "You" ? "You" : (payment.sender.handle ?? payment.sender.displayName))
-    add("To", payment.recipient.displayName == "You" ? "You" : (payment.recipient.handle ?? payment.recipient.displayName))
+    if let route = payment.route {
+      // There is no Prism recipient on the far side, so naming one would be a fiction. The
+      // destination is the address on the destination chain.
+      add("To", shortRef(route.destinationAddress ?? ""))
+      add("On", route.destinationChainLabel)
+    } else {
+      add("To", payment.recipient.displayName == "You" ? "You" : (payment.recipient.handle ?? payment.recipient.displayName))
+    }
     add("Paid using", entryMethodLabel)
     add("Note", memo)
     add("Status", statusLabel)
@@ -222,10 +234,60 @@ struct PaymentDisplay {
     return rows
   }
 
+  // MARK: cross-chain
+
+  /// Rows describing the routed leg. Empty for every other kind, so the section simply does not
+  /// render. Deliberately separate from the receipt above: the receipt describes money leaving the
+  /// account on Monad, and this describes where it is going — a confirmed Monad leg is not delivery.
+  var crossChainRows: [PrismDetailRow] {
+    guard let route = payment.route else { return [] }
+    var rows: [PrismDetailRow] = []
+    func add(_ label: String, _ value: String?) { if let v = value, !v.isEmpty { rows.append(.init(label: label, value: v)) } }
+
+    add("Destination", route.destinationChainLabel)
+    add("They receive", route.destinationSymbol)
+    // The guaranteed floor the payer actually approved, never a forecast.
+    if let minOut = route.minAmountOut, let decimals = route.destinationDecimals, let symbol = route.destinationSymbol {
+      add("Guaranteed minimum", "\(AuroraRouteDisplay.tokenAmount(minOut, decimals: decimals)) \(symbol)")
+    }
+    add("Address", route.destinationAddress)
+    add("Route status", routeStatusLabel)
+    return rows
+  }
+
+  /// The routed leg's status, stated in its own words so it can never be read as the Monad leg's.
+  var routeStatusLabel: String? {
+    guard let route = payment.route else { return nil }
+    return switch route.state {
+    case .quoted, .awaitingDeposit: "Not sent yet"
+    case .funding: "Sent — waiting for the network"
+    case .funded: "Received by the network"
+    case .routing: "Converting to \(route.destinationSymbol ?? "the destination token")"
+    case .delivered: "Delivered"
+    case .refunding: "Refunding"
+    case .refunded: "Refunded to your balance"
+    case .routeFailed: "Route failed"
+    case .requiresAttention: "Needs attention"
+    case .expired: "Quote expired"
+    }
+  }
+
+  var routeStatusTone: PrismStatusTone {
+    switch payment.route?.state {
+    case .delivered: .positive
+    case .routeFailed, .refunded: .danger
+    case .requiresAttention, .expired: .pending
+    default: .neutral
+    }
+  }
+
   // MARK: technical details (collapsed; never secrets)
 
   var technicalRows: [PrismDetailRow] {
-    var rows: [PrismDetailRow] = [.init(label: "Network", value: "Monad")]
+    // Monad is where Prism settles, but it is no longer the only network a payment touches: a
+    // cross-chain send leaves from Monad and lands elsewhere, and the row says so rather than
+    // stating a single network as if it were the whole story.
+    var rows: [PrismDetailRow] = [.init(label: "Network", value: networkLabel)]
     if let tx = payment.transactionHash { rows.append(.init(label: "Transaction", value: shortRef(tx))) }
     if let b = payment.blockNumber { rows.append(.init(label: "Block", value: b)) }
     rows.append(.init(label: "Settlement", value: payment.isSettled ? "Confirmed" : (isFailed ? "Failed" : "Pending")))
@@ -233,6 +295,9 @@ struct PaymentDisplay {
   }
 
   // MARK: helpers
+
+  /// Cross-chain sends leave Monad; everything else begins and ends there.
+  var networkLabel: String { payment.kind == .crossChainSend ? "Monad → another network" : "Monad" }
 
   private func shortName(_ p: PrismParty) -> String { p.displayName == "You" ? "You" : (p.displayName.split(separator: " ").first.map(String.init) ?? p.displayName) }
   func shortRef(_ s: String) -> String { s.count > 14 ? "\(s.prefix(6))…\(s.suffix(4))" : s }
