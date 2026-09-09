@@ -27,6 +27,14 @@ export class ActivityService {
         items.push({id:op.operationId,kind:'claim-received',direction:'incoming',counterpartyPrismId:sender?.prismId??null,counterpartyHandle:sender?.handle?`@${sender.handle}`:null,claimId:i.claimId,amountAtomic:claim?.amountAtomic??null,token:claim?.token??null,tokenSymbol:claim?.tokenSymbol??null,memo:'Claimed payment',status:consumerState(op.state),createdAt:op.createdAt,transactionHash:op.transactionHash??null,requestId:null});
       }
     }
+    // Device-P256 smart-account payments live in their own bucket (p256Ops), and pay a raw address
+    // (no Prism recipient), so they need their own branch or they never appear in the feed.
+    for (const op of Object.values(data.p256Ops??{})) {
+      if (op.prismId!==prismId) continue;
+      const i=op.intent??{};
+      const addr=i.recipient?`${i.recipient.slice(0,6)}…${i.recipient.slice(-4)}`:null;
+      items.push({id:op.operationId,kind:'p256-sent',direction:'outgoing',counterpartyPrismId:null,counterpartyHandle:addr,amountAtomic:i.amount??null,token:i.token??null,tokenSymbol:'USDC',memo:'Device-key payment',status:consumerState(op.state),createdAt:op.createdAt,transactionHash:op.txHash??null,requestId:null,claimId:null});
+    }
     for(const r of Object.values(data.requests)) if(r.status!=='DRAFT'&&(r.requesterPrismId===prismId||r.payerPrismId===prismId)) {
       const outgoing=r.requesterPrismId===prismId; const other=this.identityService.get(outgoing?r.payerPrismId:r.requesterPrismId);
       items.push({id:r.requestId,kind:'request',direction:outgoing?'outgoing':'incoming',counterpartyPrismId:other?.prismId??null,counterpartyHandle:other?.handle?`@${other.handle}`:null,amountAtomic:r.amountAtomic,token:r.token,tokenSymbol:r.tokenSymbol??null,memo:r.memo,status:r.status,createdAt:r.createdAt,transactionHash:r.transactionHash??null,requestId:r.requestId,claimId:null,requesterPrismId:r.requesterPrismId,payerPrismId:r.payerPrismId});

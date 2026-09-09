@@ -19,6 +19,8 @@ process.env.CLAIM_AUTHORIZER_PRIVATE_KEY = `0x${'22'.repeat(32)}`;
 const { config } = await import('../src/config.js');
 const { JsonStore } = await import('../src/lib/jsonStore.js');
 const { P256AccountService } = await import('../src/services/p256AccountService.js');
+const { ActivityService } = await import('../src/services/activityService.js');
+const { IdentityService } = await import('../src/services/identityService.js');
 
 const ACCOUNT = '0xacac00000000000000000000000000000000acac';
 const RECIPIENT = '0x1234567890abcdef1234567890abcdef12345678';
@@ -106,6 +108,23 @@ test('p256 account: status only reports completed from a confirmed receipt', asy
   assert.equal((await svc.status({ prismId: 'alice', opId: prep.opId })).state, 'confirming');
   calls.receipt = { status: 'success' };
   assert.equal((await svc.status({ prismId: 'alice', opId: prep.opId })).state, 'completed');
+});
+
+test('p256 account: a device-key payment appears in the activity feed', async () => {
+  const { store, svc } = stack();
+  const k = deviceKey();
+  await svc.ensureAccount({ prismId: 'alice', qx: k.qx, qy: k.qy });
+  const prep = svc.prepare({ prismId: 'alice', recipient: RECIPIENT, amountAtomic: '1000000' });
+  await svc.submit({ prismId: 'alice', opId: prep.opId, r: `0x${'01'.repeat(32)}`, s: `0x${'02'.repeat(32)}` });
+
+  const activity = new ActivityService({ store, identityService: new IdentityService({ store, config }) });
+  const row = activity.list('alice').find(x => x.kind === 'p256-sent');
+  assert.ok(row, 'the device-key payment shows in the activity feed');
+  assert.equal(row.direction, 'outgoing');
+  assert.equal(row.amountAtomic, '1000000');
+  assert.ok(row.transactionHash);
+  assert.ok(String(row.counterpartyHandle).includes('…'), 'shows the shortened recipient address');
+  assert.equal(activity.list('bob').filter(x => x.kind === 'p256-sent').length, 0, 'not visible to another user');
 });
 
 test('p256 account: prepare without an account and unknown ops fail closed', async () => {
