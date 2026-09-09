@@ -55,6 +55,37 @@ final class PaymentCoordinator: ObservableObject {
     } catch { fail(error) }
   }
 
+  // MARK: device-P256 → PrismP256Account (on-chain P-256 authority; distinct from the secp256k1 router)
+
+  /// Pay from the user's PrismP256Account, authorized by a device P-256 signature verified on-chain.
+  /// The relayer submits and pays gas. Reaching `.sent` means the payment confirmed on Monad.
+  func payViaP256Account(credential: DeviceP256Credential, recipientAddress: String, amountAtomic: String) async {
+    do {
+      state = .preparing
+      let (qx, qy) = credential.publicKeyXY
+      _ = try await api.ensureP256Account(qx: qx, qy: qy)
+      let prepared = try await api.prepareP256(recipient: recipientAddress, amountAtomic: amountAtomic)
+      state = .awaitingAuthorization
+      guard let intent = prepared.intentHex.hexData else { throw PaymentError.failed }
+      let (r, s) = try credential.sign(intent) // Secure Enclave / CryptoKit: signs SHA-256(intent)
+      state = .sending
+      let submitted = try await api.submitP256(opId: prepared.opId, r: r, s: s)
+      lastOperationId = submitted.opId
+      try await pollP256(prepared.opId)
+    } catch { fail(error) }
+  }
+
+  private func pollP256(_ opId: String) async throws {
+    state = .settling
+    for _ in 0..<40 {
+      try await Task.sleep(for: .milliseconds(400))
+      let st = try await api.p256Status(opId)
+      if st.state == "completed" { state = .sent(st.txHash); PrismHaptics.success(); return }
+      if st.state == "failed" { PrismHaptics.error(); throw PaymentError.failed }
+    }
+    state = .failed("Your payment was submitted and is still confirming. Check Activity before trying again.")
+  }
+
   // MARK: claims (send before signup)
 
   func fundClaim(phone: String, amountAtomic: String, memo: String, pin: String?, useFaceID: Bool) async {

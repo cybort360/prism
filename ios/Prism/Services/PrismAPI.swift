@@ -153,6 +153,25 @@ final class PrismAPI: @unchecked Sendable {
     return try await api.request("/v1/payments/\(encoded)/proof")
   }
 
+  // MARK: device-P256 → PrismP256Account (adoption of the on-chain P-256 path)
+  struct P256AccountBody: Encodable { let qx: String; let qy: String }
+  struct P256PrepareBody: Encodable { let recipient: String; let amountAtomic: String }
+  struct P256SubmitBody: Encodable { let opId: String; let r: String; let s: String }
+
+  func ensureP256Account(qx: String, qy: String) async throws -> P256AccountResponse {
+    try await api.send("/v1/p256/account", body: P256AccountBody(qx: qx, qy: qy))
+  }
+  func prepareP256(recipient: String, amountAtomic: String) async throws -> P256PrepareResponse {
+    try await api.send("/v1/p256/prepare", body: P256PrepareBody(recipient: recipient, amountAtomic: amountAtomic))
+  }
+  func submitP256(opId: String, r: String, s: String) async throws -> P256OpStatus {
+    try await api.send("/v1/p256/submit", body: P256SubmitBody(opId: opId, r: r, s: s), idempotencyKey: opId)
+  }
+  func p256Status(_ opId: String) async throws -> P256OpStatus {
+    let encoded = opId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? opId
+    return try await api.request("/v1/p256/ops/\(encoded)")
+  }
+
   func activity() async throws -> [ActivityRecord] { try await api.request("/v1/activity") }
 
   // MARK: cross-chain (Aurora Intents)

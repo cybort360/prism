@@ -34,7 +34,7 @@ evidence lives in [`PROOF_LEDGER.md`](PROOF_LEDGER.md). **Do not mark `VERIFIED`
 | C-SLICE | The vertical slice (resolution → continuity → auth → secp256k1 sig → router → gas-sponsored Monad → confirmed → receipt) works end to end | `VERIFIED` — `scripts/verify/vertical-slice.sh` 11 PASS / 0 FAIL + live txs |
 | C-P256-ENV | Monad verifies P-256 on-chain (RIP-7212 precompile) — validates the archived smart-account path's viability | `VERIFIED` (fresh sign→verify round-trip + negative control) |
 | C-P256-ACCOUNT | A device-P256 → smart account → gas-sponsored payment path exists and works live on Monad | `VERIFIED` — `PrismP256Account` deployed; P-256-authorized payment `0xdea2…8a88` |
-| C-P256-CONSUMER | The **consumer app's** payments route through the P-256 smart account | `PARTIAL` — the path is built/deployed/live; iOS/Mera still sign secp256k1 for consumer payments (adoption step remaining) |
+| C-P256-CONSUMER | The **consumer app's** payments route through the P-256 smart account | `PARTIAL` — the full path (iOS device-P256 credential → backend service → account → Monad) is built, tested and proven live (CHAIN-8); the only remaining piece is a UI entry point in the app + running on real Secure Enclave hardware (Simulator uses a labeled software key). No new on-chain primitive needed. |
 
 ## Infra / live claims
 

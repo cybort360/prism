@@ -37,6 +37,21 @@ entry. Kept honest — the point is to not repeat mistakes.
 - Dry-ran the judge path; every command reproduced. Only drift: JUDGE_PATH backend count 132 → 133.
 - Continuity vertical slice: **Definition of Done met.**
 
+## 2026-09-09 — Adoption: device-P256 credential + backend service, live end to end
+- Wired the full path: iOS `DeviceP256Credential` (Secure Enclave + a clearly-labeled software fallback
+  for Simulator/CI) → `PaymentCoordinator.payViaP256Account` → backend `P256AccountService`
+  (deploy/prepare/submit/status) + `/v1/p256/*` routes → `PrismP256Account` on Monad.
+- **Finding (important):** the credential is a **Secure Enclave / CryptoKit P-256** key, NOT Mera/WebAuthn.
+  Mera derives a secp256k1 account (can't emit raw P-256), and a raw WebAuthn assertion signs
+  `authenticatorData‖sha256(clientDataJSON)`, not `sha256(intent)`. So honest adoption uses the archived
+  Secure-Enclave P-256 approach — a second signer alongside Mera, not a change to Mera. Also verified the
+  precompile accepts high-s (no on-device big-int normalization needed).
+- Tests: backend `p256-account.test.js` 4/4 (real software P-256 sig over the prepared intent, relayed
+  intent parity, confirmed-only status); iOS `DeviceP256CredentialTests` 3/3. Backend 148→152, iOS 109→112.
+- **LIVE:** deployed an account bound to the device key and paid through the real service — pay
+  `0x63e7…1818` (status 0x1), recipient +1 USDC, account MON=0. Independently re-verified.
+- Remaining last mile: a UI entry point + real Secure Enclave hardware (Simulator uses the software key).
+
 ## 2026-09-09 — Option C done: device-P256 → smart account, live on Monad (R1 VERIFIED)
 - Built `PrismP256Account` — a relayer-sponsored smart account whose spending authority is a device
   P-256 (WebAuthn/passkey) key, verified on-chain via the `0x0100` precompile. Reused the archived

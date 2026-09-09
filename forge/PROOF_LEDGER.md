@@ -8,9 +8,9 @@ because code exists.
 
 | Suite | Command | Result | Status |
 |---|---|---|---|
-| Backend | `cd backend && node --test test/*.test.js` | 148 pass / 0 fail (146 + 2 balance-authority) | `VERIFIED` |
+| Backend | `cd backend && node --test test/*.test.js` | 152 pass / 0 fail (148 + 4 p256-account adoption) | `VERIFIED` |
 | Contracts | `cd contracts && forge test` | 49 pass / 0 fail (43 + 6 PrismP256Account) | `VERIFIED` |
-| iOS unit | `xcodebuild … -only-testing:PrismTests test` | 109 pass / 0 fail (95 before + 13 classifier + 1 refined) | `VERIFIED` |
+| iOS unit | `xcodebuild … -only-testing:PrismTests test` | 112 pass / 0 fail (109 + 3 device-P256 credential) | `VERIFIED` |
 
 ## Winning vertical slice (2026-09-09) — `bash scripts/verify/vertical-slice.sh`
 
@@ -34,6 +34,7 @@ gas-sponsored Monad execution → confirmed/reconciled settlement → receipt.
 Live settlement of the slice: direct payment tx `0xfc27…c41f19` (status `0x1`).
 
 | CHAIN-7 | Device P-256 → Prism **smart account** → gas-sponsored USDC payment, live on Monad | `VERIFIED` | `PrismP256Account` deployed `0x44c18e07…00cd` (1792 B code); pay `0xdea2…8a88` (P-256 verified on-chain, recipient +1.00 USDC, account MON = 0). Contracts suite 43 → 49. |
+| CHAIN-8 | **Adoption** path end to end via the real backend service + iOS credential (device P-256 → account → gas-sponsored, on Monad) | `VERIFIED` | `P256AccountService` (deploy→prepare→submit→status) + iOS `DeviceP256Credential`. Backend `p256-account.test.js` 4/4 (real software P-256 sig verified over the prepared intent) + iOS `DeviceP256CredentialTests` 3/3. LIVE: deployed `0x1fb44696…81c2`, device-P256-authorized pay `0x63e79bb91fbf729497dd9abae64104ecb308d55d96bd94497082c62ac7dd1818` (status `0x1`), recipient +1.00 USDC, account MON = 0. |
 
 ## Continuity domain model (2026-09-09)
 

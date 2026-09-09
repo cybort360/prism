@@ -284,6 +284,14 @@ struct ClaimRecord: Codable, Identifiable, Equatable {
   var expiresAt: Date { Date(timeIntervalSince1970: TimeInterval(expiry)) }
   var isExpired: Bool { expiresAt < Date() }
 }
+// Device-P256 → PrismP256Account settlement (adoption of the on-chain P-256 path).
+struct P256AccountResponse: Codable { let account: String; let deployed: Bool }
+struct P256PrepareResponse: Codable {
+  let opId: String; let account: String; let token: String
+  let amountAtomic: String; let nonce: String; let validBefore: Int; let intentHex: String
+}
+struct P256OpStatus: Codable { let opId: String; let state: String; let txHash: String? }
+
 struct ClaimEligibility: Codable {
   let claimId: String
   let recipientAccount: String

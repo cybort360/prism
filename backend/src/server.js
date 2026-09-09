@@ -18,6 +18,8 @@ import { PaymentService } from './services/paymentService.js';
 import { ActivityService } from './services/activityService.js';
 import { AuroraService } from './services/auroraService.js';
 import { ProofService } from './services/proofService.js';
+import { P256AccountService } from './services/p256AccountService.js';
+import { p256ChainOps } from './chain/p256Account.js';
 import { usdcBalanceOf, claimAuthorizerAddress, relayerAccount, verifyChainId, verifyUsdcDomain } from './chain/eth.js';
 import { chainProvider } from './providers/index.js';
 import { envioIndexer } from './indexers/index.js';
@@ -38,6 +40,7 @@ const paymentService = new PaymentService({ store, config, identityService, clai
 const activityService = new ActivityService({ store, identityService });
 const auroraService = new AuroraService({ store, config, identityService, paymentService });
 const proofService = new ProofService({ paymentService, identityService, config });
+const p256AccountService = new P256AccountService({ store, config, chainOps: p256ChainOps });
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -142,6 +145,20 @@ route('GET', '/v1/payments/:id/canonical', async ({ user, params }) => {
   await paymentService.reconcile(params.id, user.prismId).catch(() => {});
   return paymentService.canonicalFor(params.id, user.prismId);
 }, true);
+
+// --- device-P256 → PrismP256Account settlement (adoption of the on-chain P-256 path) ---------------
+// The device holds a Secure Enclave / CryptoKit P-256 key; the account's spending authority is that
+// key, verified on-chain. Additive — the secp256k1 router path is untouched.
+route('POST', '/v1/p256/account', async ({ user, body }) => {
+  rateLimit(`p256-account:${user.prismId}`, 10);
+  return p256AccountService.ensureAccount({ prismId: user.prismId, qx: body.qx, qy: body.qy });
+}, true);
+route('POST', '/v1/p256/prepare', async ({ user, body }) =>
+  p256AccountService.prepare({ prismId: user.prismId, recipient: body.recipient, amountAtomic: body.amountAtomic }), true);
+route('POST', '/v1/p256/submit', async ({ user, body, idempotencyKey }) =>
+  withIdempotency(store, { scope: 'p256-submit', key: idempotencyKey, actor: user.prismId, fingerprint: fingerprint(body.opId, body.r, body.s) }, () =>
+    p256AccountService.submit({ prismId: user.prismId, opId: body.opId, r: body.r, s: body.s })), true);
+route('GET', '/v1/p256/ops/:id', async ({ user, params }) => p256AccountService.status({ prismId: user.prismId, opId: params.id }), true);
 
 // Canonical Payment Proof: typed, evidence-backed inspectability for one operation the caller owns.
 // The paymentId must map to a Prism operation visible to the authenticated user (never a raw,
