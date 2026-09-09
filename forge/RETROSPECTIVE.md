@@ -37,6 +37,14 @@ entry. Kept honest — the point is to not repeat mistakes.
 - Dry-ran the judge path; every command reproduced. Only drift: JUDGE_PATH backend count 132 → 133.
 - Continuity vertical slice: **Definition of Done met.**
 
+## 2026-09-09 — R1/R2 strengthened: live P-256 round-trip on Monad
+- `scripts/verify/p256-roundtrip.mjs`: generates a fresh secp256r1 keypair, signs a fresh message, and
+  the RIP-7212 precompile (0x0100) verifies it live → 1; a tampered digest is rejected. Proves Monad
+  actually verifies P-256 on-chain (not just echoes a canned vector). Wired into the slice verifier (R2).
+- R1 stays PARTIAL — honest: the P-256 verification path is now demonstrably viable on Monad and exists
+  in the archived ERC-4337/P-256 code, but the ACTIVE on-chain signature is still secp256k1. Adopting
+  the P-256 smart account (Option C) is an owner-approved architecture phase, out of slice scope.
+
 ## 2026-09-09 — Winning vertical slice verified end to end
 - Built a reproducible verifier (`scripts/verify/vertical-slice.sh`): 11 PASS / 1 PARTIAL / 0 FAIL over
   the 10 requirements. Slice = resolution → continuity → auth → secp256k1 signature → router →

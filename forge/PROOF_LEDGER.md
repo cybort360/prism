@@ -20,8 +20,8 @@ gas-sponsored Monad execution → confirmed/reconciled settlement → receipt.
 
 | # | Requirement | Status | Evidence |
 |---|---|---|---|
-| R1 | Actual P-256 signature path | `PARTIAL` | device passkey (P-256) is the credential **root**; the on-chain P-256 verifier + smart account are **archived** (`archive/erc4337-p256/`); the **active** on-chain signature is **secp256k1** (`PrismPaymentRouter` `ecrecover`). A-1/A-2. |
-| R2 | Monad P-256 verification works on the intended env | `VERIFIED` | live `eth_call` RIP-7212 precompile `0x0100` → `1` (archived test vector). |
+| R1 | Actual P-256 signature path | `PARTIAL` | device passkey (P-256) is the credential **root**; the on-chain P-256 **verification path is demonstrated viable on Monad** (R2 round-trip) and implemented in `archive/erc4337-p256/` (P256Verifier + ERC-4337 `PrismAccount`), but is **not the active runtime** — the **active** on-chain signature is **secp256k1** (`PrismPaymentRouter` `ecrecover`). Adoption is an owner decision (A-1/A-2), not a slice tweak. |
+| R2 | Monad P-256 verification works on the intended env | `VERIFIED` | `scripts/verify/p256-roundtrip.mjs`: a FRESH secp256r1 keypair signs a fresh message → RIP-7212 precompile `0x0100` returns `1`; a tampered digest is rejected (negative control). Repeatable. |
 | R3 | Auth binds recipient/amount/token/nonce/expiry/resolution ref | `VERIFIED` | `PrismPaymentRouter.t.sol` (settle verifies the EIP-712 envelope: paymentId, payer, recipient, amount, requestId, resolutionHash, validBefore, nonce). |
 | R4 | Mutate amount after auth → fail | `VERIFIED` | `testModifiedAmountRejected`. |
 | R5 | Mutate recipient after auth → fail | `VERIFIED` | `testModifiedRecipientRejected`. |

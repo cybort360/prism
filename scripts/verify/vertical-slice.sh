@@ -64,15 +64,12 @@ else
   bad "continuity" "continuity.test.js failed"
 fi
 
-# --- 2: Monad on-chain P256 verification (RIP-7212 precompile @ 0x0100) ---
-D=19c7a5c016ecf09862d33a4bd8eb4a95ab22acb6446e38159946ad7e08b42305
-R=ed3485d78b6a00b8b5785210de5b05033e2d5fccbe1653189b0c9110d4b06c95
-S=cf5fd1ea40db4ccc0f1d80addad5be00d2177c42ecf2060f4074a635bc379717
-QX=7a0d5f340f8e4cc8fb5ea548796c5efbcb6f3f11d0fa32298a58a89081241bd1
-QY=9f31e2e26bbb71853ff100a5a37f405ae2419c074d6d2ede70c17377feb3898c
-P256=$(rpc_call "0x0000000000000000000000000000000000000100" "0x${D}${R}${S}${QX}${QY}" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const r=JSON.parse(s).result;console.log(r&&BigInt(r)===1n?'1':'0')}catch(e){console.log('err')}})")
-if [ "$P256" = "1" ]; then ok "R2 Monad on-chain P256 verification works (RIP-7212 @0x0100)" "live eth_call → 1"
-else part "R2 Monad P256 verification" "precompile returned '$P256' (archived P256/smart-account path; active signer is secp256k1)"; fi
+# --- 2: Monad on-chain P256 verification — FRESH sign->verify round-trip (+ negative control) ---
+if node "$ROOT/scripts/verify/p256-roundtrip.mjs" "$RPC" >/tmp/prism_p256.log 2>&1; then
+  ok "R2 Monad verifies a FRESH P-256 signature on-chain (RIP-7212 @0x0100)" "p256-roundtrip.mjs: valid→1, tampered→rejected"
+else
+  part "R2 Monad P256 verification" "round-trip failed (see /tmp/prism_p256.log); archived P256/smart-account path, active signer is secp256k1"
+fi
 
 # --- 1: device-backed P256 credential / on-chain P256 signature path ---
 part "R1 P256 signature path" "device passkey (P-256) is the root; ON-CHAIN P256 verifier + smart account are ARCHIVED (archive/erc4337-p256). ACTIVE on-chain signature is secp256k1 (ecrecover). See forge/ARCHITECTURE.md A-1/A-2"

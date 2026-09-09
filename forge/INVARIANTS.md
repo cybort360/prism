@@ -93,9 +93,10 @@ UI-terminal ("Sent"/"Delivered") only after a **reconciled Monad receipt**.
 The device credential root is a **P-256** passkey; an on-chain P-256 verifier + ERC-4337 smart account
 exist under `archive/erc4337-p256/` but are **not the active runtime** (active settlement is secp256k1
 via `ecrecover` in `PrismPaymentRouter`). Whether Monad *could* verify P-256 on-chain is testable.
-- **Evidence:** `VERIFIED` (environment) — live `eth_call` to the RIP-7212 precompile at `0x0100` on
-  Monad testnet returns `1` for the archived test vector (`scripts/verify/vertical-slice.sh`, R2).
-  The **active** on-chain signature path remains secp256k1 — see `ARCHITECTURE.md` A-1/A-2.
+- **Evidence:** `VERIFIED` (environment) — `scripts/verify/p256-roundtrip.mjs` generates a fresh
+  secp256r1 keypair, signs a fresh message, and the RIP-7212 precompile at `0x0100` on Monad testnet
+  returns `1`; a tampered digest is rejected (negative control). The **active** on-chain signature path
+  remains secp256k1 — see `ARCHITECTURE.md` A-1/A-2.
 
 ### INV-G1 — A payer with MON = 0 can pay
 - **Enforcement:** relayer submits the gasless ERC-3009 transfer and pays MON.
