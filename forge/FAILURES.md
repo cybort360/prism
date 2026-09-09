@@ -9,7 +9,7 @@ optional. Nothing is hidden to make a demo look better.
 |---|---|---|---|
 | F-2 | MED | No executed **cold-user** evidence for thesis #12 (a first-time user completing a payment without coaching). UX claim only. | — |
 | F-5 | LOW · **EXTERNAL BLOCKER** | Aurora cross-chain is **preview-only** and **cannot be proven live this phase**: the send side depends on Aurora's **Intents Connect** API (pre-release / email-gated), and NEAR Intents carries **Monad mainnet only** while PRISM runs testnet — so no route can settle against this deployment regardless of code. Requires an Aurora app key **and** a mainnet deployment. Honestly labelled in-app (preview, no fake delivery); the receive side uses the available Deposits API. Not a defect — a dependency. | `docs/AURORA_INTENTS.md` |
-| F-6 | LOW | `INV-M2` (backend not the canonical balance authority) has no explicit negative test. | — |
+| R1 | INFO · **BRIEF CONFLICT** | The vertical-slice brief asks for a "device-backed **P-256** signature → **Prism smart account**". The **active** runtime signs **secp256k1** (`ecrecover`) to an **EOA**; the on-chain P-256 verifier + ERC-4337 smart account are **archived** (`archive/erc4337-p256/`). Not faked as active. Monad *does* support on-chain P-256 (R2 verified), so the archived path is viable if adopted — an owner decision (A-1/A-2), out of this slice's scope. | `archive/erc4337-p256/`, `forge/ARCHITECTURE.md` |
 
 ## Architectural conflicts (reported, not silently resolved)
 
@@ -19,6 +19,9 @@ optional. Nothing is hidden to make a demo look better.
 | A-2 | FORGE 1.4 says money lives in a "Monad **smart account**"; the current build uses a **secp256k1 EOA** (Mera, no bundler). The ERC-4337/P-256 smart-account path is **archived**. | Documented in [`ARCHITECTURE.md`](ARCHITECTURE.md). Adopting a smart account would be a product change, out of scope this phase. |
 
 ## Historical (fixed) — kept for memory
+- **F-6 CLOSED 2026-09-09** — INV-M2 (backend not the canonical balance authority) now has a dedicated
+  negative test: `backend/test/balance-authority.test.js` (no balance/ledger key; reported balance
+  tracks the chain and is unaffected by store writes). C-LEDGER → `VERIFIED`.
 - **F-4b CLOSED 2026-09-08** — the two residual live proofs are done on Monad testnet: (1) a **zero-MON
   payment** — a fresh payer holding USDC and 0 MON paid, relayer sponsored gas, payer MON stayed 0
   (tx `0xd34de0a6ab02d6d470ef60a199a31dbeb2fb5cfb90d33fbd25fc8501a8034a16`) → GAS-1 `VERIFIED`; and

@@ -8,9 +8,30 @@ because code exists.
 
 | Suite | Command | Result | Status |
 |---|---|---|---|
-| Backend | `cd backend && node --test test/*.test.js` | 146 pass / 0 fail (133 before + 13 continuity) | `VERIFIED` |
+| Backend | `cd backend && node --test test/*.test.js` | 148 pass / 0 fail (146 + 2 balance-authority) | `VERIFIED` |
 | Contracts | `cd contracts && forge test` | 43 pass / 0 fail (incl. 3 invariants × 256 runs) | `VERIFIED` |
 | iOS unit | `xcodebuild … -only-testing:PrismTests test` | 109 pass / 0 fail (95 before + 13 classifier + 1 refined) | `VERIFIED` |
+
+## Winning vertical slice (2026-09-09) — `bash scripts/verify/vertical-slice.sh`
+
+Reproducible verifier: **11 PASS · 1 PARTIAL · 0 FAIL**. Slice = Contact → protected resolution →
+PrismIdentity continuity → amount → authorization → secp256k1 signature → `PrismPaymentRouter` →
+gas-sponsored Monad execution → confirmed/reconciled settlement → receipt.
+
+| # | Requirement | Status | Evidence |
+|---|---|---|---|
+| R1 | Actual P-256 signature path | `PARTIAL` | device passkey (P-256) is the credential **root**; the on-chain P-256 verifier + smart account are **archived** (`archive/erc4337-p256/`); the **active** on-chain signature is **secp256k1** (`PrismPaymentRouter` `ecrecover`). A-1/A-2. |
+| R2 | Monad P-256 verification works on the intended env | `VERIFIED` | live `eth_call` RIP-7212 precompile `0x0100` → `1` (archived test vector). |
+| R3 | Auth binds recipient/amount/token/nonce/expiry/resolution ref | `VERIFIED` | `PrismPaymentRouter.t.sol` (settle verifies the EIP-712 envelope: paymentId, payer, recipient, amount, requestId, resolutionHash, validBefore, nonce). |
+| R4 | Mutate amount after auth → fail | `VERIFIED` | `testModifiedAmountRejected`. |
+| R5 | Mutate recipient after auth → fail | `VERIFIED` | `testModifiedRecipientRejected`. |
+| R6 | Replay → fail | `VERIFIED` | `testReplayRejected`; `mutation-audit` MUT-08. |
+| R7 | Sender may hold zero MON (sponsored) | `VERIFIED` | live tx `0xd34d…34a16` (status `0x1`). |
+| R8 | UI-terminal only from confirmed/reconciled state | `VERIFIED` | `mutation-audit` MUT-15 (reverted → failed, never completed). |
+| R9 | Backend writes no authoritative balance | `VERIFIED` | `balance-authority.test.js` (no ledger key; balance tracks chain). |
+| R10 | Failed/ambiguous → no blind double submit | `VERIFIED` | `mutation-audit` MUT-16. |
+
+Live settlement of the slice: direct payment tx `0xfc27…c41f19` (status `0x1`).
 
 ## Continuity domain model (2026-09-09)
 

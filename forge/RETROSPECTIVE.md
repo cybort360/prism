@@ -37,6 +37,17 @@ entry. Kept honest — the point is to not repeat mistakes.
 - Dry-ran the judge path; every command reproduced. Only drift: JUDGE_PATH backend count 132 → 133.
 - Continuity vertical slice: **Definition of Done met.**
 
+## 2026-09-09 — Winning vertical slice verified end to end
+- Built a reproducible verifier (`scripts/verify/vertical-slice.sh`): 11 PASS / 1 PARTIAL / 0 FAIL over
+  the 10 requirements. Slice = resolution → continuity → auth → secp256k1 signature → router →
+  gas-sponsored Monad → confirmed/reconciled → receipt.
+- Closed F-6: `balance-authority.test.js` proves the backend holds no authoritative balance (INV-M2 →
+  VERIFIED). Backend 146 → 148.
+- **P-256 honesty (R1/R2):** Monad DOES verify P-256 on-chain (RIP-7212 precompile @0x0100 returned 1
+  live). But the *active* on-chain signature is secp256k1 to an EOA; the P-256 verifier + ERC-4337
+  smart account are archived. Marked R1 PARTIAL (device P-256 root + archived on-chain path), R2
+  VERIFIED (environment). Did NOT fake a P-256 active path — recorded the brief-vs-repo conflict (A-1/A-2).
+
 ## 2026-09-09 — Continuity domain model implemented (backend + iOS)
 - Named the vocabulary explicitly (PrismIdentity, ReachabilityAlias, AliasBinding, AliasVersion,
   ResolutionAttestation, KnownRecipientBinding, DeviceCredential, PrismAccount) and built one shared,

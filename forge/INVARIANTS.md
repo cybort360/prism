@@ -84,9 +84,18 @@ UI-terminal ("Sent"/"Delivered") only after a **reconciled Monad receipt**.
 
 ### INV-M2 — Backend is not the canonical balance authority
 - **Enforcement:** balances are on-chain reads (`usdcBalanceOf`); the backend holds a guarded state
-  machine + event log, never a ledger of balances.
-- **Evidence:** `PARTIAL` — architectural (no balance-ledger in the store); no dedicated test asserts
-  the negative.
+  machine + event log, never a ledger of balances (`jsonStore.js` schema has no balance key).
+- **Evidence:** `VERIFIED` — `backend/test/balance-authority.test.js`: the persisted store carries no
+  balance/ledger key even after completed operations, and the reported balance tracks the chain (mock
+  provider), unaffected by store writes. F-6 closed.
+
+### INV-P256 — Monad supports on-chain P-256 verification (environment check)
+The device credential root is a **P-256** passkey; an on-chain P-256 verifier + ERC-4337 smart account
+exist under `archive/erc4337-p256/` but are **not the active runtime** (active settlement is secp256k1
+via `ecrecover` in `PrismPaymentRouter`). Whether Monad *could* verify P-256 on-chain is testable.
+- **Evidence:** `VERIFIED` (environment) — live `eth_call` to the RIP-7212 precompile at `0x0100` on
+  Monad testnet returns `1` for the archived test vector (`scripts/verify/vertical-slice.sh`, R2).
+  The **active** on-chain signature path remains secp256k1 — see `ARCHITECTURE.md` A-1/A-2.
 
 ### INV-G1 — A payer with MON = 0 can pay
 - **Enforcement:** relayer submits the gasless ERC-3009 transfer and pays MON.
