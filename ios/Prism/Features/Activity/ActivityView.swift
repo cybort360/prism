@@ -268,6 +268,17 @@ struct ActivityView: View {
       model.presentClaimDetail = ClaimDetailPresentation(claim: claim)
       return
     }
+    // A device-key (P256) payment has no Prism recipient / canonical projection — show its receipt.
+    if item.kind == "p256-sent" {
+      let done = item.status.uppercased() == "COMPLETED"
+      model.presentReceipt = ReceiptPresentation(
+        title: "Sent from device key",
+        amount: Money.dollars(fromAtomic: item.amountAtomic ?? "0"),
+        subtitle: "to \(item.counterpartyHandle ?? "recipient")",
+        transactionHash: item.transactionHash,
+        status: done ? "Completed" : item.status.capitalized)
+      return
+    }
     // Every money-movement row opens the one canonical PaymentDetailsView.
     let moneyKinds: Set<String> = ["sent", "received", "claim-funding", "claim-refund", "claim-received"]
     if moneyKinds.contains(item.kind) {
