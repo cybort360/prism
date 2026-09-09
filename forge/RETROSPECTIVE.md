@@ -37,6 +37,22 @@ entry. Kept honest — the point is to not repeat mistakes.
 - Dry-ran the judge path; every command reproduced. Only drift: JUDGE_PATH backend count 132 → 133.
 - Continuity vertical slice: **Definition of Done met.**
 
+## 2026-09-09 — Option C done: device-P256 → smart account, live on Monad (R1 VERIFIED)
+- Built `PrismP256Account` — a relayer-sponsored smart account whose spending authority is a device
+  P-256 (WebAuthn/passkey) key, verified on-chain via the `0x0100` precompile. Reused the archived
+  `P256Verifier` library; fits Prism's no-bundler design (no ERC-4337 EntryPoint needed).
+- Tests: `PrismP256Account.t.sol` 6/6 (binding/replay/expiry) with a digest-keyed mock precompile;
+  **red-before-green** on amount binding (unbinding `amount` made the mutation test fail; restored →
+  pass). Contracts suite 43 → 49.
+- **Live on Monad:** deployed the account, funded it (2 USDC, 0 MON), and a relayer submitted a payment
+  authorized only by a real device P-256 signature → 1 USDC delivered, account MON stayed 0, and
+  mutate-amount / mutate-recipient / replay / wrong-sig all reverted on-chain. deploy `0xd41b…d553`,
+  pay `0xdea2…8a88`. Independently re-verified (status 0x1, account has 1792 B code).
+- **Honest scope:** R1 (the P-256 → smart account path) is VERIFIED as a live capability. The consumer
+  iOS app still signs secp256k1 through `PrismPaymentRouter`; wiring iOS/Mera to emit the WebAuthn P-256
+  signature into the account is the remaining adoption step (front-end, no new on-chain primitive).
+- Broadcast script kept out of the repo; contract + tests + verifier are committed.
+
 ## 2026-09-09 — R1/R2 strengthened: live P-256 round-trip on Monad
 - `scripts/verify/p256-roundtrip.mjs`: generates a fresh secp256r1 keypair, signs a fresh message, and
   the RIP-7212 precompile (0x0100) verifies it live → 1; a tampered digest is rejected. Proves Monad

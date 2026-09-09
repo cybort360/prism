@@ -9,7 +9,7 @@ because code exists.
 | Suite | Command | Result | Status |
 |---|---|---|---|
 | Backend | `cd backend && node --test test/*.test.js` | 148 pass / 0 fail (146 + 2 balance-authority) | `VERIFIED` |
-| Contracts | `cd contracts && forge test` | 43 pass / 0 fail (incl. 3 invariants × 256 runs) | `VERIFIED` |
+| Contracts | `cd contracts && forge test` | 49 pass / 0 fail (43 + 6 PrismP256Account) | `VERIFIED` |
 | iOS unit | `xcodebuild … -only-testing:PrismTests test` | 109 pass / 0 fail (95 before + 13 classifier + 1 refined) | `VERIFIED` |
 
 ## Winning vertical slice (2026-09-09) — `bash scripts/verify/vertical-slice.sh`
@@ -20,7 +20,7 @@ gas-sponsored Monad execution → confirmed/reconciled settlement → receipt.
 
 | # | Requirement | Status | Evidence |
 |---|---|---|---|
-| R1 | Actual P-256 signature path | `PARTIAL` | device passkey (P-256) is the credential **root**; the on-chain P-256 **verification path is demonstrated viable on Monad** (R2 round-trip) and implemented in `archive/erc4337-p256/` (P256Verifier + ERC-4337 `PrismAccount`), but is **not the active runtime** — the **active** on-chain signature is **secp256k1** (`PrismPaymentRouter` `ecrecover`). Adoption is an owner decision (A-1/A-2), not a slice tweak. |
+| R1 | Actual P-256 signature path (device P-256 → smart account) | `VERIFIED` | **built + deployed + proven live.** `PrismP256Account` (a relayer-sponsored smart account whose spending authority is a device P-256 key, verified on-chain via the `0x0100` precompile). Local `PrismP256Account.t.sol` 6/6 (binding/replay/expiry, red-before-green on amount binding). LIVE on Monad: deploy `0xd41b…d553`, P-256-authorized payment `0xdea243b17623b35ea346e6bad05fe1f515c2fa80190d06f61800bced453b8a88` (status `0x1`) — recipient +1.00 USDC, account MON = 0 (gas sponsored); mutate-amount / mutate-recipient / replay / wrong-sig all revert on-chain. *Remaining adoption:* wiring the iOS/Mera front-end to emit the WebAuthn P-256 signature into this account (consumer payments still use the secp256k1 router today). |
 | R2 | Monad P-256 verification works on the intended env | `VERIFIED` | `scripts/verify/p256-roundtrip.mjs`: a FRESH secp256r1 keypair signs a fresh message → RIP-7212 precompile `0x0100` returns `1`; a tampered digest is rejected (negative control). Repeatable. |
 | R3 | Auth binds recipient/amount/token/nonce/expiry/resolution ref | `VERIFIED` | `PrismPaymentRouter.t.sol` (settle verifies the EIP-712 envelope: paymentId, payer, recipient, amount, requestId, resolutionHash, validBefore, nonce). |
 | R4 | Mutate amount after auth → fail | `VERIFIED` | `testModifiedAmountRejected`. |
@@ -32,6 +32,8 @@ gas-sponsored Monad execution → confirmed/reconciled settlement → receipt.
 | R10 | Failed/ambiguous → no blind double submit | `VERIFIED` | `mutation-audit` MUT-16. |
 
 Live settlement of the slice: direct payment tx `0xfc27…c41f19` (status `0x1`).
+
+| CHAIN-7 | Device P-256 → Prism **smart account** → gas-sponsored USDC payment, live on Monad | `VERIFIED` | `PrismP256Account` deployed `0x44c18e07…00cd` (1792 B code); pay `0xdea2…8a88` (P-256 verified on-chain, recipient +1.00 USDC, account MON = 0). Contracts suite 43 → 49. |
 
 ## Continuity domain model (2026-09-09)
 

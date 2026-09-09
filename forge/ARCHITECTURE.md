@@ -58,6 +58,15 @@ The current implementation differs, and this is flagged here rather than silentl
    smart-account** path exists only under `archive/erc4337-p256` and `archive/ios-secure-enclave-p256`
    and is **not active**. Calling the current money location a "smart account" would misdescribe it.
 
+**Update (2026-09-09) — a P-256 smart-account path now exists and is proven live.** `PrismP256Account`
+(`contracts/src/PrismP256Account.sol`) is a relayer-sponsored **smart account** whose spending
+authority is a **device P-256 key verified on-chain** (RIP-7212 precompile `0x0100`) — deployed on
+Monad testnet and exercised with a real P-256-authorized, gas-sponsored USDC payment (tx `0xdea2…8a88`;
+`PROOF_LEDGER` CHAIN-7 / R1). This directly answers A-1/A-2 at the settlement layer. The **consumer app
+still routes user payments through the secp256k1 `PrismPaymentRouter`**; wiring iOS/Mera to emit the
+WebAuthn P-256 signature into `PrismP256Account` is the remaining adoption step (a front-end change, no
+new on-chain primitive needed).
+
 **Why it doesn't change the thesis:** the four-layer *decoupling* (reachability → identity → authority
 → money) — which is what Prism Continuity depends on — holds identically whether the authority is a
 Mera secp256k1 account or an ERC-4337/P-256 smart account. The continuity invariants (INV-C1..C3) are

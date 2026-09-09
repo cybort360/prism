@@ -9,7 +9,7 @@ optional. Nothing is hidden to make a demo look better.
 |---|---|---|---|
 | F-2 | MED | No executed **cold-user** evidence for thesis #12 (a first-time user completing a payment without coaching). UX claim only. | — |
 | F-5 | LOW · **EXTERNAL BLOCKER** | Aurora cross-chain is **preview-only** and **cannot be proven live this phase**: the send side depends on Aurora's **Intents Connect** API (pre-release / email-gated), and NEAR Intents carries **Monad mainnet only** while PRISM runs testnet — so no route can settle against this deployment regardless of code. Requires an Aurora app key **and** a mainnet deployment. Honestly labelled in-app (preview, no fake delivery); the receive side uses the available Deposits API. Not a defect — a dependency. | `docs/AURORA_INTENTS.md` |
-| R1 | INFO · **BRIEF CONFLICT** | The vertical-slice brief asks for a "device-backed **P-256** signature → **Prism smart account**". The **active** runtime signs **secp256k1** (`ecrecover`) to an **EOA**; the on-chain P-256 verifier + ERC-4337 smart account are **archived** (`archive/erc4337-p256/`). Not faked as active. Monad *does* support on-chain P-256 (R2 verified), so the archived path is viable if adopted — an owner decision (A-1/A-2), out of this slice's scope. | `archive/erc4337-p256/`, `forge/ARCHITECTURE.md` |
+| R1-ADOPT | LOW | The device-P256 → smart account path is **built, deployed, and proven live** (`PrismP256Account`, CHAIN-7). What remains is **consumer adoption**: wiring iOS/Mera to emit the WebAuthn P-256 signature into the account so *user* payments route through it (they use the secp256k1 router today). A front-end change; no new on-chain primitive needed. | `ios/MeraBridge/`, `PrismP256Account.sol` |
 
 ## Architectural conflicts (reported, not silently resolved)
 
@@ -19,6 +19,11 @@ optional. Nothing is hidden to make a demo look better.
 | A-2 | FORGE 1.4 says money lives in a "Monad **smart account**"; the current build uses a **secp256k1 EOA** (Mera, no bundler). The ERC-4337/P-256 smart-account path is **archived**. | Documented in [`ARCHITECTURE.md`](ARCHITECTURE.md). Adopting a smart account would be a product change, out of scope this phase. |
 
 ## Historical (fixed) — kept for memory
+- **R1 / A-2 RESOLVED (capability) 2026-09-09** — Option C delivered: built `PrismP256Account` (a
+  relayer-sponsored smart account authorized by a device P-256 key, verified on-chain via `0x0100`),
+  tested (6/6, red-before-green), deployed to Monad, and proven with a real P-256-authorized
+  gas-sponsored USDC payment (`0xdea2…8a88`, account MON=0; mutate/replay/wrong-sig revert). R1 →
+  VERIFIED. Residual is consumer adoption (R1-ADOPT above).
 - **F-6 CLOSED 2026-09-09** — INV-M2 (backend not the canonical balance authority) now has a dedicated
   negative test: `backend/test/balance-authority.test.js` (no balance/ledger key; reported balance
   tracks the chain and is unaffected by store writes). C-LEDGER → `VERIFIED`.

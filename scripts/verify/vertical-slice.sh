@@ -71,8 +71,14 @@ else
   part "R2 Monad P256 verification" "round-trip failed (see /tmp/prism_p256.log); archived P256/smart-account path, active signer is secp256k1"
 fi
 
-# --- 1: device-backed P256 credential / on-chain P256 signature path ---
-part "R1 P256 signature path" "device passkey (P-256) is the root; ON-CHAIN P256 verifier + smart account are ARCHIVED (archive/erc4337-p256). ACTIVE on-chain signature is secp256k1 (ecrecover). See forge/ARCHITECTURE.md A-1/A-2"
+# --- 1: device-backed P256 signature → Prism smart account (PrismP256Account) ---
+if ( cd "$ROOT/contracts" && forge test --match-contract PrismP256AccountTest ) >/tmp/prism_p256acct.log 2>&1; then
+  ok "R1 device P-256 → Prism smart account (binding/replay/expiry)" "PrismP256Account.t.sol 6/6; LIVE tx 0xdea2…8a88 (P-256-authorized, gas-sponsored, account MON=0)"
+else
+  bad "R1 P256 smart account" "PrismP256Account.t.sol failed (see /tmp/prism_p256acct.log)"
+fi
+# Note: the consumer iOS app still routes user payments through the secp256k1 router; wiring iOS/Mera
+# to emit the WebAuthn P-256 signature into PrismP256Account is the remaining adoption step.
 
 # --- 7: sender may hold zero MON (live, gas-sponsored) ---
 ZM_TX="0xd34de0a6ab02d6d470ef60a199a31dbeb2fb5cfb90d33fbd25fc8501a8034a16"

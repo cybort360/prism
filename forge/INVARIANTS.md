@@ -95,8 +95,18 @@ exist under `archive/erc4337-p256/` but are **not the active runtime** (active s
 via `ecrecover` in `PrismPaymentRouter`). Whether Monad *could* verify P-256 on-chain is testable.
 - **Evidence:** `VERIFIED` (environment) — `scripts/verify/p256-roundtrip.mjs` generates a fresh
   secp256r1 keypair, signs a fresh message, and the RIP-7212 precompile at `0x0100` on Monad testnet
-  returns `1`; a tampered digest is rejected (negative control). The **active** on-chain signature path
-  remains secp256k1 — see `ARCHITECTURE.md` A-1/A-2.
+  returns `1`; a tampered digest is rejected (negative control).
+
+### INV-P256-ACCOUNT — A device-P256 → smart account settlement path exists and works on Monad
+`PrismP256Account` is a relayer-sponsored smart account whose spending authority is a device P-256
+(WebAuthn/passkey) key, verified **on-chain** via the `0x0100` precompile. It binds
+account+chainId+token+recipient+amount+nonce+expiry into the signed intent; mutation/replay revert.
+- **Enforcement:** `contracts/src/PrismP256Account.sol` (`pay` verifies `sha256(intent)` against the
+  stored P-256 key; single-use nonce; expiry).
+- **Evidence:** `VERIFIED` — `PrismP256Account.t.sol` 6/6 (red-before-green on amount binding); LIVE on
+  Monad: deploy + P-256-authorized payment `0xdea2…8a88` (recipient +1.00 USDC, account MON = 0;
+  mutate/replay/wrong-sig revert on-chain). Consumer-app routing through it is the remaining adoption
+  step — so the **currently active** consumer payment path is still secp256k1 (`PrismPaymentRouter`).
 
 ### INV-G1 — A payer with MON = 0 can pay
 - **Enforcement:** relayer submits the gasless ERC-3009 transfer and pays MON.

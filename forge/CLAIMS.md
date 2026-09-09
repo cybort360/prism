@@ -33,7 +33,8 @@ evidence lives in [`PROOF_LEDGER.md`](PROOF_LEDGER.md). **Do not mark `VERIFIED`
 | C-LEDGER | Backend is not the canonical balance authority | `VERIFIED` (balance-authority.test.js) |
 | C-SLICE | The vertical slice (resolution → continuity → auth → secp256k1 sig → router → gas-sponsored Monad → confirmed → receipt) works end to end | `VERIFIED` — `scripts/verify/vertical-slice.sh` 11 PASS / 0 FAIL + live txs |
 | C-P256-ENV | Monad verifies P-256 on-chain (RIP-7212 precompile) — validates the archived smart-account path's viability | `VERIFIED` (fresh sign→verify round-trip + negative control) |
-| C-P256-ACTIVE | The **active** on-chain signature is P-256 to a smart account | `FAILED` as stated / **N/A** — active path is secp256k1 to an EOA; P-256 smart account is archived (A-1/A-2) |
+| C-P256-ACCOUNT | A device-P256 → smart account → gas-sponsored payment path exists and works live on Monad | `VERIFIED` — `PrismP256Account` deployed; P-256-authorized payment `0xdea2…8a88` |
+| C-P256-CONSUMER | The **consumer app's** payments route through the P-256 smart account | `PARTIAL` — the path is built/deployed/live; iOS/Mera still sign secp256k1 for consumer payments (adoption step remaining) |
 
 ## Infra / live claims
 
