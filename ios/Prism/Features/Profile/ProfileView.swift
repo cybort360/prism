@@ -10,6 +10,7 @@ struct ProfileView: View {
   @State private var showReachability = false
   @State private var showEditProfile = false
   @State private var showProof = false
+  @State private var showP256 = false
   @State private var showAdvanced = false
   @State private var error: String?
 
@@ -112,6 +113,10 @@ struct ProfileView: View {
           settingsButton { showProof = true } content: {
             row("checkmark.seal.fill", "Payment proof", "Chain + Envio", nil)
           }
+          divider
+          settingsButton { showP256 = true } content: {
+            row("lock.shield", "Device-key account", "Pay via on-chain P-256", nil)
+          }
         }
         #endif
 
@@ -138,6 +143,7 @@ struct ProfileView: View {
     .sheet(isPresented: $showAdvanced) { AdvancedAccountView() }
     #if DEBUG
     .sheet(isPresented: $showProof) { ProofView() }
+    .sheet(isPresented: $showP256) { P256PayView() }
     .onAppear {
       if ProcessInfo.processInfo.arguments.contains("--uitest-advanced-account") {
         showAdvanced = true

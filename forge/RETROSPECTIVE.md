@@ -50,7 +50,11 @@ entry. Kept honest — the point is to not repeat mistakes.
   intent parity, confirmed-only status); iOS `DeviceP256CredentialTests` 3/3. Backend 148→152, iOS 109→112.
 - **LIVE:** deployed an account bound to the device key and paid through the real service — pay
   `0x63e7…1818` (status 0x1), recipient +1 USDC, account MON=0. Independently re-verified.
-- Remaining last mile: a UI entry point + real Secure Enclave hardware (Simulator uses the software key).
+- Added the in-app UI entry point (`P256PayView`, Profile → Developer → "Device-key account"): shows the
+  account + a Secure Enclave / software-key badge, takes a recipient + amount, signs with the device key,
+  and settles gaslessly. iOS build + 112 tests green; app installed on the Simulator.
+- Remaining last mile: promote it out of the DEBUG/Developer section into the primary flow, and run on
+  real Secure Enclave hardware (Simulator uses the software key).
 
 ## 2026-09-09 — Option C done: device-P256 → smart account, live on Monad (R1 VERIFIED)
 - Built `PrismP256Account` — a relayer-sponsored smart account whose spending authority is a device
