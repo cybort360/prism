@@ -127,6 +127,19 @@ test('p256 account: a device-key payment appears in the activity feed', async ()
   assert.equal(activity.list('bob').filter(x => x.kind === 'p256-sent').length, 0, 'not visible to another user');
 });
 
+test('p256 account: reconcile flips a stuck-submitted op to completed from its receipt', async () => {
+  const { store, calls, svc } = stack();
+  const k = deviceKey();
+  await svc.ensureAccount({ prismId: 'alice', qx: k.qx, qy: k.qy });
+  const prep = svc.prepare({ prismId: 'alice', recipient: RECIPIENT, amountAtomic: '1000000' });
+  await svc.submit({ prismId: 'alice', opId: prep.opId, r: `0x${'01'.repeat(32)}`, s: `0x${'02'.repeat(32)}` });
+  assert.equal(store.read().p256Ops[prep.opId].state, 'submitted'); // status poll never ran (old bug)
+
+  calls.receipt = { status: 'success' };
+  await svc.reconcile('alice');
+  assert.equal(store.read().p256Ops[prep.opId].state, 'completed', 'reconcile flips it to completed from the receipt');
+});
+
 test('p256 account: prepare without an account and unknown ops fail closed', async () => {
   const { svc } = stack();
   assert.throws(() => svc.prepare({ prismId: 'nobody', recipient: RECIPIENT, amountAtomic: '1' }), /no P256 account/);

@@ -187,7 +187,12 @@ route('POST', '/v1/claims/:id/refund', async ({ user, params, idempotencyKey }) 
     paymentService.refundClaim({ senderPrismId: user.prismId, claimId: params.id })), true);
 route('GET', '/v1/claims/:id', async ({ user, params }) => paymentService.reconcileClaim(params.id, user.prismId), true);
 
-route('GET', '/v1/activity', async ({ user }) => activityService.list(user.prismId), true);
+route('GET', '/v1/activity', async ({ user }) => {
+  // Opening Activity reconciles any non-terminal device-P256 payments from chain truth first, so a
+  // stuck "Pending" row (e.g. an earlier lost status poll) flips to its real Completed/Failed state.
+  await p256AccountService.reconcile(user.prismId).catch(() => {});
+  return activityService.list(user.prismId);
+}, true);
 
 // --- Aurora Intents: receive from any chain ----------------------------------
 // Aurora routes a deposit on any supported chain into USDC on Monad at the caller's own account.

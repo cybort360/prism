@@ -67,6 +67,19 @@ export class P256AccountService {
     return { opId, state: 'submitted', txHash };
   }
 
+  /** Reconcile a user's non-terminal P256 ops against the chain (opportunistic, on Activity load).
+   *  Flips a submitted/confirming op to completed/failed once its receipt is available. */
+  async reconcile(prismId) {
+    const pending = Object.values(this.store.read().p256Ops ?? {})
+      .filter(o => o.prismId === prismId && o.txHash && o.state !== 'completed' && o.state !== 'failed');
+    for (const op of pending) {
+      const receipt = await this.chain.getReceipt(op.txHash).catch(() => null);
+      if (!receipt) continue;
+      const ok = receipt.status === 'success' || receipt.status === '0x1' || receipt.status === 1;
+      this.store.mutate(d => { if (d.p256Ops?.[op.operationId]) d.p256Ops[op.operationId].state = ok ? 'completed' : 'failed'; });
+    }
+  }
+
   /** Confirmed on-chain state (never trust submission as completion). */
   async status({ prismId, opId }) {
     const op = this.store.read().p256Ops?.[opId];
