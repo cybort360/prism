@@ -168,8 +168,9 @@ final class PrismAPI: @unchecked Sendable {
     try await api.send("/v1/p256/submit", body: P256SubmitBody(opId: opId, r: r, s: s), idempotencyKey: opId)
   }
   func p256Status(_ opId: String) async throws -> P256OpStatus {
-    let encoded = opId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? opId
-    return try await api.request("/v1/p256/ops/\(encoded)")
+    // opId is path-safe (p256_<hex>); do NOT pre-encode — the API client's URL builder would
+    // double-encode it (a leading '%' becomes '%25'), which previously 404'd the status poll.
+    try await api.request("/v1/p256/ops/\(opId)")
   }
 
   func activity() async throws -> [ActivityRecord] { try await api.request("/v1/activity") }

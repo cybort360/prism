@@ -43,7 +43,7 @@ export class P256AccountService {
       [{ type: 'uint256' }, { type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'uint256' }, { type: 'bytes32' }, { type: 'uint256' }],
       [BigInt(this.config.chain.chainId), rec.account, this.config.chain.usdc, recipient, BigInt(amount), nonce, BigInt(validBefore)]
     );
-    const opId = `p256#${randomHex(16)}`;
+    const opId = `p256_${randomHex(16).slice(2)}`; // path-safe (no '#') so the status URL never needs escaping
     this.store.mutate(d => {
       (d.p256Ops ||= {})[opId] = {
         operationId: opId, kind: 'p256-payment', state: 'prepared', prismId,
