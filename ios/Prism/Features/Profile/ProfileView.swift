@@ -11,6 +11,7 @@ struct ProfileView: View {
   @State private var showEditProfile = false
   @State private var showProof = false
   @State private var showP256 = false
+  @State private var showContinuityLab = false
   @State private var showAdvanced = false
   @State private var error: String?
 
@@ -117,6 +118,10 @@ struct ProfileView: View {
           settingsButton { showP256 = true } content: {
             row("lock.shield", "Device-key account", "Pay via on-chain P-256", nil)
           }
+          divider
+          settingsButton { showContinuityLab = true } content: {
+            row("shield.lefthalf.filled", "Continuity Lab", "Baseline vs PRISM", nil)
+          }
         }
         #endif
 
@@ -144,6 +149,7 @@ struct ProfileView: View {
     #if DEBUG
     .sheet(isPresented: $showProof) { ProofView() }
     .sheet(isPresented: $showP256) { P256PayView() }
+    .sheet(isPresented: $showContinuityLab) { ContinuityLabView() }
     .onAppear {
       if ProcessInfo.processInfo.arguments.contains("--uitest-advanced-account") {
         showAdvanced = true

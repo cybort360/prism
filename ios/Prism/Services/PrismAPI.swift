@@ -175,6 +175,10 @@ final class PrismAPI: @unchecked Sendable {
 
   func activity() async throws -> [ActivityRecord] { try await api.request("/v1/activity") }
 
+  /// PRISM Continuity Lab: the fixtures-only baseline-vs-PRISM comparison report. Read-only; the
+  /// server creates no payment state producing it.
+  func continuityLab() async throws -> ContinuityLabReport { try await api.request("/v1/lab/continuity") }
+
   // MARK: cross-chain (Aurora Intents)
   //
   // Receiving needs no signature: the deposit address is derived from the user's own account, so

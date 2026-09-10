@@ -8,7 +8,7 @@ because code exists.
 
 | Suite | Command | Result | Status |
 |---|---|---|---|
-| Backend | `cd backend && node --test test/*.test.js` | 152 pass / 0 fail (148 + 4 p256-account adoption) | `VERIFIED` |
+| Backend | `cd backend && node --test test/*.test.js` | 159 pass / 0 fail (148 + 4 p256-account + 2 device-key activity/reconcile + 5 continuity-lab) | `VERIFIED` |
 | Contracts | `cd contracts && forge test` | 49 pass / 0 fail (43 + 6 PrismP256Account) | `VERIFIED` |
 | iOS unit | `xcodebuild … -only-testing:PrismTests test` | 112 pass / 0 fail (109 + 3 device-P256 credential) | `VERIFIED` |
 
@@ -59,6 +59,24 @@ Implemented the PRISM Continuity domain model across backend + iOS (`continuity.
 | CONT-2 | Stale resolution invalidated after rotation | `VERIFIED` | `security-boundaries.test.js`; `assertResolution` 409 |
 | CONT-3 | Different-identity alias visibly blocked/reviewed (not redirected) | `VERIFIED` | server 409 (`assertResolution`) + iOS `IdentityContinuityTests` (warns on changed prismId/account; silent on alias-only change) |
 | CONT-4 | End-to-end narrative: pay → rotate (same account) → pay again succeeds → number reassigned → blocked, never redirected | `VERIFIED` | backend `continuity-narrative.test.js` (real resolve→prepare→sign→submit→reconcile; two completed payments to Bob + two stale-resolution rejections) |
+
+## PRISM Continuity Lab (2026-09-10) — `backend/src/lab/continuityLab.js`, `GET /v1/lab/continuity`
+
+A safe, deterministic, **fixtures-only** comparison harness that makes the continuity invariant
+judge-visible. It runs two paths over identical fixture identities — BASELINE (`alias → account`,
+last-write-wins) and PRISM (`alias → PrismIdentity → active account`) — and shows the delta after a
+legitimate alias reassignment to a **different** human, then four attacks. The detectors are the real
+product's own code (`classifyContinuity`; `paymentEnvelopeTypedData` + `verifyTypedData`) — **not** a
+toy that returns the desired answer. It takes no store and creates no payment state. iOS surfaces it in
+Developer → Continuity Lab (`ContinuityLabView`).
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| LAB-1 | Baseline would silently route the reassigned alias to the new human (W2); PRISM detects P1≠P2 and BLOCKS with IDENTITY_DISCONTINUITY | `VERIFIED` | `continuity-lab.test.js` "PRISM blocks the reassigned-alias send…" (baseline `resolvesTo == W2`, `routesToDifferentHuman`; PRISM `IDENTITY_DISCONTINUITY`, `blocked`) — 5/5 |
+| LAB-2 | Four attacks (stale-resolution, amount-mutation, recipient-mutation, replay) each state EXPECTED/OBSERVED/PASS/evidence and are rejected by production verifiers | `VERIFIED` | `continuity-lab.test.js` "all four attacks are rejected…"; stale→`STALE_RESOLUTION` via `classifyContinuity`; amount/recipient/replay→`verifyTypedData=false` (nonce/amount/recipient signature-bound); on-chain replay evidence R6/AUTH-2 |
+| LAB-3 | Not a toy: each envelope attack gates PASS on the UNMUTATED envelope verifying first (red-before-green) | `VERIFIED` | neutralized the amount mutation (identity fn) → attack row `ACCEPTED (unexpected)`, 2 tests **failed**; restored → **5/5 pass** |
+| LAB-4 | The Lab cannot accidentally generate production payment state | `VERIFIED` | `continuity-lab.test.js` "creates NO production payment state": a fresh `JsonStore` is byte-identical before/after; `operations`/`p256Ops` empty; report `fixtures:true`/`createsProductionState:false` |
+| LAB-5 | Deterministic — two runs produce identical reports | `VERIFIED` | `continuity-lab.test.js` "deterministic — two runs produce identical reports" |
 
 ## Security / privacy / money-truth
 

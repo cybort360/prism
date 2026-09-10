@@ -292,6 +292,39 @@ struct P256PrepareResponse: Codable {
 }
 struct P256OpStatus: Codable { let opId: String; let state: String; let txHash: String? }
 
+// PRISM Continuity Lab — the deterministic, fixtures-only comparison harness (baseline alias→account
+// vs PRISM alias→PrismIdentity→account) served from GET /v1/lab/continuity.
+struct ContinuityLabReport: Codable {
+  let fixtures: Bool
+  let createsProductionState: Bool
+  let scenario: [ContinuityLabStep]
+  let delta: ContinuityLabDelta
+  let attacks: [ContinuityLabAttack]
+  let allAttacksPass: Bool
+  let verifiers: ContinuityLabVerifiers
+}
+struct ContinuityLabStep: Codable, Identifiable { let step: Int; let title: String; let detail: String; var id: Int { step } }
+struct ContinuityLabDelta: Codable {
+  let baseline: ContinuityLabBaseline
+  let prism: ContinuityLabPrism
+  let interpretation: String
+}
+struct ContinuityLabBaseline: Codable {
+  let model: String; let resolvesTo: String?; let routesToDifferentHuman: Bool; let blocked: Bool; let result: String
+}
+struct ContinuityLabPrism: Codable {
+  let model: String
+  let previouslyTrusted: ContinuityLabBinding
+  let currentResolution: ContinuityLabBinding
+  let state: String; let reason: String; let blocked: Bool; let result: String
+}
+struct ContinuityLabBinding: Codable { let label: String; let prismIdentity: String; let account: String }
+struct ContinuityLabAttack: Codable, Identifiable {
+  let id: String; let name: String; let expected: String; let observed: String
+  let pass: Bool; let verifier: String; let evidence: String
+}
+struct ContinuityLabVerifiers: Codable { let continuity: String; let envelope: String }
+
 struct ClaimEligibility: Codable {
   let claimId: String
   let recipientAccount: String

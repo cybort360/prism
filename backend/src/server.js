@@ -20,6 +20,7 @@ import { AuroraService } from './services/auroraService.js';
 import { ProofService } from './services/proofService.js';
 import { P256AccountService } from './services/p256AccountService.js';
 import { p256ChainOps } from './chain/p256Account.js';
+import { runContinuityLab } from './lab/continuityLab.js';
 import { usdcBalanceOf, claimAuthorizerAddress, relayerAccount, verifyChainId, verifyUsdcDomain } from './chain/eth.js';
 import { chainProvider } from './providers/index.js';
 import { envioIndexer } from './indexers/index.js';
@@ -159,6 +160,11 @@ route('POST', '/v1/p256/submit', async ({ user, body, idempotencyKey }) =>
   withIdempotency(store, { scope: 'p256-submit', key: idempotencyKey, actor: user.prismId, fingerprint: fingerprint(body.opId, body.r, body.s) }, () =>
     p256AccountService.submit({ prismId: user.prismId, opId: body.opId, r: body.r, s: body.s })), true);
 route('GET', '/v1/p256/ops/:id', async ({ user, params }) => p256AccountService.status({ prismId: user.prismId, opId: params.id }), true);
+
+// PRISM Continuity Lab: a deterministic, fixtures-only comparison harness (baseline alias→account vs
+// PRISM alias→PrismIdentity→account) that makes the continuity invariant judge-visible. It runs the
+// real production verifiers over in-memory fixtures and creates NO payment state (see lab/continuityLab.js).
+route('GET', '/v1/lab/continuity', async () => runContinuityLab(), true);
 
 // Canonical Payment Proof: typed, evidence-backed inspectability for one operation the caller owns.
 // The paymentId must map to a Prism operation visible to the authenticated user (never a raw,
