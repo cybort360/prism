@@ -10,6 +10,7 @@ import UIKit
 /// The screen never shows a price it did not get from Aurora, and never enables approval without
 /// being able to say why it is enabled: `AuroraRouteDisplay.blockedReason` names every blocker.
 struct SendToAnywhereView: View {
+  @EnvironmentObject private var model: AppModel
   @Environment(\.dismiss) private var dismiss
   @StateObject private var coordinator = PaymentCoordinator()
 
@@ -67,7 +68,10 @@ struct SendToAnywhereView: View {
       .padding(.bottom, 28)
     }
     .prismScreen()
-    .overlay(OperationStateOverlay(state: coordinator.state))
+    .overlay(OperationStateOverlay(
+      state: coordinator.state,
+      onDismiss: { coordinator.reset() },
+      onViewActivity: { dismiss(); model.selectedTab = .activity }))
     .sheet(isPresented: $showAuth) {
       PaymentAuthorizationSheet(amount: amountText) { pin, useFaceID in
         Task { await approve(pin: pin, useFaceID: useFaceID) }

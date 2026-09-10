@@ -366,35 +366,75 @@ struct EmptyStateView: View {
 
 struct OperationStateOverlay: View {
   let state: PaymentCoordinator.State
+  /// Recovery: dismiss a terminal non-success state so the payer can try again (wrong PIN, Face ID
+  /// cancelled, a transient failure). Nil keeps the overlay non-dismissible (in-progress states).
+  var onDismiss: (() -> Void)? = nil
+  /// A pending payment routes the payer to Activity, which reconciles from chain truth.
+  var onViewActivity: (() -> Void)? = nil
+
+  private var isFailed: Bool { if case .failed = state { return true }; return false }
+  private var isPending: Bool { if case .pendingReview = state { return true }; return false }
 
   var body: some View {
     if state != .idle {
       ZStack {
         Color.black.opacity(0.20).ignoresSafeArea()
-        VStack(spacing: 18) {
-          if case .sent = state {
-            Circle().fill(PrismTheme.mintSoft).frame(width: 72, height: 72).overlay(
-              Image(systemName: "checkmark").font(.system(size: 27, weight: .semibold)).foregroundStyle(PrismTheme.mintDeep)
-            )
-          } else if case .failed = state {
-            Circle().fill(PrismTheme.danger.opacity(0.08)).frame(width: 72, height: 72).overlay(
-              Image(systemName: "exclamationmark").font(.system(size: 27, weight: .semibold)).foregroundStyle(PrismTheme.danger)
-            )
-          } else {
-            ProgressView().tint(PrismTheme.mintDeep).scaleEffect(1.15)
-          }
+        VStack(spacing: 16) {
+          icon
           Text(label)
-            .font(PrismTheme.display(26))
+            .font(PrismTheme.display(isFailed || isPending ? 21 : 26))
             .multilineTextAlignment(.center)
+            .lineSpacing(isFailed || isPending ? 2 : 0)
+          actions
         }
-        .padding(.horizontal, 30)
+        .padding(.horizontal, 28)
         .padding(.vertical, 28)
-        .frame(maxWidth: 300)
+        .frame(maxWidth: 320)
         .background(PrismTheme.paper)
         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .prismCardShadow()
       }
       .transition(.opacity)
+    }
+  }
+
+  @ViewBuilder private var icon: some View {
+    if case .sent = state {
+      Circle().fill(PrismTheme.mintSoft).frame(width: 72, height: 72).overlay(
+        Image(systemName: "checkmark").font(.system(size: 27, weight: .semibold)).foregroundStyle(PrismTheme.mintDeep))
+    } else if isPending {
+      Circle().fill(PrismTheme.amber.opacity(0.10)).frame(width: 72, height: 72).overlay(
+        Image(systemName: "clock.badge.checkmark").font(.system(size: 26, weight: .medium)).foregroundStyle(PrismTheme.amber))
+    } else if isFailed {
+      Circle().fill(PrismTheme.danger.opacity(0.08)).frame(width: 72, height: 72).overlay(
+        Image(systemName: "exclamationmark").font(.system(size: 27, weight: .semibold)).foregroundStyle(PrismTheme.danger))
+    } else {
+      ProgressView().tint(PrismTheme.mintDeep).scaleEffect(1.15)
+    }
+  }
+
+  @ViewBuilder private var actions: some View {
+    if isPending {
+      VStack(spacing: 8) {
+        if let onViewActivity {
+          PrismPrimaryButton(title: "View in Activity", icon: "chart.bar.xaxis") { onViewActivity() }
+        }
+        if let onDismiss {
+          Button("Done") { onDismiss() }
+            .font(PrismTheme.body(14, weight: .semibold)).foregroundStyle(PrismTheme.muted)
+        }
+      }
+      .padding(.top, 4)
+    } else if isFailed, let onDismiss {
+      Button {
+        onDismiss()
+      } label: {
+        Text("Try again").font(PrismTheme.body(15, weight: .semibold)).foregroundStyle(PrismTheme.mintDeep)
+          .frame(maxWidth: .infinity).frame(height: 50)
+          .background(PrismTheme.mintSoft).clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+      }
+      .buttonStyle(.plain)
+      .padding(.top, 4)
     }
   }
 
@@ -406,6 +446,7 @@ struct OperationStateOverlay: View {
     case .sending: "Sending…"
     case .settling: "Confirming your payment…"
     case .sent: "Sent"
+    case .pendingReview(let message): message
     case .failed(let message): message
     }
   }

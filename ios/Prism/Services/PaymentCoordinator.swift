@@ -5,6 +5,10 @@ final class PaymentCoordinator: ObservableObject {
   enum State: Equatable {
     case idle, preparing, awaitingAuthorization, sending, settling
     case sent(String?)
+    /// The authorization was submitted but the receipt hasn't confirmed within the polling window. The
+    /// money may be in flight — this is NOT a failure and NOT a success. It is a truthful pending state
+    /// that sends the payer to Activity, which reconciles from chain truth (never a blind re-send).
+    case pendingReview(String)
     case failed(String)
   }
   @Published var state: State = .idle
@@ -83,7 +87,8 @@ final class PaymentCoordinator: ObservableObject {
       if st.state == "completed" { state = .sent(st.txHash); PrismHaptics.success(); return }
       if st.state == "failed" { PrismHaptics.error(); throw PaymentError.failed }
     }
-    state = .failed("Your payment was submitted and is still confirming. Check Activity before trying again.")
+    PrismHaptics.warning()
+    state = .pendingReview("Your payment was sent and is still confirming. It’ll appear in Activity once it settles — don’t send it again.")
   }
 
   // MARK: claims (send before signup)
@@ -150,12 +155,36 @@ final class PaymentCoordinator: ObservableObject {
         throw PaymentError.failed
       }
     }
-    state = .failed("Your payment was submitted and is still confirming. Check Activity before trying again.")
+    PrismHaptics.warning()
+    state = .pendingReview("Your payment was sent and is still confirming. It’ll appear in Activity once it settles — don’t send it again.")
   }
 
   private func fail(_ error: Error) {
     PrismHaptics.error()
-    state = .failed(error.localizedDescription)
+    state = .failed(Self.friendlyMessage(for: error))
+  }
+
+  /// Keep the consumer flow free of chain jargon. The payer never funds gas (payments are sponsored),
+  /// so a gas/MON/relayer/RPC failure is never actionable to them — surface a plain, honest message
+  /// instead of leaking infrastructure. Real, actionable errors (balance, PIN) pass through unchanged.
+  nonisolated static func friendlyMessage(for error: Error) -> String {
+    if let e = error as? PaymentError { return e.errorDescription ?? "The payment couldn't be completed." }
+    let raw = error.localizedDescription
+    let lower = raw.lowercased()
+    // Token-based so "MON"/"gas" are caught anywhere (including at the start) while "money" is NOT
+    // (its token is "money", not "mon"). Whole-word infra terms:
+    let tokens = Set(lower.split { !$0.isLetter && !$0.isNumber }.map(String.init))
+    let infraTokens: Set<String> = ["mon", "monad", "gas", "relayer", "rpc", "nonce", "userop",
+      "entrypoint", "bundler", "precompile", "revert", "reverted", "calldata", "ecrecover"]
+    // Plus fragments that never appear split into clean tokens:
+    let infraFragments = ["0x", "eip-", "erc-", "userop", "0x0100"]
+    let looksInfra = !tokens.isDisjoint(with: infraTokens) || infraFragments.contains(where: { lower.contains($0) })
+    if looksInfra {
+      // Never claim "nothing was sent" — a failure thrown after broadcast may be in flight. Activity
+      // reconciles from chain truth, so send the payer there rather than inviting a blind re-send.
+      return "The payment couldn't be completed just now. Check Activity before sending it again."
+    }
+    return raw
   }
 
   func reset() { state = .idle }

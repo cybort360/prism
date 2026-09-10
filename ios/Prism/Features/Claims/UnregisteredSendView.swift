@@ -72,7 +72,10 @@ struct UnregisteredSendView: View {
       .prismScreen()
 
       if coordinator.state != .idle {
-        OperationStateOverlay(state: coordinator.state)
+        OperationStateOverlay(
+          state: coordinator.state,
+          onDismiss: { coordinator.reset() },
+          onViewActivity: { dismiss(); model.selectedTab = .activity })
       }
     }
     .sheet(isPresented: $showAuth) {

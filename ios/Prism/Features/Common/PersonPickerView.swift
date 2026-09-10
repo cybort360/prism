@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum PersonPickerMode { case send, request }
 
@@ -10,6 +11,8 @@ struct PersonPickerView: View {
   @State private var query = ""
   @State private var busyId: String?
   @State private var error: String?
+  @State private var contactsBlocked = false
+  @State private var loading = true
 
   var body: some View {
     VStack(spacing: 0) {
@@ -131,6 +134,12 @@ struct PersonPickerView: View {
             .buttonStyle(.plain)
             Divider().overlay(PrismTheme.line)
           }
+
+          if loading && contacts.isEmpty && !query.hasPrefix("@") {
+            ProgressView().tint(PrismTheme.mintDeep).frame(maxWidth: .infinity).padding(.top, 30)
+          } else if !loading && filteredContacts.isEmpty && !query.hasPrefix("@") {
+            contactsFallback.padding(.top, 18)
+          }
         }
         .padding(.horizontal, 28)
         .padding(.bottom, 28)
@@ -145,6 +154,35 @@ struct PersonPickerView: View {
     }
   }
 
+  /// Shown when there are no matching contacts — most importantly when Contacts access is off. The
+  /// @handle path above is always available, so contact permission is never a dead end.
+  private var contactsFallback: some View {
+    VStack(spacing: 12) {
+      ZStack {
+        Circle().fill(PrismTheme.mintSoft).frame(width: 56, height: 56)
+        Image(systemName: contactsBlocked ? "at" : "person.crop.circle.badge.questionmark")
+          .font(.system(size: 22, weight: .medium)).foregroundStyle(PrismTheme.mintDeep)
+      }
+      Text(contactsBlocked ? "Search a @handle to pay" : (query.isEmpty ? "No contacts with a number" : "No matches"))
+        .font(PrismTheme.body(15, weight: .semibold)).foregroundStyle(PrismTheme.ink)
+      Text(contactsBlocked
+        ? "Contacts access is off. Type someone’s @handle above to pay them — you don’t need your contacts."
+        : "Type a @handle above to pay anyone on Prism.")
+        .font(PrismTheme.body(12.5)).foregroundStyle(PrismTheme.muted)
+        .multilineTextAlignment(.center).lineSpacing(2)
+        .padding(.horizontal, 20)
+      if contactsBlocked {
+        Button("Turn on Contacts in Settings") {
+          if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+        }
+        .font(PrismTheme.body(13, weight: .semibold)).foregroundStyle(PrismTheme.mintDeep)
+        .padding(.top, 2)
+      }
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.vertical, 22)
+  }
+
   private var filteredContacts: [ContactPerson] {
     guard !query.isEmpty, !query.hasPrefix("@") else { return contacts }
     return contacts.filter {
@@ -154,10 +192,17 @@ struct PersonPickerView: View {
   }
 
   private func loadContacts() async {
+    defer { loading = false }
+    let status = ContactService.shared.authorizationStatus
+    if status == .denied || status == .restricted {
+      contactsBlocked = true
+      return
+    }
     do {
       contacts = try await ContactService.shared.contacts()
     } catch {
-      self.error = "Contacts are unavailable. You can still search an @Prism handle."
+      // Access was refused or is otherwise unavailable — fall back to the @handle path, no scary alert.
+      contactsBlocked = true
     }
   }
 
@@ -169,10 +214,9 @@ struct PersonPickerView: View {
     do {
       let resolution = try await PrismAPI.shared.resolve(phone: phone)
       if resolution.found {
-        if IdentityTrustStore.shared.warning(for: contact, newResolution: resolution) != nil {
+        if let candidate = IdentityTrustStore.shared.reviewCandidate(for: contact, newResolution: resolution, action: mode == .send ? .send : .request) {
           dismiss()
-          model.presentIdentityChange = IdentityChangeCandidate(
-            contact: contact, resolution: resolution, action: mode == .send ? .send : .request)
+          model.presentIdentityChange = candidate
           return
         }
 
@@ -210,10 +254,9 @@ struct PersonPickerView: View {
         handle: "@\(name)",
         prismState: .onPrism(resolution)
       )
-      if IdentityTrustStore.shared.warning(for: contact, newResolution: resolution) != nil {
+      if let candidate = IdentityTrustStore.shared.reviewCandidate(for: contact, newResolution: resolution, action: mode == .send ? .send : .request) {
         dismiss()
-        model.presentIdentityChange = IdentityChangeCandidate(
-          contact: contact, resolution: resolution, action: mode == .send ? .send : .request)
+        model.presentIdentityChange = candidate
         return
       }
       IdentityTrustStore.shared.remember(contact: contact, resolution: resolution)
@@ -273,14 +316,55 @@ final class IdentityTrustStore: @unchecked Sendable {
     }
   }
 
+  /// What the payer last trusted for this contact, if anything. Read-only; the review surface uses it
+  /// to show human-readable "previously trusted" context without re-deriving it.
+  func trusted(contactId: String) -> ContactTrustRecord? { records()[contactId] }
+
+  /// A review candidate when the payment/request must STOP for identity review, or `nil` when it may
+  /// proceed (first contact, continuity match, or a same-identity route change). Centralized so every
+  /// entry point (People, picker, send, request) makes the identical decision.
+  func reviewCandidate(for contact: ContactPerson, newResolution: ResolutionResponse, action: IdentityChangeAction) -> IdentityChangeCandidate? {
+    let s = state(for: contact, newResolution: newResolution)
+    switch s {
+    case .identityDiscontinuity, .resolverUnavailableOrAmbiguous:
+      return IdentityChangeCandidate(contact: contact, resolution: newResolution, action: action, state: s, previous: trusted(contactId: contact.id))
+    case .firstContact, .continuityMatch, .staleResolution:
+      return nil
+    }
+  }
+
   func remember(contact: ContactPerson, resolution: ResolutionResponse) {
     guard let a = resolution.attestation else { return }
     var all = records()
+    let existing = all[contact.id]
     all[contact.id] = ContactTrustRecord(
       localContactId: contact.id, prismId: a.prismIdentity, accountAddress: a.recipientAccount,
-      aliasVersion: a.aliasVersion, establishedAt: Date())
+      aliasVersion: a.aliasVersion, establishedAt: existing?.establishedAt ?? Date())
     if let data = try? JSONEncoder().encode(all) { UserDefaults.standard.set(data, forKey: key) }
+    // Record a transparent continuity event when a KNOWN contact's route advances but stays the same
+    // PrismIdentity (a legitimate alias/account rotation). This is NOT a warning — it is the audit trail
+    // for "the route changed and PRISM followed it because the person is the same."
+    if let existing, existing.prismId.lowercased() == a.prismIdentity.lowercased(),
+       existing.aliasVersion != a.aliasVersion || existing.accountAddress.lowercased() != a.recipientAccount.lowercased() {
+      logContinuityEvent(ContinuityEvent(
+        contactId: contact.id, contactName: contact.name, prismId: a.prismIdentity,
+        fromAliasVersion: existing.aliasVersion, toAliasVersion: a.aliasVersion, at: Date()))
+    }
   }
+
+  /// Transparent continuity log — legitimate route changes for the same PrismIdentity. Local only.
+  func continuityEvents() -> [ContinuityEvent] {
+    guard let data = UserDefaults.standard.data(forKey: eventsKey),
+      let value = try? JSONDecoder().decode([ContinuityEvent].self, from: data) else { return [] }
+    return value
+  }
+  private func logContinuityEvent(_ event: ContinuityEvent) {
+    var all = continuityEvents()
+    all.append(event)
+    if all.count > 50 { all.removeFirst(all.count - 50) } // keep the log bounded
+    if let data = try? JSONEncoder().encode(all) { UserDefaults.standard.set(data, forKey: eventsKey) }
+  }
+  private let eventsKey = "continuity.events"
 
   func reset(contactId: String) {
     var all = records()

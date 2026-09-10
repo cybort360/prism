@@ -50,7 +50,12 @@ struct SendMoneyView: View {
         PrismPrimaryButton(title: "Review & Send", enabled: atomic != nil) { showAuth = true }
           .padding(24)
       }.prismScreen()
-      if coordinator.state != .idle { OperationStateOverlay(state: coordinator.state) }
+      if coordinator.state != .idle {
+        OperationStateOverlay(
+          state: coordinator.state,
+          onDismiss: { coordinator.reset() },
+          onViewActivity: { dismiss(); model.selectedTab = .activity })
+      }
     }
     .sheet(isPresented: $showAuth) {
       PaymentAuthorizationSheet(amount: displayAssetAmount) { pin, face in

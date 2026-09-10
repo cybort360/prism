@@ -38,7 +38,12 @@ struct P256PayView: View {
         }
         .padding(.horizontal, 22).padding(.top, 8).padding(.bottom, 32)
       }
-      if coordinator.state != .idle { OperationStateOverlay(state: coordinator.state) }
+      if coordinator.state != .idle {
+        OperationStateOverlay(
+          state: coordinator.state,
+          onDismiss: { coordinator.reset() },
+          onViewActivity: { dismiss(); model.selectedTab = .activity })
+      }
     }
     .background(PrismTheme.canvas.ignoresSafeArea())
     .navigationTitle("").navigationBarTitleDisplayMode(.inline)

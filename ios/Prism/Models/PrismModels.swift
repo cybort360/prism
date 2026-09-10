@@ -366,6 +366,23 @@ struct IdentityChangeCandidate: Identifiable {
   let contact: ContactPerson
   let resolution: ResolutionResponse
   var action: IdentityChangeAction = .send
+  /// Why the payment was stopped — a different PrismIdentity (`identityDiscontinuity`) or an
+  /// unconfirmable change (`resolverUnavailableOrAmbiguous`). Drives the review copy.
+  var state: PrismContinuityState = .identityDiscontinuity
+  /// What the payer last trusted for this contact, for the human-readable "previously trusted" context.
+  var previous: ContactTrustRecord? = nil
+}
+
+/// A transparent, local record that a contact's reachability route advanced while remaining the SAME
+/// PrismIdentity — the legitimate-continuity audit trail (never a warning).
+struct ContinuityEvent: Codable, Identifiable, Equatable {
+  var id: String { "\(contactId)-\(toAliasVersion)-\(at.timeIntervalSince1970)" }
+  let contactId: String
+  let contactName: String
+  let prismId: String
+  let fromAliasVersion: Int
+  let toAliasVersion: Int
+  let at: Date
 }
 
 struct ClaimDetailPresentation: Identifiable {

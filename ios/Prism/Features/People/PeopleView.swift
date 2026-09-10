@@ -127,8 +127,8 @@ struct PeopleView: View {
     do {
       let r = try await PrismAPI.shared.resolve(phone: phone)
       if r.found {
-        if IdentityTrustStore.shared.warning(for: p, newResolution: r) != nil {
-          model.presentIdentityChange = IdentityChangeCandidate(contact: p, resolution: r)
+        if let candidate = IdentityTrustStore.shared.reviewCandidate(for: p, newResolution: r, action: .send) {
+          model.presentIdentityChange = candidate
         } else {
           IdentityTrustStore.shared.remember(contact: p, resolution: r)
           model.presentSend = SendTarget(contact: p, resolution: r)
@@ -148,8 +148,8 @@ struct PeopleView: View {
       let p = ContactPerson(
         id: "handle:\(n)", name: "@\(n)", phone: nil, initials: String(n.prefix(2)).uppercased(),
         handle: "@\(n)", prismState: .onPrism(r))
-      if IdentityTrustStore.shared.warning(for: p, newResolution: r) != nil {
-        model.presentIdentityChange = IdentityChangeCandidate(contact: p, resolution: r, action: .send)
+      if let candidate = IdentityTrustStore.shared.reviewCandidate(for: p, newResolution: r, action: .send) {
+        model.presentIdentityChange = candidate
       } else {
         IdentityTrustStore.shared.remember(contact: p, resolution: r)
         model.presentSend = SendTarget(contact: p, resolution: r)

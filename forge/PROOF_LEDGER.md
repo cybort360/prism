@@ -10,7 +10,7 @@ because code exists.
 |---|---|---|---|
 | Backend | `cd backend && node --test test/*.test.js` | 159 pass / 0 fail (148 + 4 p256-account + 2 device-key activity/reconcile + 5 continuity-lab) | `VERIFIED` |
 | Contracts | `cd contracts && forge test` | 49 pass / 0 fail (43 + 6 PrismP256Account) | `VERIFIED` |
-| iOS unit | `xcodebuild … -only-testing:PrismTests test` | 112 pass / 0 fail (109 + 3 device-P256 credential) | `VERIFIED` |
+| iOS unit | `xcodebuild … -only-testing:PrismTests test` | 121 pass / 0 fail (112 + 6 continuity-UX + 3 error-sanitization) | `VERIFIED` |
 
 ## Winning vertical slice (2026-09-09) — `bash scripts/verify/vertical-slice.sh`
 
@@ -105,6 +105,32 @@ Developer → Continuity Lab (`ContinuityLabView`).
 | ID | Claim | Status | Note |
 |---|---|---|---|
 | UX-1 | Cold user completes a normal payment without coaching (thesis #12) | `PARTIAL` | executed: `PrismUITests.testPhoneOnboardingReachesHome` — a cold launch drives the **real** Mera WKWebView bridge + live backend through choose-phone → OTP → **reaches Home** (passed 24.8s this session). Gap: it does not drive a full *payment*, and "without coaching" is a usability judgment no automated test certifies — that still needs an observed human run. Not `VERIFIED`. |
+
+## Continuity UX refinement (2026-09-10)
+
+Refined the iOS experience around the continuity invariant: a serious two-step safety surface
+(`IdentityChangeReviewView`), transparent legitimate-continuity handling, safe failure/pending/empty
+states, and no chain-jargon leakage in the consumer flow. A **separate evaluator agent** reviewed the
+design (hierarchy, credibility, clarity, warning comprehension, states, a11y, AI-slop); its high/most
+findings were fixed and re-tested. iOS unit suite **121/121**.
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| UX-2 | Identity discontinuity → dedicated two-step safety surface; the FIRST screen offers only Review change / Cancel (no one-tap "send anyway") | `VERIFIED` (logic) | `ContinuityUXTests` (candidate factory carries state+previous, nil on first-contact/continuity) + build; the send-anyway button was removed from the warning screen (`IdentityChangeReviewView` step 1 has only Review change / Cancel). On-device visual not auto-tested. |
+| UX-3 | The review screen shows human-readable continuity info; raw account/version only behind an opt-in "Technical details" disclosure | `VERIFIED` (logic) | `IdentityChangeReviewView` comparison uses a **collision-resistant** identity code (SHA-256 of the full prismId, not a truncatable suffix — evaluator finding #1 fixed) + a classifier-derived verdict; account address gated behind the disclosure. |
+| UX-4 | Legitimate continuity (same identity, route change) is silent AND recorded as a transparent event; "trusted since" is preserved | `VERIFIED` | `ContinuityUXTests.testLegitimateRotationRecordsAContinuityEvent`, `testIdentityChangeIsNotRecordedAsContinuity`, `testTrustedSincePreservedAcrossRotation` |
+| UX-5 | The consumer flow never surfaces MON/gas/relayer/RPC/0x/UserOp/EntryPoint; genuinely actionable errors pass through | `VERIFIED` | `PaymentErrorSanitizationTests` (9 leak cases incl. leading "MON…"/bare "gas" — evaluator finding #2 fixed; "money"/USDC-balance pass through) |
+| UX-6 | Ambiguous settlement → truthful `.pendingReview` (not a red failure); routes to Activity; never a "nothing was sent" claim on a possibly-in-flight tx | `VERIFIED` (logic) | `PaymentCoordinator` poll timeout → `.pendingReview`; `OperationStateOverlay` renders it amber with "View in Activity"; sanitizer says "Check Activity before sending it again" (finding #2). Live timeout path not re-exercised. |
+| UX-7 | Contacts-permission denial is never a dead end (inline @handle fallback + Settings link; no empty-state flash during load) | `VERIFIED` (logic) | `PersonPickerView` `contactsBlocked` fallback + loading gate (finding #8); @handle resolution path unchanged and covered by existing resolve tests. |
+| UX-8 | Wrong PIN / Face-ID failure recovers | `VERIFIED` (logic) | `OperationStateOverlay` `.failed` now shows "Try again" → `coordinator.reset()` → retry; all four send surfaces wired. On-device biometric cancel not auto-tested. |
+
+**Known gaps (not claimed VERIFIED):** (a) **Dynamic Type** — the app's `PrismTheme` uses fixed point
+sizes throughout; the type system does not scale with accessibility text settings (evaluator finding
+#3). App-wide; deferred to avoid destabilizing every layout. (b) **On-device sheet chaining** —
+`trust and continue` dismisses one root sheet and presents a sibling (the pre-existing app pattern);
+the classic SwiftUI dropped-presentation risk was flagged (finding #5) and not verified on a device.
+(c) Amber-on-white small-label contrast was darkened to pass AA for the review labels (finding #6);
+a full contrast/VoiceOver audit of the app was not done.
 
 ## How to add a row
 State the exact command, run it, paste the pass/fail counts (or tx hash), then set the status. If a
