@@ -64,6 +64,10 @@ export const CircleStatus = Object.freeze({
   RECONCILING: 'RECONCILING',
   ACTIVE: 'ACTIVE',
   VERIFICATION_FAILED: 'VERIFICATION_FAILED',
+  // The wind-down. A Circle in CLOSING still exists, still holds whatever it holds, and can still
+  // pay money out — what it cannot do is take money in. CLOSED is reachable from here and nowhere
+  // else, and only once every closure requirement below has been checked against the chain.
+  CLOSING: 'CLOSING',
   CLOSED: 'CLOSED'
 });
 
@@ -93,10 +97,35 @@ export const ALLOWED_CIRCLE_TRANSITIONS = Object.freeze({
   DEPLOYING: ['CONFIRMING', 'AWAITING_AUTHORIZATION', 'VERIFICATION_FAILED'],
   CONFIRMING: ['RECONCILING', 'VERIFICATION_FAILED'],
   RECONCILING: ['ACTIVE', 'VERIFICATION_FAILED'],
-  ACTIVE: ['CLOSED', 'VERIFICATION_FAILED'],   // drift found later must be able to un-trust a Circle
-  VERIFICATION_FAILED: ['RECONCILING', 'CLOSED'],
+  ACTIVE: ['CLOSING', 'VERIFICATION_FAILED'],  // drift found later must be able to un-trust a Circle
+  VERIFICATION_FAILED: ['RECONCILING', 'CLOSING'],
+  // A closure that has not finished is not a decision anyone is stuck with: a Circle may come back
+  // out of CLOSING — but it re-enters through RECONCILING like every other route to ACTIVE, because
+  // being trusted again means being read from the chain again. What it may never do is reach CLOSED
+  // from anywhere except CLOSING, the only state in which the closure requirements are checked.
+  CLOSING: ['CLOSED', 'RECONCILING', 'VERIFICATION_FAILED'],
   CLOSED: []
 });
+
+/** The closing flow in order. CLOSED is reachable only from CLOSING. */
+export const CLOSING_FLOW = Object.freeze([CircleStatus.ACTIVE, CircleStatus.CLOSING, CircleStatus.CLOSED]);
+
+/**
+ * What must be true before a Circle can be CLOSED, named so the service, the tests and the docs use
+ * one list. Each is a *check against live state*, not a checkbox a caller can send.
+ *
+ * `REMAINING_FUNDS` is deliberately not solvable by Prism. A shared balance belongs to the people in
+ * the Circle, and there is no distribution Prism could compute that would be the answer — an equal
+ * split is a guess about what people agreed, and inventing one is worse than refusing. So a Circle
+ * holding money cannot be closed at all; it can only be emptied, by the ordinary threshold-approved
+ * payments the Circle already has, to recipients its members choose.
+ */
+export const CLOSE_REQUIREMENTS = Object.freeze([
+  'OPEN_PROPOSALS',      // no unresolved Prism proposal may outlive the Circle
+  'SPENDING_ACCESS',     // no member may still be able to spend from the Safe
+  'REMAINING_FUNDS',     // the balance must be zero, by an explicit decision of the members
+  'CHAIN_RECONCILED'     // the Safe's own state must have been read at close time, not remembered
+]);
 
 export function canCircleTransition(from, to) {
   if (from === to) return true;                       // idempotent re-entry is always safe
@@ -161,12 +190,46 @@ export const MemberRole = Object.freeze({
 
 export const MemberStatus = Object.freeze({
   INVITED: 'INVITED',
+  // Accepted in Prism. For a role Prism alone decides this is the same instant as ACTIVE, and both
+  // transitions are recorded with their real timestamps rather than one standing in for the other.
+  ACCEPTED: 'ACCEPTED',
   PENDING_ACTIVATION: 'PENDING_ACTIVATION', // accepted in Prism; not yet confirmed by the chain
   ACTIVE: 'ACTIVE',
+  // An owner-removal transaction is on the table. Authority is unchanged until the Safe says so —
+  // this state says a decision is pending, never that it has taken effect.
   PENDING_REMOVAL: 'PENDING_REMOVAL',
   LEFT: 'LEFT',
   REMOVED: 'REMOVED'
 });
+
+/**
+ * The member authority lifecycle, guarded.
+ *
+ * The property worth stating: nothing here can *grant* on-chain authority. ACTIVE for an ADMIN is
+ * written by `_reconcileMembersFromOwners` from the Safe's own owner set, and PENDING_REMOVAL can
+ * fall back to ACTIVE because a removal that was never executed did not remove anybody.
+ */
+export const ALLOWED_MEMBER_TRANSITIONS = Object.freeze({
+  INVITED: ['ACCEPTED', 'LEFT', 'REMOVED'],
+  ACCEPTED: ['PENDING_ACTIVATION', 'ACTIVE', 'LEFT', 'REMOVED'],
+  PENDING_ACTIVATION: ['ACTIVE', 'LEFT', 'REMOVED'],
+  ACTIVE: ['PENDING_REMOVAL', 'LEFT', 'REMOVED'],
+  PENDING_REMOVAL: ['REMOVED', 'ACTIVE', 'LEFT'],
+  LEFT: [],
+  REMOVED: []
+});
+
+export function canMemberTransition(from, to) {
+  if (from === to) return true;
+  return (ALLOWED_MEMBER_TRANSITIONS[from] ?? []).includes(to);
+}
+
+export function assertMemberTransition(from, to) {
+  if (!canMemberTransition(from, to)) {
+    throw conflict(`illegal circle member transition: ${from} -> ${to}`);
+  }
+  return true;
+}
 
 /** Roles whose authority is on-chain, and therefore cannot be granted by Prism alone. */
 export const CHAIN_BACKED_ROLES = Object.freeze([MemberRole.ADMIN]);

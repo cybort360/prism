@@ -35,6 +35,9 @@ struct PaymentDisplay {
   /// Headline name. Refunds read as "Refund"; otherwise the counterparty display identity.
   var title: String {
     if payment.kind == .refund { return "Refund" }
+    // Money into a Circle is titled by the Circle it went into; money out is titled by the person
+    // who was paid, exactly as a personal payment is.
+    if payment.kind == .circleContribution, let circle { return circle.circleName }
     return counterparty.displayName
   }
   var handle: String? { payment.kind == .refund ? nil : counterparty.handle }
@@ -79,6 +82,7 @@ struct PaymentDisplay {
       case .refund: return "Refunded"
       case .claimFunding: return "Protected for \(shortName(payment.recipient))"
       case .claimSettlement: return "Received"
+      case .circleContribution: return "Added"
       default: return payment.direction == .received ? "Received" : "Sent"
       }
     case .refunded: return "Refunded"
@@ -171,6 +175,17 @@ struct PaymentDisplay {
       return [("Claim opened", 1), ("Recipient verified", 2), ("You approved", 3), ("Claimed", 4), ("Confirmed on Monad", 6), ("Delivered", 8)]
     case .refund:
       return [("Refund created", 1), ("Submitted", 4), ("Confirmed on Monad", 6), ("Returned", 8)]
+    case .circlePayment:
+      // The approval step is what makes this different from a personal payment, and it is named.
+      return [("Payment created", 1), ("\(shortName(counterparty)) verified", 2), ("Approved by the Circle", 3),
+              ("Submitted", 4), ("Confirmed on Monad", 6), ("Delivered", 8)]
+    case .circleSpend:
+      // No approval step: a within-limit spend is one member acting inside an on-chain allowance,
+      // and showing "approved by the Circle" would describe a decision nobody made.
+      return [("Payment created", 1), ("\(shortName(counterparty)) verified", 2), ("Within your limit", 3),
+              ("Submitted", 4), ("Confirmed on Monad", 6), ("Delivered", 8)]
+    case .circleContribution:
+      return [("Payment created", 1), ("You approved", 3), ("Submitted", 4), ("Confirmed on Monad", 6), ("Added", 8)]
     case .crossChainSend:
       // Stops at "Sent from Monad". Delivery happens on another chain and is tracked by the route,
       // so this screen must not imply it — see AuroraRouteDisplay for that half.
@@ -207,13 +222,57 @@ struct PaymentDisplay {
     case .claim: return "a claim"
     case .internalRecovery: return "recovery"
     case .anyChain: return "any chain"
+    case .circle: return "a Circle"
     }
+  }
+
+  // MARK: shared accounts (Circles)
+
+  /// The Circle this payment came out of, or went into. Nil for an ordinary personal payment.
+  var circle: PrismCircleContext? { payment.circle ?? receipt?.circle }
+
+  /// The line that answers "whose money was this?" — the single most important thing on a shared
+  /// receipt, and the reason a Circle payment is not just a payment with a different name on it.
+  var paidFromLine: String? {
+    guard let circle else { return nil }
+    return circle.isIncoming ? "Added to \(circle.circleName)" : "Paid from \(circle.circleName)"
+  }
+
+  /// Who asked for it, and who agreed. Both come from the backend's Circle context: `proposer` is a
+  /// Prism-owned fact, and every approver in the list is there because a signature verified against
+  /// the Safe digest and a current owner — or because the Safe accepted it at execution.
+  var circleRows: [PrismDetailRow] {
+    guard let circle else { return [] }
+    var rows: [PrismDetailRow] = []
+    func add(_ label: String, _ value: String?) { if let v = value, !v.isEmpty { rows.append(.init(label: label, value: v)) } }
+
+    if circle.isIncoming {
+      add("Added to", circle.circleName)
+      add("Added by", circle.proposer?.displayName)
+    } else {
+      add("Paid from", circle.circleName)
+      add("Requested by", circle.proposer?.displayName)
+      if !circle.approvers.isEmpty {
+        add("Approved by", circle.approvers.map(\.displayName).joined(separator: "\n"))
+      }
+      add("Approval rule", circle.approvalRule)
+      // A spend inside someone's limit was not approved by anybody, and must never be shown as if
+      // it were. It names the limit that authorized it instead.
+      if circle.isWithinLimit, let limit = circle.spendingLimitReference?.summary {
+        add("Spending limit", limit)
+      }
+    }
+    add("Asset", payment.asset)
+    add("Status", statusLabel)
+    return rows
   }
 
   var receiptRows: [PrismDetailRow] {
     var rows: [PrismDetailRow] = []
     func add(_ label: String, _ value: String?) { if let v = value, !v.isEmpty { rows.append(.init(label: label, value: v)) } }
     add("Amount", payment.amountAtomic.map { Money.dollars(fromAtomic: $0) })
+    // For a Circle payment the payer is the Circle itself — naming the admin who tapped send would
+    // say someone spent their own money, which is the one thing a shared account never means.
     add("From", payment.sender.displayName == "You" ? "You" : (payment.sender.handle ?? payment.sender.displayName))
     if let route = payment.route {
       // There is no Prism recipient on the far side, so naming one would be a fiction. The

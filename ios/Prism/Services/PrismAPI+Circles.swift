@@ -339,4 +339,52 @@ extension PrismAPI {
     let response: CircleSpendsResponse = try await APIClient.shared.request("/v1/circles/\(circleId)/spend")
     return response.spends
   }
+
+  // MARK: activity
+
+  /// The Circle's own feed: money and governance in one list, each row a projection of a record the
+  /// backend already reconciled against the chain. The app does not merge three lists into a
+  /// history of its own — that would be a second ledger, assembled on a phone.
+  func circleActivity(_ circleId: String, limit: Int = 100) async throws -> CircleActivityResponse {
+    try await APIClient.shared.request("/v1/circles/\(circleId)/activity?limit=\(limit)")
+  }
+
+  // MARK: closing
+
+  /// What is still standing between this Circle and being closed. Every blocker is a live read, so
+  /// this is re-fetched rather than remembered.
+  func circleCloseState(_ circleId: String) async throws -> CircleCloseState {
+    try await APIClient.shared.request("/v1/circles/\(circleId)/close")
+  }
+
+  /// Begin closing. The Circle can still pay money out — that is how a remaining balance leaves —
+  /// but nothing more can come in.
+  func beginCircleClose(_ circleId: String, reason: String?) async throws -> CircleCloseState {
+    try await APIClient.shared.send("/v1/circles/\(circleId)/close/begin", body: CircleCloseBeginBody(reason: reason))
+  }
+
+  func cancelCircleClose(_ circleId: String) async throws -> CircleDetail {
+    try await APIClient.shared.send("/v1/circles/\(circleId)/close/cancel", body: EmptyBody())
+  }
+
+  /// Close it for good. The balance the user was shown is sent back with the request: if it no
+  /// longer matches what Monad reports, the backend refuses rather than closing a Circle whose state
+  /// changed under the screen.
+  func finalizeCircleClose(_ circleId: String, balanceAtomic: String) async throws -> CircleCloseState {
+    try await APIClient.shared.send(
+      "/v1/circles/\(circleId)/close/finalize",
+      body: CircleCloseFinalizeBody(acknowledgement: .init(balanceAtomic: balanceAtomic)))
+  }
+
+  /// Cancel a Circle transaction that has not been broadcast. Pre-broadcast only — once it is away,
+  /// what happened to it is the chain's answer, not a button's.
+  func cancelCircleProposal(circleId: String, proposalId: String) async throws -> CircleGovernanceProposal {
+    try await APIClient.shared.send("/v1/circles/\(circleId)/proposals/\(proposalId)/cancel", body: EmptyBody())
+  }
+}
+
+struct CircleCloseBeginBody: Encodable { let reason: String? }
+struct CircleCloseFinalizeBody: Encodable {
+  struct Acknowledgement: Encodable { let balanceAtomic: String }
+  let acknowledgement: Acknowledgement
 }

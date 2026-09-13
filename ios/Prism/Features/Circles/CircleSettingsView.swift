@@ -26,6 +26,7 @@ struct CircleSettingsView: View {
       CircleVocabulary.Role(wire: $0.role) == .admin && $0.status != "REMOVED" && $0.status != "LEFT"
     }
   }
+  private var isClosing: Bool { detail?.status == "CLOSING" }
   private var isAdmin: Bool {
     guard let me = detail?.members?.first(where: { $0.prismId == model.identity?.prismId }) else { return false }
     return CircleVocabulary.Role(wire: me.role) == .admin && me.authorityConfirmedOnChain == true
@@ -201,6 +202,31 @@ struct CircleSettingsView: View {
         // reachable for someone already in the Circle, which is the safe order.
         error = "Open the person from the Circle's Members list and choose \"Make an admin\". Anyone who isn't in the Circle yet needs an invitation first."
       }
+
+      // Closing is a lifecycle, not a delete, and it gets its own screen for that reason: what is
+      // still open, who can still spend, and what is still in the account are all live reads, and
+      // the remaining balance is a decision the Circle has to make for itself.
+      NavigationLink(value: CircleDetailRoute.close) {
+        HStack(spacing: 12) {
+          Image(systemName: "archivebox")
+            .font(.system(size: 14, weight: .medium))
+            .frame(width: 34, height: 34)
+            .background(PrismTheme.paper)
+            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+          VStack(alignment: .leading, spacing: 2) {
+            Text(isClosing ? "Finish closing this Circle" : "Close this Circle")
+              .font(PrismTheme.body(14, weight: .medium))
+            Text("Its history stays. Money in it has to go somewhere first.")
+              .font(PrismTheme.body(11.5))
+              .foregroundStyle(PrismTheme.muted)
+          }
+          Spacer(minLength: 6)
+          Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(PrismTheme.faint)
+        }
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
     }
     .opacity(busy ? 0.55 : 1)
     .disabled(busy)

@@ -21,6 +21,7 @@ struct PaymentProofView: View {
         if let p = proof {
           header(p)
           if p.demo { demoBanner }
+          if let c = p.circle { sharedAccount(c, verification: p.verification) }
           humanRecipient(p)
           identifierPrivacy(p)
           authorization(p)
@@ -105,6 +106,57 @@ struct PaymentProofView: View {
     }
   }
 
+  // MARK: SHARED ACCOUNT (Circles)
+
+  /// Where the money actually lived, what authority released it, and who signed.
+  ///
+  /// The sources are named on purpose: the policy comes from the Safe contract, the balance from the
+  /// USDC contract, the transfer from the Monad receipt. The Safe Transaction Service — which
+  /// carried the proposal and collected the signatures — appears in the evidence list as
+  /// coordination, never here as proof that anything happened.
+  private func sharedAccount(_ c: PrismPaymentProof.CircleProof, verification v: PrismPaymentProof.Verification) -> some View {
+    section("SHARED ACCOUNT") {
+      if let name = c.name { row("Circle", value: name) }
+      if let account = c.sharedAccount?.abbreviated ?? c.sharedAccount?.address {
+        row("Shared account", value: account, mono: true)
+      }
+      if let asset = c.asset { row("Asset", value: asset) }
+      if let authority = c.authority { row("Authority", value: authority) }
+      // Only rendered when the owner set was actually read; a policy nobody could read is absent.
+      if let policy = c.policy { row("Policy", value: policy) }
+      if let proposer = c.proposer?.displayName { row("Proposer", value: proposer) }
+      ForEach(Array(c.approvals.enumerated()), id: \.offset) { idx, approver in
+        row(idx == 0 ? "Approvals" : " ", badge: .init(text: "\(approver.displayName) · Verified", tone: .positive))
+      }
+      if let limit = c.spendingLimit?.summary { row("Spending limit", value: limit) }
+      if let allowance = c.allowance, let spent = allowance.spentAtomic, let cap = allowance.limitAtomic {
+        row("Limit used", value: "\(Money.dollars(fromAtomic: spent)) of \(Money.dollars(fromAtomic: cap))")
+      }
+      if let digest = c.safeTxHash { row("Safe tx hash", value: shortRef(digest), mono: true) }
+      if let nonce = c.safeNonce { row("Safe nonce", value: nonce, mono: true) }
+      Divider().overlay(PrismTheme.line).padding(.vertical, 2)
+      if let before = c.balance.before { row("Balance before", value: Money.dollars(fromAtomic: before)) }
+      if let after = c.balance.after { row("Balance after", value: Money.dollars(fromAtomic: after)) }
+      if let transfer = c.transfer, let amount = transfer.amountAtomic {
+        row("USDC transferred", value: Money.dollars(fromAtomic: amount))
+        if let to = transfer.to { row("Recipient account", value: shortRef(to), mono: true) }
+      }
+      Divider().overlay(PrismTheme.line).padding(.vertical, 2)
+      if let execution = v.safeExecution { row("Safe executed this", badge: ProofBadge.check(execution)) }
+      if let transfer = v.usdcTransfer { row("USDC Transfer verified", badge: ProofBadge.check(transfer)) }
+      if let owners = v.ownersReadback { row("Admins read from the Safe", badge: ProofBadge.check(owners)) }
+      if let threshold = v.thresholdReadback { row("Approvals rule read from the Safe", badge: ProofBadge.check(threshold)) }
+      if let balance = v.balanceReadback { row("Balance read from USDC", badge: ProofBadge.check(balance)) }
+      if let allowance = v.allowanceReadback, allowance != "unknown" {
+        row("Limit read from the module", badge: ProofBadge.check(allowance))
+      }
+      if c.restricted == true {
+        Text("You were paid by this Circle. How it governs itself is its members' business, so it isn't shown here.")
+          .font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted).padding(.top, 6)
+      }
+    }
+  }
+
   // MARK: IDENTIFIER PRIVACY
 
   private func identifierPrivacy(_ p: PrismPaymentProof) -> some View {
@@ -135,7 +187,9 @@ struct PaymentProofView: View {
 
   private func networkCost(_ p: PrismPaymentProof) -> some View {
     section("NETWORK COST") {
-      row("Gas paid by you", value: "$\(p.gas.userPaidDollars)")
+      // "$0.00" is a claim, and it is only made when sponsorship was proven. Otherwise the honest
+      // answer is that Prism could not establish who paid the gas.
+      row("Gas paid by you", value: p.gas.sponsored == "pass" ? "$\(p.gas.userPaidDollars)" : "Unknown")
       row("MON required from you", value: p.gas.monRequiredFromSender)
       row("Sponsored", badge: ProofBadge.check(p.gas.sponsored, passText: "Yes", failText: "No"))
     }
@@ -319,6 +373,7 @@ struct PaymentProofView: View {
     case "qr": "QR code"
     case "paymentLink", "link": "Payment link"
     case "claim": "Claim link"
+    case "circle": "A Circle"
     default: (raw ?? "—").capitalized
     }
   }

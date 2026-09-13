@@ -98,6 +98,113 @@ struct CircleDetail: Codable, Equatable {
 
 struct CirclesResponse: Codable { let circles: [CircleSummary] }
 
+// MARK: - activity (one feed: money and governance, kept distinguishable)
+
+/// One row of a Circle's activity, as the backend projects it.
+///
+/// Two things are worth knowing about this type. First, a financial row is a *view of a reconciled
+/// record* — a contribution's settled payment, a Safe execution and its USDC Transfer, an allowance
+/// transfer — never a ledger entry Prism keeps. Second, a governance row carries no money fields at
+/// all (`amountAtomic` and `direction` are nil), so a limit change can never be summed into a
+/// balance or rendered with a payment's vocabulary.
+struct CircleActivityWireItem: Codable, Equatable {
+  let id: String
+  /// "financial" or "governance". Sent as `class`, which is a Swift keyword, so it is mapped.
+  let eventClass: String
+  let type: String
+  let occurredAt: String?
+  let title: String
+  var subtitle: String? = nil
+  var detail: String? = nil
+  /// "in", "out", or nil for a governance event.
+  var direction: String? = nil
+  var amountAtomic: String? = nil
+  var amountDisplay: String? = nil
+  var signedAmountDisplay: String? = nil
+  var asset: String? = nil
+  var status: String? = nil
+  var settled: Bool? = nil
+  var actor: CircleActivityParty? = nil
+  var subject: CircleActivityParty? = nil
+  var counterparty: CircleActivityParty? = nil
+  /// The canonical payment id this row is a view of — what opens the receipt. Nil on governance.
+  var paymentId: String? = nil
+  var operationId: String? = nil
+  var transactionHash: String? = nil
+  var proposalId: String? = nil
+  var approvalRule: String? = nil
+  /// Where the evidence for this row came from ("safe execution + USDC Transfer", …).
+  var evidenceSource: String? = nil
+
+  enum CodingKeys: String, CodingKey {
+    case id, type, occurredAt, title, subtitle, detail, direction, amountAtomic, amountDisplay
+    case signedAmountDisplay, asset, status, settled, actor, subject, counterparty
+    case paymentId, operationId, transactionHash, proposalId, approvalRule, evidenceSource
+    case eventClass = "class"
+  }
+}
+
+struct CircleActivityParty: Codable, Equatable {
+  let prismId: String?
+  let displayName: String
+  var handle: String? = nil
+}
+
+struct CircleActivityResponse: Codable {
+  let circleId: String
+  var circleName: String? = nil
+  let activity: [CircleActivityWireItem]
+  /// Always "reconciled" — stated by the backend so no client has to assume it.
+  var source: String? = nil
+}
+
+// MARK: - closing
+
+/// What stands between a Circle and being closed, each checked against live state.
+struct CircleCloseState: Codable, Equatable {
+  let circleId: String
+  let status: String
+  let canClose: Bool
+  var alreadyClosed: Bool? = nil
+  var requirements: [String] = []
+  var checks: [CircleCloseCheck] = []
+  var blockers: [CircleCloseBlocker] = []
+  var balance: CircleBalance? = nil
+  var closing: CircleClosingRecord? = nil
+  /// Closing ends a Circle's life, never its record.
+  var historyRetained: Bool? = nil
+
+  var fundsBlocker: CircleCloseBlocker? { blockers.first { $0.code == "REMAINING_FUNDS" } }
+}
+
+struct CircleCloseCheck: Codable, Equatable {
+  let code: String
+  let ok: Bool
+  var count: Int? = nil
+  var balanceAtomic: String? = nil
+  var source: String? = nil
+}
+
+struct CircleCloseBlocker: Codable, Equatable, Identifiable {
+  var id: String { code }
+  let code: String
+  let title: String
+  let detail: String
+  var balanceAtomic: String? = nil
+  var balanceDisplay: String? = nil
+  /// True only for the remaining-balance blocker: the one thing the members must decide themselves.
+  var requiresExplicitDecision: Bool? = nil
+}
+
+struct CircleClosingRecord: Codable, Equatable {
+  var startedAt: String? = nil
+  var startedByPrismId: String? = nil
+  var reason: String? = nil
+  var cancelledAt: String? = nil
+  var finalizedAt: String? = nil
+  var finalizedByPrismId: String? = nil
+}
+
 // MARK: - contributions (money in)
 
 struct CircleBalanceDelta: Codable, Equatable {

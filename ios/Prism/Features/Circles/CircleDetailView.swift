@@ -54,6 +54,10 @@ struct CircleDetailView: View {
           CircleSettingsView(circleId: summary.circleId, detail: circle.detail, summary: summary) {
             await circle.reload()
           }
+        case .close:
+          CircleCloseView(circleId: summary.circleId, circleName: circle.name(fallback: summary.name)) {
+            await circle.reload()
+          }
         case .invite:
           CircleInviteView(circleId: summary.circleId, circleName: circle.name(fallback: summary.name), limitsEnabled: circle.limitsEnabled) {
             await circle.reload()
@@ -225,7 +229,19 @@ struct CircleDetailView: View {
         }
       } else {
         ForEach(circle.activity.prefix(circle.activityLimit)) { item in
-          CircleActivityRow(item: item)
+          // A money line opens the ordinary Prism receipt — the same screen a personal payment
+          // opens, with the Circle, who asked and who approved on it. A governance line is not a
+          // payment and has nothing to open.
+          if let paymentId = item.paymentId {
+            Button {
+              model.presentPaymentDetails = PaymentDetailsPresentation(operationId: paymentId)
+            } label: {
+              CircleActivityRow(item: item)
+            }
+            .buttonStyle(.plain)
+          } else {
+            CircleActivityRow(item: item)
+          }
           Divider().overlay(PrismTheme.line)
         }
         if circle.activity.count > circle.activityLimit {
@@ -233,6 +249,13 @@ struct CircleDetailView: View {
             .font(PrismTheme.body(13, weight: .semibold))
             .foregroundStyle(PrismTheme.teal)
             .padding(.top, 10)
+        }
+        if circle.activityUnavailable {
+          // Say what is missing rather than letting a money-only list imply nothing else happened.
+          Text("Showing money only — joins, removals and limit changes couldn't be loaded.")
+            .font(PrismTheme.body(11.5))
+            .foregroundStyle(PrismTheme.muted)
+            .padding(.top, 8)
         }
       }
     }
@@ -289,6 +312,9 @@ enum CircleDetailRoute: Hashable {
   case member(CircleMember)
   case settings
   case invite
+  /// Ending a Circle is its own screen, not a destructive button on Settings: it is a lifecycle
+  /// with requirements to check, and one of them is a decision only the members can make.
+  case close
 }
 
 // MARK: - rows
@@ -413,12 +439,16 @@ struct CircleActivityRow: View {
       Spacer(minLength: 6)
 
       VStack(alignment: .trailing, spacing: 3) {
-        Text(item.signedAmount)
-          .font(PrismTheme.body(13.5, weight: .medium))
-          .monospacedDigit()
-          .foregroundStyle(item.incoming ? PrismTheme.positive : PrismTheme.ink)
-          .lineLimit(1)
-          .minimumScaleFactor(0.85)
+        // A governance line moves no money, so there is no amount — not a zero, which would read as
+        // a payment of nothing.
+        if item.movesMoney {
+          Text(item.signedAmount)
+            .font(PrismTheme.body(13.5, weight: .medium))
+            .monospacedDigit()
+            .foregroundStyle(item.incoming ? PrismTheme.positive : PrismTheme.ink)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+        }
         // Status is text, never a bare coloured dot.
         Text(item.status)
           .font(PrismTheme.body(9.5))
@@ -427,7 +457,9 @@ struct CircleActivityRow: View {
     }
     .padding(.vertical, 11)
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel("\(item.title), \(item.incoming ? "received" : "paid") \(Money.assetAmount(fromAtomic: item.amountAtomic)), \(item.status)")
+    .accessibilityLabel(item.movesMoney
+      ? "\(item.title), \(item.incoming ? "received" : "paid") \(Money.assetAmount(fromAtomic: item.amountAtomic)), \(item.status)"
+      : "\(item.title), \(item.status)")
   }
 
   private var symbol: String {
@@ -435,6 +467,8 @@ struct CircleActivityRow: View {
     case .contribution: return "arrow.down"
     case .payment: return "arrow.up"
     case .spend: return "creditcard"
+    // A governance line carries the symbol the feed chose for what changed.
+    case .governance: return item.symbol
     }
   }
 }

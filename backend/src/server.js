@@ -20,6 +20,7 @@ import { AuroraService } from './services/auroraService.js';
 import { ProofService } from './services/proofService.js';
 import { P256AccountService } from './services/p256AccountService.js';
 import { CircleService } from './services/circleService.js';
+import { CircleActivityService } from './services/circleActivityService.js';
 import { safeCircleAdapter, allowanceModuleGate } from './chain/safeCircle.js';
 import { p256ChainOps } from './chain/p256Account.js';
 import { runContinuityLab } from './lab/continuityLab.js';
@@ -42,9 +43,12 @@ const claimService = new ClaimService({ store, config, identityService });
 const paymentService = new PaymentService({ store, config, identityService, claimService, resolverService, requestService });
 const activityService = new ActivityService({ store, identityService });
 const auroraService = new AuroraService({ store, config, identityService, paymentService });
-const proofService = new ProofService({ paymentService, identityService, config });
 const p256AccountService = new P256AccountService({ store, config, chainOps: p256ChainOps });
 const circleService = new CircleService({ store, config, identityService, safeAdapter: safeCircleAdapter(), paymentService, limitGate: allowanceModuleGate() });
+// One proof surface for every Prism payment, personal or shared: ProofService assembles a Circle
+// payment's evidence through CircleService rather than a second endpoint existing for it.
+const proofService = new ProofService({ paymentService, identityService, circleService, config });
+const circleActivityService = new CircleActivityService({ store, config, circleService, identityService });
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -150,7 +154,11 @@ route('POST', '/v1/payments/submit', async ({ user, body, idempotencyKey }) => {
 route('GET', '/v1/payments/:id', async ({ user, params }) => paymentService.reconcile(params.id, user.prismId), true);
 // Canonical projection of any operation: { payment, events, receipt }. Reconciles first so the
 // canonical view reflects live chain state, then returns the durable projection.
+// A Circle payment is one of these too — its id addresses a Safe proposal, a limit spend or a
+// contribution rather than an operation, and CircleService projects it into the same
+// { payment, events, receipt }. The app opens one detail screen for both.
 route('GET', '/v1/payments/:id/canonical', async ({ user, params }) => {
+  if (CircleService.isCirclePaymentId(params.id)) return circleService.canonicalFor(params.id, user.prismId);
   await paymentService.reconcile(params.id, user.prismId).catch(() => {});
   return paymentService.canonicalFor(params.id, user.prismId);
 }, true);
@@ -319,6 +327,36 @@ route('POST', '/v1/circles/:id/threshold/prepare', async ({ user, params, body }
   circleService.prepareThresholdChange({ circleId: params.id, actorPrismId: user.prismId, threshold: Number(body.threshold) }), true);
 
 route('GET', '/v1/circles/:id/pending', async ({ user, params }) => circleService.listPending(params.id, user.prismId), true);
+
+// The Circle's own activity: money and governance in one feed, each row a projection of a record
+// that was already reconciled against the chain. There is no Circle ledger behind this — a payment
+// row IS the Safe execution plus its USDC Transfer, and a governance row IS an executed change that
+// was read back from the chain. `class` keeps the two distinguishable.
+route('GET', '/v1/circles/:id/activity', async ({ user, params, url }) => {
+  const limit = Number(url.searchParams.get('limit') ?? '100');
+  return circleActivityService.list(params.id, user.prismId, { limit: Number.isFinite(limit) ? Math.min(limit, 250) : 100 });
+}, true);
+
+// Cancel a Circle transaction that has not been broadcast. Pre-broadcast only: once a transaction is
+// away, what happened to it is the chain's answer.
+route('POST', '/v1/circles/:id/proposals/:proposalId/cancel', async ({ user, params }) =>
+  circleService.cancelProposal({ circleId: params.id, proposalId: params.proposalId, actorPrismId: user.prismId }), true);
+
+// --- closing a Circle ---------------------------------------------------------
+// ACTIVE -> CLOSING -> CLOSED, and nothing is ever deleted. The preflight is a live read, not a
+// checklist the caller fills in: open decisions from Prism, spending delegates from the module, the
+// balance from the token contract, the owner set from the Safe. A Circle still holding money cannot
+// be closed — Prism will not decide where a shared balance goes, so the members must send it out
+// first, by the same approvals they have always used.
+route('GET', '/v1/circles/:id/close', async ({ user, params }) => circleService.closePreflight(params.id, user.prismId), true);
+route('POST', '/v1/circles/:id/close/begin', async ({ user, params, body }) =>
+  circleService.beginClose({ circleId: params.id, actorPrismId: user.prismId, reason: body?.reason ?? null }), true);
+route('POST', '/v1/circles/:id/close/cancel', async ({ user, params }) =>
+  circleService.cancelClose({ circleId: params.id, actorPrismId: user.prismId }), true);
+// Finalize carries the balance the closer was shown; a mismatch with what Monad reports right now is
+// refused, exactly as a creation policy acknowledgement that does not match the Circle is refused.
+route('POST', '/v1/circles/:id/close/finalize', async ({ user, params, body }) =>
+  circleService.finalizeClose({ circleId: params.id, actorPrismId: user.prismId, acknowledgement: body?.acknowledgement ?? null }), true);
 
 // --- contributions: money INTO a Circle --------------------------------------
 // A contribution is an ordinary Prism payment whose recipient is the Circle's Safe: same envelope,

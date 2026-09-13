@@ -233,7 +233,10 @@ struct CircleApprovalView: View {
         amount: Money.dollars(fromAtomic: payment.amount ?? "0"),
         subtitle: "from \(payment.circleName ?? presentation.circle.name)",
         transactionHash: tx,
-        status: "Completed")
+        status: "Completed",
+        // The proposal id IS the canonical payment id: "View details" opens the shared receipt,
+        // with who requested it, who approved it, and the proof underneath.
+        operationId: payment.proposalId)
     case .failed(let message): error = message
     default: break
     }

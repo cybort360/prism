@@ -168,7 +168,15 @@ export const FAILURE_TAXONOMY = {
   INDEXING_DELAYED: { state: 'completed', canonical: 'completed', retryable: false },
   RECONCILIATION_REQUIRED: { state: 'reconciliation_required', canonical: 'requiresAttention', retryable: false },
   CLAIM_VERIFICATION_FAILED: { state: 'failed', canonical: 'failedTerminal', retryable: false },
-  CLAIM_EXPIRED: { state: 'expired', canonical: 'expired', retryable: false }
+  CLAIM_EXPIRED: { state: 'expired', canonical: 'expired', retryable: false },
+  // --- shared-account (Circle) payments. One vocabulary, not a parallel one. ---
+  // A field the admins' signatures cover changed, so every approval stopped verifying. Recoverable
+  // only by proposing the payment again — which is a retry a person performs, not one Prism does.
+  CIRCLE_APPROVAL_INVALIDATED: { state: 'requires_attention', canonical: 'requiresAttention', retryable: true },
+  // The Safe consumed this nonce elsewhere; the transaction can never execute.
+  CIRCLE_NONCE_CONSUMED: { state: 'expired', canonical: 'expired', retryable: true },
+  // Broadcast, mined, and not the payment that was approved (or the Safe reported ExecutionFailure).
+  CIRCLE_EXECUTION_FAILED: { state: 'failed', canonical: 'failedTerminal', retryable: false }
 };
 export function failureCanonical(code) { return FAILURE_TAXONOMY[code]?.canonical ?? 'failedTerminal'; }
 export function isRetryable(code) { return FAILURE_TAXONOMY[code]?.retryable ?? false; }
@@ -184,6 +192,13 @@ export function lifecycleState(op) {
 }
 
 export function paymentKind(op) {
+  // A Circle payment is still a PrismPayment; the kind says which authority released it, and the
+  // `circle` block on the canonical projection says which shared account it came from.
+  const source = op.intent?.circle ?? null;
+  if (source) {
+    if (source.flow === 'in') return 'circleContribution';
+    return source.approvalPolicy === 'SPENDING_LIMIT' ? 'circleSpend' : 'circlePayment';
+  }
   switch (op.kind) {
     case 'claim-funding': return 'claimFunding';
     case 'claim-collection': return 'claimSettlement';
@@ -199,6 +214,7 @@ export function paymentKind(op) {
 }
 
 export function entryMethod(op) {
+  if (op.intent?.circle) return 'circle';
   if (op.kind && op.kind.startsWith('claim-')) return 'claim';
   const i = op.intent ?? {};
   if (i.requestId) return 'request';
@@ -232,14 +248,26 @@ export function canonicalPayment(op, { viewerPrismId = null, identityService, cl
   const get = (id) => (id && identityService ? identityService.get(id) : null);
   const senderId = i.senderPrismId ?? claim?.senderPrismId ?? null;
   const recipientId = i.recipientPrismId ?? null;
+  // A shared account is a party too. When the money left a Circle the payer is the Circle itself —
+  // showing the proposer there would name a person who did not spend their own money.
+  const circle = i.circle ?? null;
+  const circleParty = circle ? {
+    prismIdentityId: null,
+    displayName: circle.circleName,
+    handle: null,
+    accountAddress: circle.circleSafeAddress ?? null
+  } : null;
   return {
     paymentId: op.operationId,
     operationId: op.operationId,
     kind: paymentKind(op),
     direction: direction(op, viewerPrismId),
     entryMethod: entryMethod(op),
-    sender: party(get(senderId)),
-    recipient: party(get(recipientId)),
+    // Which kind of account this payment came out of. Absent context means personal, always.
+    sourceType: circle ? 'circle' : 'personal',
+    circle,
+    sender: circle?.flow === 'out' ? circleParty : party(get(senderId)),
+    recipient: circle?.flow === 'in' ? circleParty : party(get(recipientId)),
     amountAtomic: i.amountAtomic ?? claim?.amountAtomic ?? null,
     asset: i.tokenSymbol ?? claim?.tokenSymbol ?? 'USDC',
     memo: i.memo ?? null,
@@ -296,6 +324,10 @@ export function receiptFor(op, ctx = {}) {
     sender: p.sender,
     recipient: p.recipient,
     entryMethod: p.entryMethod,
+    // Same receipt, one extra block: paid from which Circle, requested by whom, approved by whom,
+    // under which rule. Null on a personal payment, and never partially invented on a Circle one.
+    sourceType: p.sourceType,
+    circle: p.circle,
     resolutionId: p.resolutionId,
     resolutionVersion: p.resolutionVersion,
     finalStatus: p.lifecycleState,

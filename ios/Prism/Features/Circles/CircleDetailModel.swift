@@ -29,6 +29,11 @@ final class CircleDetailModel: ObservableObject {
   @Published private(set) var loaded = false
   /// Why the approval inbox is empty, when the reason is "we could not tell" rather than "nothing".
   @Published private(set) var pendingUnavailable: String?
+  /// True when the feed had to fall back to the local money-only merge, so the screen can say that
+  /// joins, removals and limit changes are missing rather than implying nothing happened.
+  @Published private(set) var activityUnavailable = false
+  /// The closure state, once someone opens it. Nil until asked for: it is a live read every time.
+  @Published var closeState: CircleCloseState?
 
   private var circleId: String?
   private var myPrismId: String?
@@ -44,6 +49,7 @@ final class CircleDetailModel: ObservableObject {
     // a balance worth showing; hiding the screen behind its least important call would be worse.
     async let detailTask = PrismAPI.shared.circle(circleId)
     async let pendingTask = PrismAPI.shared.circlePending(circleId)
+    async let activityTask = PrismAPI.shared.circleActivity(circleId)
     async let contributionsTask = PrismAPI.shared.contributions(circleId: circleId)
     async let paymentsTask = PrismAPI.shared.circlePayments(circleId)
     async let spendsTask = PrismAPI.shared.circleSpends(circleId)
@@ -51,6 +57,7 @@ final class CircleDetailModel: ObservableObject {
 
     let fetchedDetail = try? await detailTask
     let fetchedPending = try? await pendingTask
+    let fetchedActivity = try? await activityTask
     let contributions = (try? await contributionsTask) ?? []
     let payments = (try? await paymentsTask) ?? []
     let spends = (try? await spendsTask) ?? []
@@ -65,13 +72,23 @@ final class CircleDetailModel: ObservableObject {
     limitsEnabled = fetchedLimits?.limitsEnabled ?? false
     limits = fetchedLimits?.limits ?? []
 
-    let names = Dictionary(
-      uniqueKeysWithValues: (detail?.members ?? []).map {
-        ($0.prismId, $0.displayName ?? $0.handle ?? "A member")
-      })
-    activity = CircleActivityItem.feed(
-      contributions: contributions, payments: payments, spends: spends,
-      memberName: { id in id.flatMap { names[$0] } ?? "Someone" })
+    // The Circle's feed comes from the backend, where it is projected from records already
+    // reconciled against the chain — money AND governance, in one list. The local merge below is a
+    // fallback for when that call fails: narrower (money only), built from the same reconciled
+    // records, and never a history the phone invented.
+    if let fetchedActivity {
+      activity = fetchedActivity.activity.map(CircleActivityItem.init(wire:))
+      activityUnavailable = false
+    } else {
+      let names = Dictionary(
+        uniqueKeysWithValues: (detail?.members ?? []).map {
+          ($0.prismId, $0.displayName ?? $0.handle ?? "A member")
+        })
+      activity = CircleActivityItem.feed(
+        contributions: contributions, payments: payments, spends: spends,
+        memberName: { id in id.flatMap { names[$0] } ?? "Someone" })
+      activityUnavailable = true
+    }
 
     loaded = true
   }
@@ -119,7 +136,9 @@ final class CircleDetailModel: ObservableObject {
   func blockingState(failureReason: String?) -> CircleState? {
     guard let detail else { return loaded ? .networkUnavailable(detail: nil) : nil }
     switch detail.status {
-    case "ACTIVE": return nil
+    // A Circle that is winding down is still a usable Circle: money can still be paid out of it,
+    // which is how the remaining balance leaves. Blocking the screen would strand it.
+    case "ACTIVE", "CLOSING": return nil
     case "VERIFICATION_FAILED": return .setupFailed(reason: failureReason)
     case "CLOSED": return nil
     default: return .deploymentPending(status: detail.status)

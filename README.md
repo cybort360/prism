@@ -49,7 +49,8 @@ canonical `PrismPayment` represented by:
   per-check statuses (never a green badge a check didn't earn).
 
 See `docs/PAYMENT_MODEL.md`, `docs/PAYMENT_LIFECYCLE.md`, `docs/RECEIPTS.md`, `docs/CLAIMS.md`,
-`docs/PAYMENT_PROOF.md`, and `docs/QR_AND_LINKS.md`.
+`docs/PAYMENT_PROOF.md`, and `docs/QR_AND_LINKS.md`. Money moving through a shared account is the
+same payment object with a Circle block on it — `docs/CIRCLE_RECEIPTS.md`, `docs/CIRCLE_PROOF.md`.
 
 ## Architecture
 
@@ -226,10 +227,11 @@ Keychain write fail. CI is green on all four checks. See `proof/SECURITY_PROOF.m
 - Design: `docs/ARCHITECTURE.md`, `docs/IOS_ARCHITECTURE.md`, `docs/PRD_ADDENDUM_v1.1.md`,
   `docs/RESEARCH_NOTES.md`
 - Prism Circles (shared USDC accounts on a Safe Smart Account — domain model, persistence, Circle
-  creation, contributions in and threshold-governed payments out; no Circle list/creation UI and no
-  spending limits yet): `docs/CIRCLES_ARCHITECTURE.md`, `docs/CIRCLE_PAYMENTS.md`,
-  `docs/CIRCLES_AUTHORITY_MODEL.md`, `docs/CIRCLES_ARCHITECTURE_PROOF.md`,
-  `docs/CIRCLES_DEPENDENCY_AUDIT.md`
+  creation, contributions in, threshold-governed payments out, member spending limits, and the
+  activity / receipt / proof / closing surfaces): `docs/CIRCLES_ARCHITECTURE.md`,
+  `docs/CIRCLE_PAYMENTS.md`, `docs/CIRCLES_AUTHORITY_MODEL.md`, `docs/CIRCLES_ARCHITECTURE_PROOF.md`,
+  `docs/CIRCLES_DEPENDENCY_AUDIT.md`, `docs/CIRCLES_PRODUCT.md`, `docs/CIRCLE_SPENDING_LIMITS.md`,
+  `docs/CIRCLE_RECEIPTS.md`, `docs/CIRCLE_LIFECYCLE.md`, `docs/CIRCLE_PROOF.md`
 - Security: `docs/SECURITY.md`, `docs/THREAT_MODEL.md`, `docs/FORGE_PROOF_PLAN.md`
 - Integrations: `docs/SPONSOR_MATRIX.md` (Mera / Envio / Alchemy mapping),
   `docs/MERA_INTEGRATION.md`, `docs/ENVIO_INTEGRATION.md`, `docs/ALCHEMY_INTEGRATION.md`,

@@ -21,12 +21,17 @@ import { getAddress, isAddress, keccak256, toHex, recoverAddress } from 'viem';
 import {
   CircleStatus, MemberRole, MemberStatus, ProposalKind, ProposalStatus, CIRCLE_ASSET, SPENDING_LIMIT_KINDS,
   TERMINAL_MEMBER_STATUSES, CHAIN_BACKED_ROLES, ContributionStatus,
-  CirclePaymentState, CIRCLE_PAYMENT_PRE_BROADCAST, APPROVAL_BOUND_FIELDS,
+  CirclePaymentState, CIRCLE_PAYMENT_PRE_BROADCAST, APPROVAL_BOUND_FIELDS, CLOSE_REQUIREMENTS,
   newCircle, newCircleMember, newCircleProposal, newCircleApproval, newCircleContribution,
   assertCircleTransition, assertCirclePaymentTransition, assertContributionTransition,
-  assertThresholdWithinOwners, thresholdWarnings, assertRole,
+  assertMemberTransition, assertThresholdWithinOwners, thresholdWarnings, assertRole,
   badRequest, forbidden, notFound, conflict
 } from '../circles/model.js';
+import {
+  CircleApprovalPolicy, CircleFlow, circleContext, proposalAsOperation, spendAsOperation,
+  spendCircleState, circlePaymentKindOfId, isCirclePaymentId
+} from '../circles/circlePayment.js';
+import { canonicalPayment, receiptFor } from '../lib/lifecycle.js';
 import { assertTemplateChoice, templateOptions, CircleTemplate } from '../circles/templates.js';
 import { sameOwnerSet, normalizeOwnerSet, safeTransaction, safeTxHash, decodeUsdcTransfer, safeExecutionOutcome, ZERO_ADDRESS } from '../circles/safeEncoding.js';
 import { contributionHash } from '../chain/eth.js';
@@ -53,6 +58,11 @@ const CIRCLE_PAYMENT_IN_FLIGHT = Object.freeze([
 const EVIDENCE_BACKED_STATES = Object.freeze([CirclePaymentState.RECONCILED, CirclePaymentState.COMPLETED]);
 /** Roles allowed to *propose* a spend. Proposing is not spending: only signatures move money. */
 const PROPOSING_ROLES = CONTRIBUTING_ROLES;
+/** Statuses in which a Circle's Safe is live and Prism may still act on it. */
+const SPENDING_STATUSES = Object.freeze([CircleStatus.ACTIVE, CircleStatus.CLOSING]);
+/** How much of a Circle a caller may see: everything, or only the payment that involved them. */
+const AUDIENCE_MEMBER = 'member';
+const AUDIENCE_COUNTERPARTY = 'counterparty';
 
 export class CircleService {
   /**
@@ -294,14 +304,18 @@ export class CircleService {
     let circle = this._circle(circleId);
     this._assertMember(circleId, prismId);
 
-    if (circle.status !== CircleStatus.ACTIVE && circle.status !== CircleStatus.CLOSED && circle.status !== CircleStatus.VERIFICATION_FAILED) {
+    if (!SPENDING_STATUSES.includes(circle.status) && circle.status !== CircleStatus.CLOSED && circle.status !== CircleStatus.VERIFICATION_FAILED) {
       await this._advanceCreation(circleId).catch((e) => logger.error('circle.advance.failed', { circleId, error: e.message }));
       circle = this._circle(circleId);
     }
 
     const view = this._summaryView(circle);
-    if (!circle.safeAddress || circle.status !== CircleStatus.ACTIVE) {
-      return { ...view, authority: unavailable('circle is not active on-chain yet'), balance: unavailable('circle is not active on-chain yet'), members: this.listMembers(circleId, prismId) };
+    // A CLOSED Circle keeps its record and its history, but Prism stops presenting live authority and
+    // balance for it: what it held at close is preserved in `closing.evidence`, and that is the
+    // honest thing to show rather than a fresh read of an account nobody is using.
+    if (!circle.safeAddress || !SPENDING_STATUSES.includes(circle.status)) {
+      const reason = circle.status === CircleStatus.CLOSED ? 'this Circle is closed' : 'circle is not active on-chain yet';
+      return { ...view, authority: unavailable(reason), balance: unavailable(reason), members: this.listMembers(circleId, prismId) };
     }
 
     // Live reads. If either fails the field says so — it is never backfilled from the stored mirror.
@@ -390,6 +404,7 @@ export class CircleService {
     this._assertAdmin(circleId, actorPrismId);
     assertRole(role);
     if (circle.status === CircleStatus.CLOSED) throw conflict('this Circle is closed');
+    if (circle.status === CircleStatus.CLOSING) throw conflict('this Circle is being closed, so no one new can be invited');
 
     const target = this._findIdentity({ prismId, handle });
     if (!target) throw notFound('no Prism identity for that person');
@@ -437,12 +452,15 @@ export class CircleService {
     const status = CHAIN_BACKED_ROLES.includes(invite.role) ? MemberStatus.PENDING_ACTIVATION : MemberStatus.ACTIVE;
     this.store.mutate((d) => {
       const member = d.circleMembers[memberKey(circleId, prismId)];
-      member.status = status;
       member.authorityAddress = identity.accountAddress ?? null;
       member.displayName = identity.displayName ?? member.displayName;
       member.handle = identity.handle ? `@${identity.handle}` : member.handle;
-      if (status === MemberStatus.ACTIVE) member.joinedAt = new Date().toISOString();
     });
+    // Two transitions, both true, both timestamped: accepting is a Prism fact, and what it earns
+    // you is a separate question the chain answers. For a role Prism alone decides they land in the
+    // same instant — which is the honest thing to record, rather than one standing in for the other.
+    this._setMemberStatus({ circleId, prismId, next: MemberStatus.ACCEPTED, detail: { role: invite.role } });
+    this._setMemberStatus({ circleId, prismId, next: status, detail: { role: invite.role } });
     this._event(circleId, 'circle.invitation.accepted', { prismId, role: invite.role });
     return {
       circleId, role: invite.role, status,
@@ -456,10 +474,7 @@ export class CircleService {
 
   declineInvitation({ circleId, inviteId, prismId }) {
     this._consumeInvitation({ circleId, inviteId, prismId, outcome: 'DECLINED' });
-    this.store.mutate((d) => {
-      const member = d.circleMembers[memberKey(circleId, prismId)];
-      if (member) { member.status = MemberStatus.LEFT; member.removedAt = new Date().toISOString(); }
-    });
+    this._setMemberStatus({ circleId, prismId, next: MemberStatus.LEFT, detail: { reason: 'declined the invitation' } });
     this._event(circleId, 'circle.invitation.declined', { prismId });
     return { circleId, status: 'DECLINED' };
   }
@@ -552,10 +567,8 @@ export class CircleService {
 
     await this._assertNoLiveSpendingAccess(circle, member, 'remove this person');
 
+    this._setMemberStatus({ circleId, prismId, next: MemberStatus.REMOVED, detail: { by: actorPrismId, role: member.role } });
     this.store.mutate((d) => {
-      const m = d.circleMembers[memberKey(circleId, prismId)];
-      m.status = MemberStatus.REMOVED;
-      m.removedAt = new Date().toISOString();
       // Any invitation they have not answered dies with the membership, so a pending invite cannot
       // quietly re-admit someone an admin has just removed.
       for (const invite of Object.values(d.circleInvitations ?? {})) {
@@ -639,21 +652,45 @@ export class CircleService {
   /** Reflect the on-chain owner set onto admin membership. The chain decides who is an admin. */
   _reconcileMembersFromOwners(circleId, owners) {
     const normalized = owners.map((o) => getAddress(o).toLowerCase());
-    this.store.mutate((d) => {
-      for (const member of Object.values(d.circleMembers ?? {})) {
-        if (member.circleId !== circleId || member.role !== MemberRole.ADMIN) continue;
-        if (TERMINAL_MEMBER_STATUSES.includes(member.status)) continue;
-        const isOwner = member.authorityAddress && normalized.includes(member.authorityAddress.toLowerCase());
-        if (isOwner && member.status !== MemberStatus.ACTIVE) {
-          member.status = MemberStatus.ACTIVE;
-          member.joinedAt ??= new Date().toISOString();
-        } else if (!isOwner && member.status === MemberStatus.ACTIVE) {
-          // They were an owner and are not any more: the chain removed their authority, so Prism
-          // must stop showing them as an admin.
-          member.status = MemberStatus.REMOVED;
-          member.removedAt = new Date().toISOString();
-        }
+    const changes = [];
+    for (const member of Object.values(this.store.read().circleMembers ?? {})) {
+      if (member.circleId !== circleId || member.role !== MemberRole.ADMIN) continue;
+      if (TERMINAL_MEMBER_STATUSES.includes(member.status)) continue;
+      const isOwner = member.authorityAddress && normalized.includes(member.authorityAddress.toLowerCase());
+      if (isOwner && member.status === MemberStatus.PENDING_REMOVAL) {
+        // A removal was proposed and has not executed. They still hold authority, and saying so is
+        // the point of the state — it is not drift to be corrected back to ACTIVE.
+        continue;
       }
+      if (isOwner && member.status !== MemberStatus.ACTIVE) {
+        changes.push([member.prismId, MemberStatus.ACTIVE, { source: 'safe owner set' }]);
+      } else if (!isOwner && (member.status === MemberStatus.ACTIVE || member.status === MemberStatus.PENDING_REMOVAL)) {
+        // They were an owner and are not any more: the chain removed their authority, so Prism
+        // must stop showing them as an admin.
+        changes.push([member.prismId, MemberStatus.REMOVED, { source: 'safe owner set' }]);
+      }
+    }
+    for (const [prismId, next, detail] of changes) this._setMemberStatus({ circleId, prismId, next, detail });
+  }
+
+  /**
+   * Move a member through the guarded authority lifecycle, recording the step.
+   *
+   * Every status change goes through here, so the member's own history is an ordered log with real
+   * timestamps — which is what the Circle's activity feed reads to say "Tobi joined" without Prism
+   * having to keep a second, hand-written record of the same fact.
+   */
+  _setMemberStatus({ circleId, prismId, next, detail = {} }) {
+    this.store.mutate((d) => {
+      const member = d.circleMembers?.[memberKey(circleId, prismId)];
+      if (!member) throw notFound('that person is not in this Circle');
+      assertMemberTransition(member.status, next);
+      if (member.status === next) return;
+      const at = new Date().toISOString();
+      member.status = next;
+      if (next === MemberStatus.ACTIVE) member.joinedAt ??= at;
+      if (next === MemberStatus.REMOVED || next === MemberStatus.LEFT) member.removedAt = at;
+      (member.events ||= []).push({ at, status: next, detail });
     });
   }
 
@@ -714,13 +751,20 @@ export class CircleService {
     }
     assertThresholdWithinOwners({ threshold: newThreshold, ownerCount: ownerCountAfter, context: 'approvals required' });
 
-    return this._createProposal({
+    const proposal = await this._createProposal({
       circle, actorPrismId, kind: ProposalKind.OWNER_REMOVE, authority,
       intent: { kind: 'OWNER_REMOVE', owner, threshold: newThreshold },
       memo: `Remove ${member.displayName ?? member.handle ?? 'an admin'} as an admin`,
       subject: { prismId, authorityAddress: owner, threshold: newThreshold, ownerCountAfter },
       governance: { kind: 'OWNER_REMOVE', owner, prismId, threshold: newThreshold, ownerCountAfter, step: 'OWNER_REMOVE', remainingSteps: [] }
     });
+    // A removal is on the table. Their authority is untouched until the Safe executes — this state
+    // says a decision is pending, and `_reconcileMembersFromOwners` will not quietly undo it. Only
+    // an ACTIVE admin can enter it; anyone else is already somewhere the chain put them.
+    if (this.store.read().circleMembers?.[memberKey(circleId, prismId)]?.status === MemberStatus.ACTIVE) {
+      this._setMemberStatus({ circleId, prismId, next: MemberStatus.PENDING_REMOVAL, detail: { proposalId: proposal.proposalId } });
+    }
+    return proposal;
   }
 
   /** Prepare a threshold change against the live owner count. */
@@ -805,7 +849,7 @@ export class CircleService {
   async listPending(circleId, prismId) {
     const circle = this._circle(circleId);
     this._assertMember(circleId, prismId);
-    if (circle.status !== CircleStatus.ACTIVE) return { circleId, pending: [], note: 'this Circle is not active on-chain yet' };
+    if (!SPENDING_STATUSES.includes(circle.status)) return { circleId, pending: [], note: 'this Circle is not active on-chain yet' };
 
     const authority = await this._readAuthority(circle).catch(() => null);
     if (!authority) return { circleId, pending: [], unavailable: 'Monad could not be read, so pending approvals are unknown' };
@@ -920,7 +964,17 @@ export class CircleService {
       amountAtomic: amount,
       boundHash: bound,
       kind: 'circle-contribution',
-      intent: { circleId, contributionId, entryMethod: 'circle', memo: `Added to ${circle.name}` }
+      intent: {
+        circleId, contributionId, entryMethod: 'circle', memo: `Added to ${circle.name}`,
+        // The Circle context rides on the ordinary operation from the moment it is prepared, so the
+        // contribution shows up as a Circle payment everywhere the canonical projection is read —
+        // the contributor's own Activity included — without a second record existing anywhere.
+        circle: circleContext({
+          circle, flow: CircleFlow.IN, approvalPolicy: CircleApprovalPolicy.CONTRIBUTION,
+          contributionId, operationId: null,
+          proposer: this._memberParty(circleId, prismId)
+        })
+      }
     });
 
     const contribution = newCircleContribution({
@@ -1123,7 +1177,7 @@ export class CircleService {
    * a validation rule that could be forgotten.
    */
   async proposePayment({ circleId, actorPrismId, resolution, amountAtomic, memo = '' }) {
-    const circle = await this._spendableCircle(circleId, actorPrismId, PROPOSING_ROLES, 'pay from');
+    const circle = await this._spendableCircle(circleId, actorPrismId, PROPOSING_ROLES, 'pay from', { allowClosing: true });
     if (!this.payments) throw conflict('Circle payments are not available on this deployment');
     const amount = this._assertAmount(amountAtomic);
     const note = String(memo ?? '').trim().slice(0, 120);
@@ -1400,7 +1454,7 @@ export class CircleService {
     if (member.role !== MemberRole.ADMIN && proposal.proposerPrismId !== actorPrismId) {
       throw forbidden('only an admin or the person who proposed this payment can send it');
     }
-    if (circle.status !== CircleStatus.ACTIVE) throw conflict('this Circle is not active on-chain yet');
+    if (!SPENDING_STATUSES.includes(circle.status)) throw conflict('this Circle is not active on-chain yet');
 
     // Already away: this call becomes a reconcile rather than a second broadcast.
     if (CIRCLE_PAYMENT_IN_FLIGHT.includes(proposal.lifecycle)) {
@@ -1503,7 +1557,17 @@ export class CircleService {
       throw error;
     }
     this._setPaymentState(proposalId, CirclePaymentState.SUBMITTED, {
-      extra: { executionTxHash: txHash, balanceBefore },
+      extra: {
+        executionTxHash: txHash,
+        balanceBefore,
+        // The exact signatures handed to `execTransaction`. The Safe re-derived the digest and
+        // re-checked every one of them before it moved the money, so this is the set the CHAIN
+        // accepted — which is what a receipt should name, and why it must not be re-derived later
+        // from an owner set that has since changed.
+        approvalsAtExecution: collected.map((a) => ({
+          authorityAddress: a.authorityAddress, signatureType: a.signatureType, prismId: a.prismId ?? null
+        }))
+      },
       detail: { txHash }
     });
     this._event(circleId, 'circle.payment.submitted', { proposalId, txHash, amount: proposal.amount });
@@ -1692,9 +1756,17 @@ export class CircleService {
       safeNonce: proposal.safeNonce,
       safeTransaction: proposal.safeTransaction,
       requiredApprovals: required,
-      collectedApprovals: count,
-      approvals: (collected ?? []).map((a) => ({ authorityAddress: a.authorityAddress, signatureType: a.signatureType, prismId: a.prismId ?? null })),
-      approvalsSource: collected ? 'verified signatures against the live owner set' : 'unavailable',
+      collectedApprovals: count ?? (proposal.approvalsAtExecution?.length ?? null),
+      // Before broadcast, approvals are re-counted from signatures against the LIVE owner set, so an
+      // admin removed on-chain drops out by itself. Once the transaction is away they are the exact
+      // signatures the Safe verified when it executed — a permanent fact about what happened, which
+      // a later owner change must not rewrite.
+      approvals: (collected ?? proposal.approvalsAtExecution ?? []).map((a) => ({
+        authorityAddress: a.authorityAddress, signatureType: a.signatureType, prismId: a.prismId ?? null
+      })),
+      approvalsSource: collected
+        ? 'verified signatures against the live owner set'
+        : (proposal.approvalsAtExecution ? 'signatures the Safe verified at execution' : 'unavailable'),
       binding: binding.ok && !integrity
         ? { ok: true, boundFields: binding.boundFields }
         : { ok: false, reasons: integrity ? [integrity] : binding.reasons, boundFields: binding.boundFields },
@@ -1766,12 +1838,23 @@ export class CircleService {
     return proposal;
   }
 
-  /** An ACTIVE Circle the caller may move money in or out of, with the role check applied. */
-  async _spendableCircle(circleId, prismId, roles, verb) {
+  /**
+   * A Circle the caller may move money in or out of, with the role check applied.
+   *
+   * `allowClosing` is the asymmetry that makes winding down possible: a Circle in CLOSING can still
+   * pay money OUT — that is how the remaining balance leaves, by the members' own decision — but it
+   * can never take money IN, because contributing to an account that is being shut down would strand
+   * the contributor's money behind the same decision everyone else has already made.
+   */
+  async _spendableCircle(circleId, prismId, roles, verb, { allowClosing = false } = {}) {
     const circle = this._circle(circleId);
     const member = this._assertMember(circleId, prismId);
     if (!roles.includes(member.role)) throw forbidden(`your role in this Circle does not let you ${verb} it`);
-    if (circle.status !== CircleStatus.ACTIVE) throw conflict('this Circle is not active on-chain yet');
+    if (circle.status === CircleStatus.CLOSED) throw conflict('this Circle is closed');
+    if (circle.status === CircleStatus.CLOSING && !allowClosing) {
+      throw conflict('this Circle is being closed, so money cannot be added to it');
+    }
+    if (!SPENDING_STATUSES.includes(circle.status)) throw conflict('this Circle is not active on-chain yet');
     if (!circle.safeAddress) throw conflict('this Circle has no verified Safe address');
     return circle;
   }
@@ -1802,7 +1885,7 @@ export class CircleService {
     this._assertAdmin(circleId, actorPrismId);
     const proposal = this._proposal(circleId, proposalId);
     if (!proposal.governance) throw badRequest('that proposal is not a governance change');
-    if (circle.status !== CircleStatus.ACTIVE) throw conflict('this Circle is not active on-chain yet');
+    if (!SPENDING_STATUSES.includes(circle.status)) throw conflict('this Circle is not active on-chain yet');
 
     if (CIRCLE_PAYMENT_IN_FLIGHT.includes(proposal.lifecycle)) {
       return this.reconcileGovernance({ circleId, proposalId, prismId: actorPrismId });
@@ -1870,7 +1953,15 @@ export class CircleService {
       this._releaseExecution(proposalId);
       throw error;
     }
-    this._setPaymentState(proposalId, CirclePaymentState.SUBMITTED, { extra: { executionTxHash: txHash }, detail: { txHash } });
+    this._setPaymentState(proposalId, CirclePaymentState.SUBMITTED, {
+      extra: {
+        executionTxHash: txHash,
+        approvalsAtExecution: collected.map((a) => ({
+          authorityAddress: a.authorityAddress, signatureType: a.signatureType, prismId: a.prismId ?? null
+        }))
+      },
+      detail: { txHash }
+    });
     this._event(circleId, 'circle.governance.submitted', { proposalId, kind: proposal.kind, txHash });
 
     return this.reconcileGovernance({ circleId, proposalId, prismId: actorPrismId });
@@ -2060,9 +2151,11 @@ export class CircleService {
       safeNonce: proposal.safeNonce,
       safeTransaction: proposal.safeTransaction,
       requiredApprovals: required,
-      collectedApprovals: count,
-      approvals: (collected ?? []).map((a) => ({ authorityAddress: a.authorityAddress, signatureType: a.signatureType })),
-      approvalsSource: collected ? 'verified signatures against the live owner set' : 'unavailable',
+      collectedApprovals: count ?? (proposal.approvalsAtExecution?.length ?? null),
+      approvals: (collected ?? proposal.approvalsAtExecution ?? []).map((a) => ({ authorityAddress: a.authorityAddress, signatureType: a.signatureType })),
+      approvalsSource: collected
+        ? 'verified signatures against the live owner set'
+        : (proposal.approvalsAtExecution ? 'signatures the Safe verified at execution' : 'unavailable'),
       executionTxHash: proposal.executionTxHash ?? null,
       evidence: proposal.evidence ?? null,
       failureReason: proposal.failureReason ?? null,
@@ -2205,7 +2298,8 @@ export class CircleService {
       subject: { prismId, authorityAddress: delegate, amount, period, step: next.kind },
       governance: {
         delegate, prismId, amountAtomic: amount, period,
-        module: moduleAddress, step: next.kind, remainingSteps: rest.map((r) => r.kind)
+        module: moduleAddress, step: next.kind, remainingSteps: rest.map((r) => r.kind),
+        previous: next.previous ?? null
       }
     });
 
@@ -2250,7 +2344,14 @@ export class CircleService {
       steps.push({
         kind: ProposalKind.SPEND_LIMIT_SET,
         intent: { kind: 'SPEND_LIMIT_SET', module: moduleAddress, delegate, amountAtomic: amount, period },
-        memo: `Set this member's limit to ${formatUsdc(amount, this.config.chain.usdcDecimals)} ${PERIOD_LABELS[period]}`
+        memo: `Set this member's limit to ${formatUsdc(amount, this.config.chain.usdcDecimals)} ${PERIOD_LABELS[period]}`,
+        // What the module says the limit is *now*, so the activity feed can report "$50/day →
+        // $100/day" instead of announcing a number with no before. Null when there was none — the
+        // feed then says the limit was set, and invents no previous value. A registered delegate
+        // with a zero allowance had no limit either: an arrow from "$0.00" would be a fiction about
+        // an intermediate step of granting one.
+        previous: current && BigInt(current.amountAtomic) > 0n
+          ? { amountAtomic: current.amountAtomic, period: current.period } : null
       });
     }
     return steps;
@@ -2304,7 +2405,7 @@ export class CircleService {
    * through after the Circle had already cut it.
    */
   async previewPayment({ circleId, actorPrismId, amountAtomic }) {
-    const circle = await this._spendableCircle(circleId, actorPrismId, PROPOSING_ROLES, 'pay from');
+    const circle = await this._spendableCircle(circleId, actorPrismId, PROPOSING_ROLES, 'pay from', { allowClosing: true });
     const amount = this._assertAmount(amountAtomic);
     const decimals = this.config.chain.usdcDecimals;
 
@@ -2372,7 +2473,7 @@ export class CircleService {
    * signature good for exactly one transfer.
    */
   async prepareSpend({ circleId, actorPrismId, resolution, amountAtomic, memo = '' }) {
-    const circle = await this._spendableCircle(circleId, actorPrismId, PROPOSING_ROLES, 'pay from');
+    const circle = await this._spendableCircle(circleId, actorPrismId, PROPOSING_ROLES, 'pay from', { allowClosing: true });
     await this._assertLimitsAvailable(circle);
     if (!this.payments) throw conflict('Circle payments are not available on this deployment');
     const amount = this._assertAmount(amountAtomic);
@@ -2643,6 +2744,699 @@ export class CircleService {
   }
 
   // ===========================================================================
+  // The canonical payment surface — one Prism payment, with Circle context
+  // ===========================================================================
+  //
+  // A Circle does not get its own transaction history. Money out of a Circle, money into a Circle
+  // and a within-limit spend are all projected into the SAME canonical PrismPayment that a personal
+  // payment projects into, carrying an extra `circle` block that says which shared account it came
+  // from and what authority released it. The receipt is the ordinary receipt; the proof is the
+  // ordinary proof, extended. Nothing below writes state — these are views over records that were
+  // already reconciled against the chain.
+
+  /** Which Circle record an id belongs to. Ids are prefixed at creation, so this needs no lookup. */
+  static kindOfPaymentId(paymentId) { return circlePaymentKindOfId(paymentId); }
+
+  /** True when this id addresses something Circles owns rather than an ordinary operation. */
+  static isCirclePaymentId(paymentId) { return isCirclePaymentId(paymentId); }
+
+  /**
+   * The canonical projection of one Circle payment: `{ payment, events, receipt }`.
+   *
+   * Identical in shape to `PaymentService.canonicalFor`, and deliberately so — the phone opens the
+   * same detail screen for a Circle payment as for a personal one. Reconciles against the chain
+   * first, so a payment that settled since the last read is settled here too.
+   */
+  async canonicalFor(paymentId, prismId) {
+    const kind = CircleService.kindOfPaymentId(paymentId);
+    if (!kind) throw notFound('payment not found');
+    const ctx = { viewerPrismId: prismId, identityService: this.identityService };
+
+    if (kind === 'proposal') {
+      const proposal = this._anyProposal(paymentId);
+      if (proposal.kind !== ProposalKind.PAYMENT) throw notFound('payment not found');
+      const circle = this._circle(proposal.circleId);
+      const audience = this._audience(circle.circleId, prismId, proposal.recipientPrismId);
+      if (audience === AUDIENCE_MEMBER) {
+        await this.reconcilePayment({ circleId: circle.circleId, proposalId: paymentId, prismId }).catch(() => null);
+      }
+      const { operation } = await this._projectProposal(circle, this._anyProposal(paymentId), { audience });
+      return { payment: canonicalPayment(operation, ctx), events: operation.events, receipt: receiptFor(operation, ctx) };
+    }
+
+    if (kind === 'spend') {
+      const spend = this._anySpend(paymentId);
+      const circle = this._circle(spend.circleId);
+      const audience = this._audience(circle.circleId, prismId, spend.recipientPrismId);
+      if (audience === AUDIENCE_MEMBER) {
+        await this.reconcileSpend({ circleId: circle.circleId, spendId: paymentId, prismId }).catch(() => null);
+      }
+      const operation = this._projectSpend(circle, this._anySpend(paymentId), { audience });
+      return { payment: canonicalPayment(operation, ctx), events: operation.events, receipt: receiptFor(operation, ctx) };
+    }
+
+    const contribution = this._contribution(paymentId);
+    const circle = this._circle(contribution.circleId);
+    const audience = this._audience(circle.circleId, prismId, contribution.contributorPrismId);
+    if (audience === AUDIENCE_MEMBER) {
+      await this.reconcileContribution({ circleId: circle.circleId, contributionId: paymentId, prismId }).catch(() => null);
+    }
+    const operation = this._projectContribution(circle, this._contribution(paymentId), { audience });
+    return { payment: canonicalPayment(operation, ctx), events: operation.events ?? [], receipt: receiptFor(operation, ctx) };
+  }
+
+  /**
+   * Who is asking, and how much of the Circle they are entitled to see.
+   *
+   * A member sees the Circle. Someone who was paid by it — or who put money into it and has since
+   * left — sees *their own* payment, which legitimately names the Circle that paid them, and nothing
+   * about how the Circle governs itself. Anyone else gets the same answer they get for a Circle they
+   * are not in: not found.
+   */
+  _audience(circleId, prismId, counterpartyPrismId = null) {
+    const member = this.store.read().circleMembers?.[memberKey(circleId, prismId)];
+    if (member && !TERMINAL_MEMBER_STATUSES.includes(member.status)) return AUDIENCE_MEMBER;
+    if (counterpartyPrismId && counterpartyPrismId === prismId) return AUDIENCE_COUNTERPARTY;
+    throw notFound('payment not found');
+  }
+
+  /**
+   * Strip a Circle's internal governance out of a payment's context.
+   *
+   * The person who was paid is entitled to know which Circle paid them — that is the receipt. They
+   * are not entitled to its approvals, its proposer, or how many admins it takes to spend, which are
+   * facts about the Circle rather than about their money.
+   */
+  _restrictContext(context) {
+    return {
+      ...context,
+      approvers: [],
+      proposer: null,
+      requiredApprovals: null,
+      approvalRule: null,
+      policy: null,
+      safeTxHash: context.safeTxHash,
+      spendingLimitReference: null,
+      restricted: true
+    };
+  }
+
+  /** A threshold payment as an operation record plus the view it was projected from. */
+  async _projectProposal(circle, proposal, { authority = null, view = null, audience = AUDIENCE_MEMBER } = {}) {
+    const resolved = view ?? await this._paymentView(circle, proposal, { authority });
+    const context = circleContext({
+      circle,
+      flow: CircleFlow.OUT,
+      approvalPolicy: CircleApprovalPolicy.THRESHOLD,
+      proposalId: proposal.proposalId,
+      safeTxHash: proposal.safeTxHash,
+      safeNonce: proposal.safeNonce,
+      requiredApprovals: resolved.requiredApprovals,
+      adminCount: authority?.adminCount ?? null,
+      // Only signatures that verified against this digest AND a current owner are here; an approval
+      // that stopped counting is absent rather than listed as historical.
+      approvers: (resolved.approvals ?? []).map((a) => this._approverParty(circle.circleId, a)),
+      proposer: this._memberParty(circle.circleId, proposal.proposerPrismId),
+      state: resolved.lifecycle
+    });
+    const scoped = audience === AUDIENCE_MEMBER ? context : this._restrictContext(context);
+    return { operation: proposalAsOperation({ circle, proposal, view: resolved, context: scoped }), view: resolved, context: scoped };
+  }
+
+  /** A within-limit spend as an operation record. Its authority is the module, not a vote. */
+  _projectSpend(circle, spend, { audience = AUDIENCE_MEMBER } = {}) {
+    const limit = spend.limitAtSigning ?? null;
+    const context = circleContext({
+      circle,
+      flow: CircleFlow.OUT,
+      approvalPolicy: CircleApprovalPolicy.SPENDING_LIMIT,
+      proposer: this._memberParty(circle.circleId, spend.spenderPrismId),
+      state: spendCircleState(spend),
+      operationId: spend.spendId,
+      // The limit this spend was authorized against, named rather than summarized: a receipt that
+      // says "within Sarah's limit" has to be able to say *which* limit, as it stood at signing.
+      spendingLimitReference: {
+        module: spend.module ?? null,
+        delegate: spend.delegate ?? null,
+        period: limit?.period ?? null,
+        periodLabel: limit?.period ? (PERIOD_LABELS[limit.period] ?? null) : null,
+        limitAtomic: limit?.amountAtomic ?? null,
+        availableAtSigningAtomic: limit?.availableAtomic ?? null,
+        allowanceNonce: spend.allowanceNonce ?? null,
+        summary: limit?.amountAtomic
+          ? `${formatUsdc(limit.amountAtomic, this.config.chain.usdcDecimals)} ${PERIOD_LABELS[limit.period] ?? ''}`.trim()
+          : null,
+        source: 'chain'
+      }
+    });
+    return spendAsOperation({ circle, spend, context: audience === AUDIENCE_MEMBER ? context : this._restrictContext(context) });
+  }
+
+  /**
+   * A contribution's canonical operation.
+   *
+   * There is nothing to build here: a contribution IS an ordinary Prism operation, and it already
+   * carries its Circle context in the intent it was prepared with. All this does is refresh the
+   * Circle's display name, which is Prism-owned and may have changed since.
+   */
+  _projectContribution(circle, contribution, { audience = AUDIENCE_MEMBER } = {}) {
+    const operation = this.store.read().operations?.[contribution.operationId];
+    if (!operation) throw notFound('the payment for this contribution is missing');
+    const stored = operation.intent?.circle ?? null;
+    const context = stored
+      ? { ...stored, circleName: circle.name, circleIcon: circle.icon ?? null, contributionId: contribution.contributionId }
+      : circleContext({
+        circle, flow: CircleFlow.IN, approvalPolicy: CircleApprovalPolicy.CONTRIBUTION,
+        contributionId: contribution.contributionId, operationId: contribution.operationId,
+        proposer: this._memberParty(circle.circleId, contribution.contributorPrismId)
+      });
+    const scoped = audience === AUDIENCE_MEMBER ? context : this._restrictContext(context);
+    return { ...operation, intent: { ...operation.intent, circle: scoped } };
+  }
+
+  /** A person as a payment party: the Circle's own record of them first, the identity second. */
+  _memberParty(circleId, prismId) {
+    if (!prismId) return null;
+    const member = this.store.read().circleMembers?.[memberKey(circleId, prismId)];
+    const identity = this.identityService.get(prismId);
+    const handle = member?.handle ?? (identity?.handle ? `@${identity.handle}` : null);
+    return {
+      prismId,
+      displayName: member?.displayName ?? identity?.displayName ?? handle ?? 'Someone',
+      handle,
+      authorityAddress: member?.authorityAddress ?? identity?.accountAddress ?? null
+    };
+  }
+
+  /** A verified approval, attributed to the person whose authority signed it. */
+  _approverParty(circleId, approval) {
+    const address = approval.authorityAddress ? getAddress(approval.authorityAddress) : null;
+    const member = Object.values(this.store.read().circleMembers ?? {}).find((m) =>
+      m.circleId === circleId && m.authorityAddress && address && getAddress(m.authorityAddress) === address);
+    const party = member ? this._memberParty(circleId, member.prismId) : null;
+    return {
+      prismId: party?.prismId ?? approval.prismId ?? null,
+      // An owner who is not a Prism member of this Circle is still a real signer. Say so plainly
+      // rather than dropping the approval or inventing a name for it.
+      displayName: party?.displayName ?? 'An admin',
+      handle: party?.handle ?? null,
+      authorityAddress: address,
+      signatureType: approval.signatureType ?? null,
+      status: 'verified'
+    };
+  }
+
+  /**
+   * Everything the Payment Proof surface needs for one Circle payment, assembled from live reads.
+   *
+   * What this returns is *evidence*, in the strict sense the rest of the codebase uses: the Safe's
+   * own owner set and threshold, the token contract's balance, the Monad receipt, the USDC Transfer
+   * inside it, and the module's allowance where one applies. The Safe Transaction Service appears
+   * nowhere in it — that service coordinates signatures and is never execution evidence.
+   */
+  async evidenceFor(paymentId, prismId) {
+    const kind = CircleService.kindOfPaymentId(paymentId);
+    if (!kind) return null;
+
+    if (kind === 'proposal') {
+      const proposal = this._anyProposal(paymentId);
+      if (proposal.kind !== ProposalKind.PAYMENT) throw notFound('payment not found');
+      const circle = this._circle(proposal.circleId);
+      const audience = this._audience(circle.circleId, prismId, proposal.recipientPrismId);
+      if (audience === AUDIENCE_MEMBER) {
+        await this.reconcilePayment({ circleId: circle.circleId, proposalId: paymentId, prismId }).catch(() => null);
+      }
+      const current = this._anyProposal(paymentId);
+      const authority = await this._readAuthority(circle).catch(() => null);
+      const { operation, view, context } = await this._projectProposal(circle, current, { authority, audience });
+      const [receipt, balance] = await Promise.all([
+        current.executionTxHash ? this.safe.getTransactionReceipt(current.executionTxHash).catch(() => null) : null,
+        this.safe.getUsdcBalance(circle.safeAddress).then((b) => b.toString()).catch(() => null)
+      ]);
+      return {
+        policy: CircleApprovalPolicy.THRESHOLD,
+        circle, operation, context, view, authority, receipt, balance,
+        evidence: current.evidence ?? null,
+        binding: this._paymentBinding(circle, current),
+        calldataFields: this._proposalCalldataFields(current),
+        recipientPrismId: current.recipientPrismId ?? null,
+        proposerPrismId: current.proposerPrismId ?? null,
+        balanceBefore: current.balanceBefore ?? null,
+        balanceAfter: current.balanceAfter ?? null,
+        allowance: null
+      };
+    }
+
+    if (kind === 'spend') {
+      const spend = this._anySpend(paymentId);
+      const circle = this._circle(spend.circleId);
+      const audience = this._audience(circle.circleId, prismId, spend.recipientPrismId);
+      if (audience === AUDIENCE_MEMBER) {
+        await this.reconcileSpend({ circleId: circle.circleId, spendId: paymentId, prismId }).catch(() => null);
+      }
+      const current = this._anySpend(paymentId);
+      const authority = await this._readAuthority(circle).catch(() => null);
+      const operation = this._projectSpend(circle, current, { audience });
+      const [receipt, balance, allowance] = await Promise.all([
+        current.transactionHash ? this.safe.getTransactionReceipt(current.transactionHash).catch(() => null) : null,
+        this.safe.getUsdcBalance(circle.safeAddress).then((b) => b.toString()).catch(() => null),
+        this.safe.getSpendingLimit({ safeAddress: circle.safeAddress, delegate: current.delegate }).catch(() => null)
+      ]);
+      return {
+        policy: CircleApprovalPolicy.SPENDING_LIMIT,
+        circle, operation, context: operation.intent.circle, view: this._spendView(current),
+        authority, receipt, balance,
+        evidence: current.evidence ?? null,
+        binding: { ok: true, reasons: [], boundFields: ['recipientAccount', 'amount', 'token', 'allowanceNonce', 'safeAddress', 'chainId'] },
+        calldataFields: this._spendCalldataFields(current),
+        recipientPrismId: current.recipientPrismId ?? null,
+        proposerPrismId: current.spenderPrismId ?? null,
+        balanceBefore: current.balanceBefore ?? null,
+        balanceAfter: current.balanceAfter ?? null,
+        allowance
+      };
+    }
+
+    const contribution = this._contribution(paymentId);
+    const circle = this._circle(contribution.circleId);
+    const audience = this._audience(circle.circleId, prismId, contribution.contributorPrismId);
+    if (audience === AUDIENCE_MEMBER) {
+      await this.reconcileContribution({ circleId: circle.circleId, contributionId: paymentId, prismId }).catch(() => null);
+    }
+    const current = this._contribution(paymentId);
+    const operation = this._projectContribution(circle, current, { audience });
+    const balance = await this.safe.getUsdcBalance(circle.safeAddress).then((b) => b.toString()).catch(() => null);
+    return {
+      policy: CircleApprovalPolicy.CONTRIBUTION,
+      circle, operation, context: operation.intent.circle, view: this._contributionView(current, circle),
+      authority: await this._readAuthority(circle).catch(() => null),
+      // A contribution settles through the Prism router, so its chain evidence is the ordinary
+      // payment operation's — the proof surface reads it from there rather than from a Safe receipt.
+      receipt: null, balance,
+      evidence: null,
+      binding: { ok: true, reasons: [], boundFields: ['contributionId', 'circleId', 'safeAddress', 'contributorPrismId', 'amount'] },
+      calldataFields: null,
+      recipientPrismId: null,
+      proposerPrismId: current.contributorPrismId,
+      balanceBefore: current.balanceBefore ?? null,
+      balanceAfter: current.balanceAfter ?? null,
+      allowance: null,
+      underlyingOperationId: current.operationId
+    };
+  }
+
+  /** The exact argument values inside the Safe transaction, for the identifier-privacy detector. */
+  _proposalCalldataFields(proposal) {
+    const tx = proposal.safeTransaction ?? {};
+    return [
+      { name: 'safe', value: proposal.safeAddress },
+      { name: 'to', value: tx.to },
+      { name: 'value', value: tx.value },
+      { name: 'data', value: tx.data },
+      { name: 'operation', value: tx.operation },
+      { name: 'nonce', value: tx.nonce },
+      { name: 'safeTxHash', value: proposal.safeTxHash },
+      { name: 'recipient', value: proposal.recipientAccount },
+      { name: 'amount', value: proposal.amount }
+    ];
+  }
+
+  _spendCalldataFields(spend) {
+    return [
+      { name: 'safe', value: spend.safeAddress },
+      { name: 'module', value: spend.module },
+      { name: 'token', value: spend.token },
+      { name: 'recipient', value: spend.recipientAccount },
+      { name: 'amount', value: spend.amount },
+      { name: 'delegate', value: spend.delegate },
+      { name: 'allowanceNonce', value: spend.allowanceNonce },
+      { name: 'transferHash', value: spend.transferHash }
+    ];
+  }
+
+  _anyProposal(proposalId) {
+    const proposal = this.store.read().circleProposals?.[proposalId];
+    if (!proposal) throw notFound('proposal not found');
+    return proposal;
+  }
+
+  _anySpend(spendId) {
+    const spend = this.store.read().circleSpends?.[spendId];
+    if (!spend) throw notFound('spend not found');
+    return spend;
+  }
+
+  /**
+   * Cancel a Circle transaction that has not been broadcast.
+   *
+   * Needed for its own sake — a proposal nobody will approve should not sit in the approval inbox
+   * forever — and needed for closing, because a Circle cannot be shut down while Prism still holds
+   * decisions nobody resolved. Only pre-broadcast states are cancellable: once a transaction is
+   * away, what happened to it is the chain's answer, not a button's.
+   */
+  async cancelProposal({ circleId, proposalId, actorPrismId }) {
+    const circle = this._circle(circleId);
+    const member = this._assertMember(circleId, actorPrismId);
+    const proposal = this._proposal(circleId, proposalId);
+    if (member.role !== MemberRole.ADMIN && proposal.proposerPrismId !== actorPrismId) {
+      throw forbidden('only an admin or the person who proposed this can cancel it');
+    }
+    if (!CIRCLE_PAYMENT_PRE_BROADCAST.includes(proposal.lifecycle)) {
+      throw conflict(`this is ${String(proposal.lifecycle).toLowerCase()} and can no longer be cancelled`);
+    }
+    this._setPaymentState(proposalId, CirclePaymentState.CANCELLED, { detail: { by: actorPrismId } });
+    this.store.mutate((d) => { d.circleProposals[proposalId].status = ProposalStatus.REJECTED; });
+    this._event(circleId, 'circle.proposal.cancelled', { proposalId, kind: proposal.kind, by: actorPrismId });
+    // A cancelled owner-removal leaves that admin exactly where they were.
+    if (proposal.kind === ProposalKind.OWNER_REMOVE && proposal.governance?.prismId) {
+      const target = this.store.read().circleMembers?.[memberKey(circleId, proposal.governance.prismId)];
+      if (target?.status === MemberStatus.PENDING_REMOVAL) {
+        this._setMemberStatus({ circleId, prismId: proposal.governance.prismId, next: MemberStatus.ACTIVE, detail: { reason: 'the removal was cancelled' } });
+      }
+    }
+    return proposal.kind === ProposalKind.PAYMENT
+      ? this._paymentView(circle, this._proposal(circleId, proposalId), {})
+      : this._governanceView(this._proposal(circleId, proposalId), {});
+  }
+
+  // ===========================================================================
+  // Closing a Circle
+  // ===========================================================================
+  //
+  // Closing is a lifecycle, not a delete. ACTIVE -> CLOSING -> CLOSED, and every Circle record,
+  // payment, approval and receipt survives it: a shared account people put money through is exactly
+  // the kind of history that must still be readable a year later.
+  //
+  // The one thing Prism will not do is decide where a remaining balance goes. There is no equal
+  // split, no "return to contributors", no default. A Circle holding money cannot be closed at all —
+  // it can only be emptied first, by the same threshold-approved payments it has always used, to
+  // recipients its members choose. That refusal is the feature.
+
+  /**
+   * What stands between this Circle and being closed, checked against live state.
+   *
+   * Every blocker is a real read: open decisions from Prism's own records, spending delegates from
+   * the module, the balance from the token contract, the owner set from the Safe. A read that fails
+   * is itself a blocker — closing a Circle whose chain state could not be checked would record a
+   * closure Prism cannot stand behind.
+   */
+  async closePreflight(circleId, prismId) {
+    const circle = this._circle(circleId);
+    this._assertAdmin(circleId, prismId);
+    if (circle.status === CircleStatus.CLOSED) {
+      return {
+        circleId, status: circle.status, canClose: false, alreadyClosed: true,
+        blockers: [], checks: [], closing: circle.closing ?? null
+      };
+    }
+
+    const blockers = [];
+    const checks = [];
+
+    // 1. No unresolved Prism decisions may outlive the Circle.
+    const open = this._openProposals(circleId);
+    checks.push({ code: 'OPEN_PROPOSALS', ok: open.length === 0, count: open.length, source: 'prism' });
+    if (open.length) {
+      blockers.push({
+        code: 'OPEN_PROPOSALS',
+        title: open.length === 1 ? '1 decision is still open' : `${open.length} decisions are still open`,
+        detail: 'Approve or cancel everything waiting on the Circle before closing it.',
+        proposals: open.map((p) => ({ proposalId: p.proposalId, kind: p.kind, memo: p.memo, lifecycle: p.lifecycle }))
+      });
+    }
+
+    // 2. Nobody may still be able to spend from the Safe.
+    const delegates = await this._liveSpendDelegates(circle);
+    checks.push({ code: 'SPENDING_ACCESS', ok: delegates.ok && delegates.addresses.length === 0, source: 'module' });
+    if (!delegates.ok) {
+      blockers.push({
+        code: 'SPENDING_ACCESS',
+        title: 'Spending access could not be checked',
+        detail: `Monad could not be read, so Prism cannot confirm that nobody can still spend from this Circle: ${delegates.reason}`
+      });
+    } else if (delegates.addresses.length) {
+      blockers.push({
+        code: 'SPENDING_ACCESS',
+        title: delegates.addresses.length === 1 ? '1 member can still spend' : `${delegates.addresses.length} members can still spend`,
+        detail: 'Revoke every spending limit on Monad first, or closing would leave the access behind.',
+        members: delegates.addresses.map((a) => this._delegateMember(circleId, a))
+      });
+    }
+
+    // 3. The balance. Prism will not choose where it goes.
+    const balance = await this.safe.getUsdcBalance(circle.safeAddress).then((b) => b.toString()).catch(() => null);
+    checks.push({ code: 'REMAINING_FUNDS', ok: balance === '0', balanceAtomic: balance, source: 'chain' });
+    if (balance === null) {
+      blockers.push({
+        code: 'REMAINING_FUNDS',
+        title: 'The balance could not be read',
+        detail: 'Prism will not close a Circle without seeing that it is empty.'
+      });
+    } else if (BigInt(balance) > 0n) {
+      blockers.push({
+        code: 'REMAINING_FUNDS',
+        title: `${formatUsdc(balance, this.config.chain.usdcDecimals)} is still in this Circle`,
+        // Said plainly, because this is the one blocker a person has to make a decision about.
+        detail: 'Decide together where this money goes and send it out of the Circle first. Prism will not split it or return it automatically — that is the Circle\'s decision, not ours.',
+        balanceAtomic: balance,
+        balanceDisplay: formatUsdc(balance, this.config.chain.usdcDecimals),
+        requiresExplicitDecision: true
+      });
+    }
+
+    // 4. The Safe's own state, read at close time rather than remembered.
+    const authority = await this._readAuthority(circle).catch(() => null);
+    checks.push({ code: 'CHAIN_RECONCILED', ok: Boolean(authority), source: 'chain' });
+    if (!authority) {
+      blockers.push({
+        code: 'CHAIN_RECONCILED',
+        title: 'The Circle could not be reconciled on Monad',
+        detail: 'Closing records what the Safe actually held and who actually controlled it. Try again when Monad can be read.'
+      });
+    }
+
+    return {
+      circleId,
+      status: circle.status,
+      canClose: blockers.length === 0,
+      requirements: CLOSE_REQUIREMENTS,
+      checks,
+      blockers,
+      balance: balance === null ? unavailable('the token contract could not be read') : {
+        amountAtomic: balance, display: formatUsdc(balance, this.config.chain.usdcDecimals),
+        symbol: CIRCLE_ASSET, source: 'chain'
+      },
+      authority: authority ?? unavailable('the Safe could not be read'),
+      closing: circle.closing ?? null,
+      // Stated because people ask: closing ends the Circle's life in Prism, not its record.
+      historyRetained: true
+    };
+  }
+
+  /**
+   * Begin closing. The Circle stays live on Monad and can still pay money out — that is how a
+   * remaining balance leaves — but nothing new can come in, and nobody new can be invited.
+   */
+  async beginClose({ circleId, actorPrismId, reason = null }) {
+    const circle = this._circle(circleId);
+    this._assertAdmin(circleId, actorPrismId);
+    if (circle.status === CircleStatus.CLOSED) throw conflict('this Circle is already closed');
+    if (circle.status === CircleStatus.CLOSING) return this.closePreflight(circleId, actorPrismId);
+    if (circle.status !== CircleStatus.ACTIVE) throw conflict('only an active Circle can be closed');
+
+    this.store.mutate((d) => {
+      d.circles[circleId].closing = {
+        startedAt: new Date().toISOString(),
+        startedByPrismId: actorPrismId,
+        reason: reason ? String(reason).trim().slice(0, 200) : null,
+        finalizedAt: null,
+        finalizedByPrismId: null,
+        evidence: null
+      };
+    });
+    this._transition(circleId, CircleStatus.CLOSING, { by: actorPrismId, reason: reason ?? null });
+    this._event(circleId, 'circle.closing.started', { by: actorPrismId, reason: reason ?? null });
+    logger.info('circle.closing.started', { circleId, by: actorPrismId });
+    return this.closePreflight(circleId, actorPrismId);
+  }
+
+  /**
+   * Change of mind. A closure that never finished leaves nothing behind but its own record.
+   *
+   * Reopening does not simply flip the status back: the Circle re-enters through RECONCILING and has
+   * to be read off the chain again before it is ACTIVE, exactly as it did the first time. There is
+   * one route to ACTIVE in this service and this is not an exception to it.
+   */
+  async cancelClose({ circleId, actorPrismId }) {
+    const circle = this._circle(circleId);
+    this._assertAdmin(circleId, actorPrismId);
+    if (circle.status !== CircleStatus.CLOSING) throw conflict('this Circle is not being closed');
+    this.store.mutate((d) => {
+      const record = d.circles[circleId];
+      record.closing = { ...(record.closing ?? {}), cancelledAt: new Date().toISOString(), cancelledByPrismId: actorPrismId };
+    });
+    this._transition(circleId, CircleStatus.RECONCILING, { by: actorPrismId, reason: 'closing cancelled' });
+    this._event(circleId, 'circle.closing.cancelled', { by: actorPrismId });
+    await this._reverifyActive(circleId);
+    return this.getCircle(circleId, actorPrismId);
+  }
+
+  /**
+   * Re-earn ACTIVE from a live read of the Safe.
+   *
+   * Used when a Circle comes back out of CLOSING. It re-checks the things that can never legitimately
+   * change — the chain, the Safe address, the audited singleton and version — and then writes a fresh
+   * activation receipt from what the chain says the owner set and threshold are *now*, because those
+   * two can legitimately have moved through approved governance while Prism was closing the Circle.
+   */
+  async _reverifyActive(circleId) {
+    const circle = this._circle(circleId);
+    let state;
+    try { state = await this.safe.getCircleState(circle.safeAddress); }
+    catch (e) { throw conflict(`Monad could not be read, so this Circle cannot be reopened yet: ${e.message}`); }
+
+    const mismatches = [];
+    if (Number(state.chainId) !== Number(this.config.chain.chainId)) mismatches.push(`the Safe is on chain ${state.chainId}, not ${this.config.chain.chainId}`);
+    if (getAddress(state.safeAddress) !== getAddress(circle.safeAddress)) mismatches.push('the Safe address does not match this Circle');
+    if (getAddress(state.singleton) !== getAddress(this.config.circles.safeSingleton)) mismatches.push('the Safe singleton is not the audited deployment');
+    if (String(state.version) !== EXPECTED_SAFE_VERSION) mismatches.push(`the Safe version is ${state.version}, expected ${EXPECTED_SAFE_VERSION}`);
+    if (mismatches.length) return this._fail(circleId, mismatches.join('; '));
+
+    const now = new Date().toISOString();
+    this.store.mutate((d) => {
+      const c = d.circles[circleId];
+      c.threshold = Number(state.threshold);
+      c.adminCount = state.owners.length;
+      c.activation = {
+        verifiedAt: now, chainId: Number(state.chainId), safeAddress: getAddress(state.safeAddress),
+        singleton: getAddress(state.singleton), version: state.version,
+        owners: state.owners.map((o) => getAddress(o)), threshold: Number(state.threshold)
+      };
+    });
+    this._transition(circleId, CircleStatus.ACTIVE, { reason: 'reopened after a cancelled closure', threshold: Number(state.threshold) });
+    this._reconcileMembersFromOwners(circleId, state.owners);
+    return this.getCircleRecord(circleId);
+  }
+
+  /**
+   * Close the Circle for good.
+   *
+   * Refuses unless every requirement holds against a live read, and refuses unless the person
+   * closing it acknowledged the exact balance Prism just read — the same discipline creation uses
+   * for the approvals policy. An acknowledgement that does not match what the chain says is not a
+   * formality that can be waved through; it means the screen they agreed to is not this Circle.
+   */
+  async finalizeClose({ circleId, actorPrismId, acknowledgement = null }) {
+    const circle = this._circle(circleId);
+    this._assertAdmin(circleId, actorPrismId);
+    if (circle.status === CircleStatus.CLOSED) return this.closePreflight(circleId, actorPrismId);
+    if (circle.status !== CircleStatus.CLOSING) throw conflict('start closing this Circle before finalizing it');
+
+    const preflight = await this.closePreflight(circleId, actorPrismId);
+    if (!preflight.canClose) {
+      const error = conflict(`this Circle cannot be closed yet: ${preflight.blockers.map((b) => b.title).join('; ')}`);
+      error.blockers = preflight.blockers;
+      throw error;
+    }
+
+    const balanceAtomic = preflight.balance?.amountAtomic ?? null;
+    if (!acknowledgement || String(acknowledgement.balanceAtomic) !== String(balanceAtomic)) {
+      throw badRequest('confirm the balance you were shown before closing this Circle; it no longer matches what Monad reports');
+    }
+
+    const authority = preflight.authority;
+    const delegates = await this._liveSpendDelegates(circle);
+    const evidence = {
+      readAt: new Date().toISOString(),
+      safeAddress: circle.safeAddress,
+      chainId: circle.chainId,
+      balanceAtomic,
+      balanceSource: 'chain',
+      owners: authority.owners ?? null,
+      threshold: authority.threshold ?? null,
+      safeNonce: authority.nonce ?? null,
+      moduleEnabled: delegates.moduleEnabled,
+      spendDelegates: delegates.addresses,
+      openProposals: 0,
+      // What actually emptied the Circle, taken from its own completed payments rather than from
+      // anything the closer typed. An empty list is a truthful answer for a Circle that never held
+      // anything.
+      withdrawals: this._closingWithdrawals(circleId)
+    };
+
+    this.store.mutate((d) => {
+      const record = d.circles[circleId];
+      record.closing = {
+        ...(record.closing ?? {}),
+        finalizedAt: new Date().toISOString(),
+        finalizedByPrismId: actorPrismId,
+        evidence
+      };
+      record.closedAt = new Date().toISOString();
+    });
+    this._transition(circleId, CircleStatus.CLOSED, { by: actorPrismId, balanceAtomic });
+    this._event(circleId, 'circle.closed', { by: actorPrismId, balanceAtomic, withdrawals: evidence.withdrawals.length });
+    logger.info('circle.closed', { circleId, by: actorPrismId });
+
+    return this.closePreflight(circleId, actorPrismId);
+  }
+
+  /** Decisions Prism still holds: pending, or broadcast and not yet settled. */
+  _openProposals(circleId) {
+    const terminal = [
+      CirclePaymentState.COMPLETED, CirclePaymentState.FAILED, CirclePaymentState.EXPIRED,
+      CirclePaymentState.CANCELLED, CirclePaymentState.INVALIDATED
+    ];
+    return Object.values(this.store.read().circleProposals ?? {})
+      .filter((p) => p.circleId === circleId)
+      .filter((p) => p.status !== ProposalStatus.EXECUTED && p.status !== ProposalStatus.REJECTED)
+      .filter((p) => !terminal.includes(p.lifecycle));
+  }
+
+  /** Who can still spend from this Safe, read from the module. Fails closed, never assumes none. */
+  async _liveSpendDelegates(circle) {
+    const moduleAddress = this.config.circles.allowanceModule;
+    if (!moduleAddress || !circle.safeAddress) return { ok: true, addresses: [], moduleEnabled: false };
+    if (typeof this.safe.isModuleEnabled !== 'function' || typeof this.safe.getSpendDelegates !== 'function') {
+      return { ok: true, addresses: [], moduleEnabled: null };
+    }
+    try {
+      const enabled = await this.safe.isModuleEnabled(circle.safeAddress);
+      if (!enabled) return { ok: true, addresses: [], moduleEnabled: false };
+      const delegates = await this.safe.getSpendDelegates(circle.safeAddress);
+      return { ok: true, addresses: delegates.map((d) => getAddress(d)), moduleEnabled: true };
+    } catch (e) {
+      return { ok: false, addresses: [], moduleEnabled: null, reason: e.message };
+    }
+  }
+
+  _delegateMember(circleId, address) {
+    const member = Object.values(this.store.read().circleMembers ?? {}).find((m) =>
+      m.circleId === circleId && m.authorityAddress && getAddress(m.authorityAddress) === getAddress(address));
+    return {
+      authorityAddress: getAddress(address),
+      prismId: member?.prismId ?? null,
+      displayName: member?.displayName ?? null,
+      handle: member?.handle ?? null
+    };
+  }
+
+  /** The completed payments that took money out of this Circle, newest last. */
+  _closingWithdrawals(circleId) {
+    return Object.values(this.store.read().circleProposals ?? {})
+      .filter((p) => p.circleId === circleId && p.kind === ProposalKind.PAYMENT && p.lifecycle === CirclePaymentState.COMPLETED)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
+      .map((p) => ({
+        proposalId: p.proposalId,
+        amount: p.amount,
+        recipientPrismId: p.recipientPrismId ?? null,
+        recipientAccount: p.recipientAccount ?? null,
+        transactionHash: p.executionTxHash ?? null,
+        executedAt: p.executedAt ?? null
+      }));
+  }
+
+  // ===========================================================================
   // Templates (UX defaults only)
   // ===========================================================================
 
@@ -2663,7 +3457,7 @@ export class CircleService {
    * This is the check that makes a hand-edited "status: ACTIVE" row worthless.
    */
   _assertActivationIntegrity(circle, authority) {
-    if (circle.status !== CircleStatus.ACTIVE) return;
+    if (!SPENDING_STATUSES.includes(circle.status)) return;
     if (!circle.activation?.verifiedAt) {
       this._fail(circle.circleId, 'this Circle was marked active without an on-chain verification receipt');
       throw conflict('this Circle was marked active without an on-chain verification receipt');
@@ -2696,7 +3490,10 @@ export class CircleService {
   async _activeCircleWithAuthority(circleId, actorPrismId) {
     const circle = this._circle(circleId);
     this._assertAdmin(circleId, actorPrismId);
-    if (circle.status !== CircleStatus.ACTIVE) throw conflict('this Circle is not active on-chain yet');
+    if (circle.status === CircleStatus.CLOSED) throw conflict('this Circle is closed');
+    // CLOSING is allowed on purpose: revoking spending access is a governance change, and it is one
+    // of the things a Circle must do before it can close.
+    if (!SPENDING_STATUSES.includes(circle.status)) throw conflict('this Circle is not active on-chain yet');
     if (!circle.safeAddress) throw conflict('this Circle has no verified Safe address');
     const authority = await this._readAuthority(circle);
     return { circle, authority };
@@ -2799,6 +3596,20 @@ export class CircleService {
         adminCount: circle.creation?.requestedAdmins?.length ?? null
       },
       failureReason: circle.creation?.failureReason ?? null,
+      // Present from the moment closing starts, so every surface can say where a Circle is in its
+      // wind-down. `historyRetained` is not decoration: closing never deletes anything.
+      closing: circle.closing
+        ? {
+          startedAt: circle.closing.startedAt ?? null,
+          startedByPrismId: circle.closing.startedByPrismId ?? null,
+          reason: circle.closing.reason ?? null,
+          cancelledAt: circle.closing.cancelledAt ?? null,
+          finalizedAt: circle.closing.finalizedAt ?? null,
+          finalizedByPrismId: circle.closing.finalizedByPrismId ?? null,
+          evidence: circle.closing.evidence ?? null
+        }
+        : null,
+      historyRetained: true,
       events: circle.events ?? []
     };
   }

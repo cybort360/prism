@@ -275,6 +275,65 @@ rather than papered over in `vendor/safe-allowances-v1.0.0/PROVENANCE.md`. Nothi
 depends on it. (c) **No live allowance transfer on Monad**, for the same reason as (a). (d) **iOS
 was not compiled** — no Swift toolchain on this machine; `make test-ios` needs macOS.
 
+## Circle activity, receipts, proof and lifecycle closure (2026-09-13)
+
+Circles now hang off the canonical Prism payment/receipt/proof architecture rather than beside it. A
+Circle payment IS a `PrismPayment` — `sourceType: circle` plus a `circle` block — so one canonical
+endpoint, one receipt surface and one proof surface serve personal and shared money alike. Closing a
+Circle is a guarded lifecycle with chain-checked requirements. `docs/CIRCLE_RECEIPTS.md`,
+`docs/CIRCLE_LIFECYCLE.md`, `docs/CIRCLE_PROOF.md`.
+
+Commands run:
+
+```
+cd backend && node --test test/circles-evidence.test.js      # 10 pass / 0 fail
+cd backend && node --test test/circles-activity.test.js      #  5 pass / 0 fail
+cd backend && node --test test/circles-closing.test.js       #  8 pass / 0 fail
+cd backend && node --test test/*.test.js                     # 329 pass / 0 fail
+```
+
+The evidence suite runs against the `circles-harness.js` fake chain, which implements Safe's real
+`execTransaction` rules over one USDC ledger shared with the Prism router. Every assertion compares a
+number Prism SHOWS against the same number read from the chain's own state (`fake.safeAt`,
+`fake.balanceOf`, `fake.allowanceOf`, `fake.receiptFor`) — never against another Prism value.
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| CE-1 | Displayed balance == `USDC.balanceOf(safe)` | `VERIFIED` (harness) | `circles-evidence.test.js` *PROOF 1-3* |
+| CE-2 | Displayed owners == the Safe's own owner set | `VERIFIED` (harness) | *PROOF 1-3* |
+| CE-3 | Displayed threshold == the Safe's own threshold; proof reports `2 of 3 admins` from the Safe | `VERIFIED` (harness) | *PROOF 1-3* |
+| CE-4 | Displayed allowance == the module's allowance, and a limit spend's proof reports the module's figures | `VERIFIED` (harness) | *PROOF 4* |
+| CE-5 | The Safe executed this exact digest (`ExecutionSuccess`), not merely a successful transaction | `VERIFIED` (harness) | *PROOF 5-6* |
+| CE-6 | The USDC `Transfer` names the reviewed recipient and the exact amount; the recipient's balance moved by it | `VERIFIED` (harness) | *PROOF 5-6* |
+| CE-7 | No raw phone, digits or phone-derived key in the Safe transaction, the receipt logs, the canonical payment, the receipt or the proof — with the detector proven to have actually run | `VERIFIED` (harness) | *PROOF 7*; red-before-green: emptying the Circle calldata fields → *PROOF 7* **failed** (1 fail), restored → 10/10 |
+| CE-8 | Every approval recovers to an address that is an owner right now | `VERIFIED` (harness) | *PROOF 8-9* |
+| CE-9 | A removed admin's signature stops counting, with nobody telling Prism | `VERIFIED` (harness) | *PROOF 8-9* — `forceOwners` drops Tobi; 2 approvals → 1, and the receipt stops listing him |
+| CE-10 | A receipt references the execution that actually happened, and a row hand-edited to COMPLETED with its evidence removed reads back as INVALIDATED with no settlement time | `VERIFIED` (harness) | *PROOF 10* |
+| CE-11 | A Circle payment is one canonical `PrismPayment` (kind `circlePayment`/`circleSpend`/`circleContribution`), with the Circle as payer and the receipt naming who requested and who approved | `VERIFIED` | *a Circle payment is an ordinary PrismPayment carrying Circle context* |
+| CE-12 | The payee sees which Circle paid them and nothing about its governance; a stranger gets 404 | `VERIFIED` | *the person who was paid sees their own receipt, but not the Circle's governance* |
+| CE-13 | The Safe Transaction Service is recorded as `coordination`, never as execution evidence; Envio is `not_applicable` for a Safe transfer | `VERIFIED` | *PROOF 5-6* |
+| CA-1 | The activity feed's money rows correspond one-to-one with the contributions/payments/spends that exist, and reconcile with the chain (`in − out == balanceOf(safe)`) | `VERIFIED` | `circles-activity.test.js` *the feed is a projection of reconciled records, not a second ledger* |
+| CA-2 | Financial and governance events stay distinguishable; a governance row carries no amount and no direction | `VERIFIED` | *the feed shows money and governance as distinguishable kinds of event*; red-before-green: giving governance rows an amount → **failed** (1 fail), restored → 5/5 |
+| CA-3 | A limit change reads as a change only when a previous limit existed, and only after the chain readback; a proposed-but-unexecuted change is absent from the feed | `VERIFIED` | *a spending limit change reads as a change, and only after the chain confirmed it*; red-before-green: admitting unexecuted governance → **2 failed**, restored → 5/5 |
+| CA-4 | A Circle payment reaches the recipient's personal Activity as money from the Circle; a contribution appears in the contributor's; an uninvolved admin gets no personal row | `VERIFIED` | *a Circle payment reaches the recipient's own Activity, paid by the Circle* |
+| CL-1 | A Circle holding money cannot be closed, and Prism proposes no distribution | `VERIFIED` | `circles-closing.test.js` *a Circle holding money cannot be closed…*; red-before-green: removing the funds blocker → **2 failed**, restored → 8/8 |
+| CL-2 | Money can still leave a CLOSING Circle (that is how it empties) and can never enter one | `VERIFIED` | *closing: the money leaves by a decision the Circle made…* |
+| CL-3 | Finalizing refuses an acknowledgement that does not match the live balance | `VERIFIED` | *finalizing refuses an acknowledgement that does not match what the chain says right now* |
+| CL-4 | An unresolved proposal blocks closing until approved or cancelled; a cancelled one is kept, not deleted | `VERIFIED` | *an unresolved decision blocks closing until it is approved or cancelled* |
+| CL-5 | A live spending delegate blocks closing; revoking works during CLOSING | `VERIFIED` | *a member who can still spend blocks closing until the Circle revokes it on Monad* |
+| CL-6 | A chain that cannot be read blocks closing (fail-closed), rather than being assumed empty | `VERIFIED` | *a chain that cannot be read blocks closing rather than being assumed empty* |
+| CL-7 | Closing keeps every record — activity, receipts, proofs — and a CLOSED Circle refuses money, invitations and payments | `VERIFIED` | *closing keeps every record, and a closed Circle refuses new money and new members* |
+| CL-8 | Reopening re-earns ACTIVE through RECONCILING from a fresh chain read; `CREATION_FLOW`'s one-route-to-ACTIVE invariant still holds | `VERIFIED` | *a closure can be called off, and the Circle re-earns ACTIVE from a chain read*; `circles-domain.test.js` 12/12 |
+| CL-9 | Member authority is a guarded machine (INVITED → ACCEPTED → PENDING_ACTIVATION → ACTIVE → PENDING_REMOVAL → REMOVED) whose events are what the feed reads | `PARTIAL` | transitions enforced by `assertMemberTransition` and exercised across `circles-members.test.js` (21/21) + the activity suite; no test yet drives every edge of the table directly |
+
+**Not claimed:** (a) **No live Circle payment, receipt or proof on Monad.** Everything above is the
+in-memory harness; the same funded-key constraint as the rest of P2. (b) **iOS is UNTESTED** — the
+canonical Circle context, the receipt rows, the proof section, the activity feed row, the close
+screen and `CircleReceiptTests.swift` were all written on Linux, where there is no Swift toolchain.
+`make test-ios` needs macOS and has not been run against any of it. (c) **The Safe Transaction
+Service is exercised only in its absent (local-only) configuration**, so "coordination, never
+evidence" is proven structurally and by the local path, not against a live service.
+
 ## How to add a row
 State the exact command, run it, paste the pass/fail counts (or tx hash), then set the status. If a
 prior claim's enforcement code changed, set it to `REGRESSED` until re-run.

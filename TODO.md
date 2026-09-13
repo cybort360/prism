@@ -113,6 +113,10 @@ nothing navigates to them yet, and they have not been compiled.
       `OWNER_ADD` / `OWNER_REMOVE` / `THRESHOLD_CHANGE` could be prepared but never approved or
       applied (no approve route, no readback), so Settings would have been a dead end. Backend
       306/306. **The iOS half is UNTESTED** — see the item above.
+- [ ] **A live Circle receipt and proof on Monad.** The canonical Circle payment, receipt, activity
+      feed and Payment Proof (`docs/CIRCLE_RECEIPTS.md`, `docs/CIRCLE_PROOF.md`) are proven against
+      the in-memory Safe only. The ten evidence proofs each compare a number Prism shows against the
+      chain's own state, but that chain is the harness.
 - [ ] **A live Circle payment on Monad testnet.** The payment suite runs against an in-memory Safe
       that enforces Safe's real `execTransaction` rules; no Circle payment has been broadcast to live
       Monad (same funded-key constraint as the rest of P2).
@@ -126,10 +130,14 @@ nothing navigates to them yet, and they have not been compiled.
       cannot produce, and has no allowance path to pull from. Supporting it means a new funding
       entry point on a deployed, audited vault — a decision, not a task.
 
-- [ ] **Closing a Circle, and withdrawing what's left.** Deliberately not built: returning a shared
-      balance and shutting the Circle down is its own flow with its own consent question (who gets
-      what, and who agrees), and inventing one alongside the rest of the UI would have been worse
-      than leaving it. `CircleStatus.CLOSED` exists in the domain model with no route to it.
+- [x] **Closing a Circle, and withdrawing what's left — BUILT (2026-09-13), backend verified.**
+      `ACTIVE → CLOSING → CLOSED`, with the consent question answered by refusing to answer it:
+      Prism proposes no distribution at all. A Circle holding money cannot be closed — it can only be
+      emptied first, by the threshold-approved payments it already has, to recipients its members
+      choose. The other requirements (no unresolved proposals, no live spending delegates, the Safe
+      readable) are live reads, and a read that fails is itself a blocker. Nothing is deleted:
+      `closing.evidence` records what the Circle was at the moment it ended. `docs/CIRCLE_LIFECYCLE.md`
+      §6; `circles-closing.test.js` 8/8. The iOS half (`CircleCloseView`) is UNTESTED — see above.
 
 ## Nice-to-have / polish
 - [ ] UI test for claim sibling visibility (audit Test F): eligible = [C1,C2,C3], claim C1, assert

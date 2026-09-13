@@ -1,5 +1,9 @@
 # Prism Circles — contributions and payments
 
+> Where a Circle payment goes **after** it settles — its receipt, its place in the Circle's activity,
+> its Payment Proof, and how a Circle is closed — is [CIRCLE_RECEIPTS.md](CIRCLE_RECEIPTS.md),
+> [CIRCLE_PROOF.md](CIRCLE_PROOF.md) and [CIRCLE_LIFECYCLE.md](CIRCLE_LIFECYCLE.md).
+
 How money gets into a Circle, and how it gets out.
 
 Companion to [`CIRCLES_ARCHITECTURE.md`](CIRCLES_ARCHITECTURE.md) (what a Circle is) and

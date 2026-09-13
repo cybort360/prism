@@ -199,14 +199,17 @@ enum CircleVocabulary {
 /// Merging happens here rather than in a view so the ordering rule and the sign convention are
 /// stated once and can be tested.
 struct CircleActivityItem: Identifiable, Equatable {
-  enum Kind: Equatable { case contribution, payment, spend }
+  /// What produced the line. `governance` moves no money — who joined, who may spend, what the
+  /// Circle now requires — and is kept apart from the three money kinds on purpose: a limit change
+  /// rendered with a payment's vocabulary would read as money that moved.
+  enum Kind: Equatable { case contribution, payment, spend, governance }
 
   let id: String
   let kind: Kind
-  /// Who or what the line is about: "Tobi added", "Airbnb", "Sarah · Groceries".
+  /// Who or what the line is about: "Tobi added", "Airbnb", "Tobi joined".
   let title: String
   let subtitle: String?
-  /// Signed for display: money in is positive, money out negative.
+  /// Signed for display: money in is positive, money out negative. Empty for a governance line.
   let amountAtomic: String
   let incoming: Bool
   let status: String
@@ -216,15 +219,107 @@ struct CircleActivityItem: Identifiable, Equatable {
   let transactionHash: String?
   /// Set for a payment still collecting approvals, so the row can be tapped through to it.
   let proposalId: String?
+  /// The canonical payment this line is a view of. Set on every money line — settled or not — so the
+  /// row opens the ordinary Prism receipt rather than a Circle-only screen.
+  var paymentId: String? = nil
+
+  var movesMoney: Bool { kind != .governance }
 
   var signedAmount: String {
-    (incoming ? "+" : "−") + Money.assetAmount(fromAtomic: amountAtomic)
+    guard movesMoney else { return "" }
+    return (incoming ? "+" : "−") + Money.assetAmount(fromAtomic: amountAtomic)
   }
 }
 
 extension CircleActivityItem {
-  /// Build one Circle's feed. Newest first; anything without a usable timestamp sorts last rather
-  /// than being dropped, because a line with an unknown time is still a line that happened.
+  /// One row of the backend's Circle activity feed.
+  ///
+  /// The feed is assembled on the server, from records already reconciled against the chain, so
+  /// this initializer only translates vocabulary — it computes no history and merges nothing.
+  init(wire: CircleActivityWireItem) {
+    let financial = wire.eventClass == "financial"
+    let kind: Kind = switch wire.type {
+    case "CONTRIBUTION": .contribution
+    case "PAYMENT": .payment
+    case "SPEND": .spend
+    default: .governance
+    }
+    let status = CircleActivityItem.status(for: wire, kind: kind)
+    self.init(
+      id: wire.id,
+      kind: financial ? kind : .governance,
+      title: wire.title,
+      subtitle: wire.subtitle ?? wire.detail,
+      amountAtomic: wire.amountAtomic ?? "0",
+      incoming: wire.direction == "in",
+      status: status.text, tone: status.tone, symbol: status.symbol,
+      at: wire.occurredAt.flatMap(Date.prismParse),
+      transactionHash: wire.transactionHash,
+      // Only an OPEN payment is tappable through to an approval; a settled one is a receipt.
+      proposalId: (wire.settled == true) ? nil : wire.proposalId,
+      paymentId: financial ? wire.paymentId : nil)
+  }
+
+  /// The consumer status words for a feed row. A governance line says what changed, never a money
+  /// status, and a money line that has not settled never reads as if it had.
+  private static func status(for wire: CircleActivityWireItem, kind: Kind) -> (text: String, tone: CircleTone, symbol: String) {
+    guard wire.eventClass == "financial" else {
+      return (governanceStatus(wire.type), .neutral, governanceSymbol(wire.type))
+    }
+    if wire.settled == true {
+      return switch kind {
+      case .contribution: ("Added", .positive, "checkmark.circle.fill")
+      default: ("Paid", .positive, "checkmark.circle.fill")
+      }
+    }
+    switch wire.status {
+    case "FAILED", "INVALIDATED": return ("Didn't go through", .attention, "exclamationmark.triangle.fill")
+    case "CANCELLED": return ("Cancelled", .neutral, "xmark.circle.fill")
+    case "EXPIRED": return ("Expired", .neutral, "clock.badge.xmark")
+    case "APPROVAL_PENDING", "PROPOSED", "CREATED", "RESOLVING", "RESOLVED", "PREPARED":
+      return ("Waiting for approval", .waiting, "clock.fill")
+    case "APPROVED": return ("Ready to send", .waiting, "clock.fill")
+    default: return (kind == .contribution ? "Adding" : "Sending", .waiting, "arrow.up.circle.fill")
+    }
+  }
+
+  private static func governanceStatus(_ type: String) -> String {
+    switch type {
+    case "MEMBER_JOINED": "Joined"
+    case "MEMBER_INVITED": "Invited"
+    case "MEMBER_PENDING_ACTIVATION": "Waiting on Monad"
+    case "MEMBER_PENDING_REMOVAL": "Removal proposed"
+    case "MEMBER_LEFT": "Left"
+    case "MEMBER_REMOVED": "Removed"
+    case "ADMIN_ADDED", "ADMIN_REMOVED", "THRESHOLD_CHANGED": "Who can approve changed"
+    case "SPENDING_LIMIT_CHANGED", "SPENDING_ACCESS_GRANTED", "SPENDING_ACCESS_REMOVED", "LIMITS_ENABLED": "Spending changed"
+    case "CIRCLE_CREATED": "Created"
+    case "CIRCLE_ACTIVE": "Live on Monad"
+    case "CIRCLE_CLOSING": "Closing"
+    case "CIRCLE_CLOSED": "Closed"
+    default: "Changed"
+    }
+  }
+
+  private static func governanceSymbol(_ type: String) -> String {
+    switch type {
+    case "MEMBER_JOINED", "MEMBER_INVITED", "MEMBER_PENDING_ACTIVATION": "person.badge.plus"
+    case "MEMBER_LEFT", "MEMBER_REMOVED", "MEMBER_PENDING_REMOVAL": "person.badge.minus"
+    case "SPENDING_LIMIT_CHANGED", "SPENDING_ACCESS_GRANTED", "SPENDING_ACCESS_REMOVED", "LIMITS_ENABLED": "gauge.with.dots.needle.33percent"
+    case "ADMIN_ADDED", "ADMIN_REMOVED", "THRESHOLD_CHANGED": "checkmark.shield"
+    case "CIRCLE_CLOSED", "CIRCLE_CLOSING": "archivebox"
+    default: "circle.hexagongrid"
+    }
+  }
+}
+
+extension CircleActivityItem {
+  /// The local fallback feed, used only when the Circle's activity endpoint could not be read.
+  ///
+  /// It is money-only — it has no way to know who joined or whose limit changed — and it is built
+  /// from the same reconciled records the server projects, so it is a narrower view of the same
+  /// history rather than a second one. Newest first; anything without a usable timestamp sorts last
+  /// rather than being dropped, because a line with an unknown time is still a line that happened.
   static func feed(
     contributions: [CircleContribution],
     payments: [CirclePayment],
@@ -245,7 +340,8 @@ extension CircleActivityItem {
         status: status.text, tone: status.tone, symbol: status.symbol,
         at: c.completedAt.flatMap(Date.prismParse) ?? c.createdAt.flatMap(Date.prismParse),
         transactionHash: c.transactionHash,
-        proposalId: nil))
+        proposalId: nil,
+        paymentId: c.contributionId))
     }
 
     for p in payments {
@@ -261,8 +357,10 @@ extension CircleActivityItem {
         status: status.text, tone: status.tone, symbol: status.symbol,
         at: p.executedAt.flatMap(Date.prismParse) ?? p.createdAt.flatMap(Date.prismParse),
         transactionHash: p.executionTxHash,
-        // Only a payment that is still open is worth opening; a settled one is a receipt.
-        proposalId: p.isComplete || p.isDead ? nil : p.proposalId))
+        // Only a payment that is still open is worth opening for approval; a settled one is a
+        // receipt, and `paymentId` is what opens that.
+        proposalId: p.isComplete || p.isDead ? nil : p.proposalId,
+        paymentId: p.proposalId))
     }
 
     for s in spends {
@@ -279,7 +377,8 @@ extension CircleActivityItem {
         status: status.text, tone: status.tone, symbol: status.symbol,
         at: s.completedAt.flatMap(Date.prismParse) ?? s.createdAt.flatMap(Date.prismParse),
         transactionHash: s.transactionHash,
-        proposalId: nil))
+        proposalId: nil,
+        paymentId: s.spendId))
     }
 
     return items.sorted { lhs, rhs in

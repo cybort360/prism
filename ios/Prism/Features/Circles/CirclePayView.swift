@@ -195,7 +195,10 @@ struct CirclePayView: View {
         amount: displayAmount,
         subtitle: "to \(target.contact.name) from \(target.circleName)",
         transactionHash: tx,
-        status: "Completed")
+        status: "Completed",
+        // A within-limit spend is an ordinary Prism payment, so its id opens the ordinary detail
+        // screen — the same receipt and the same proof a personal payment gets.
+        operationId: coordinator.lastSpend?.spendId)
     case .failed(let message): error = message
     default: break
     }
