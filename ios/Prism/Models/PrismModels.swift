@@ -69,6 +69,10 @@ struct PrismNetworkConfig: Codable {
   let resolverPublicKey: PublicServiceKey?
   let claimAuthorizerAddress: String?
   let relayerAddress: String?
+  /// Circle member spending limits. Nil/false means this deployment has no verified Allowance
+  /// Module and Circles spend by threshold — an ordinary state, not an error.
+  let circleLimitsEnabled: Bool?
+  let allowanceModule: String?
 }
 
 struct ResolutionResponse: Codable, Equatable, Hashable {

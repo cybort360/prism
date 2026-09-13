@@ -20,7 +20,7 @@ import { AuroraService } from './services/auroraService.js';
 import { ProofService } from './services/proofService.js';
 import { P256AccountService } from './services/p256AccountService.js';
 import { CircleService } from './services/circleService.js';
-import { safeCircleAdapter } from './chain/safeCircle.js';
+import { safeCircleAdapter, allowanceModuleGate } from './chain/safeCircle.js';
 import { p256ChainOps } from './chain/p256Account.js';
 import { runContinuityLab } from './lab/continuityLab.js';
 import { usdcBalanceOf, claimAuthorizerAddress, relayerAccount, verifyChainId, verifyUsdcDomain } from './chain/eth.js';
@@ -44,7 +44,7 @@ const activityService = new ActivityService({ store, identityService });
 const auroraService = new AuroraService({ store, config, identityService, paymentService });
 const proofService = new ProofService({ paymentService, identityService, config });
 const p256AccountService = new P256AccountService({ store, config, chainOps: p256ChainOps });
-const circleService = new CircleService({ store, config, identityService, safeAdapter: safeCircleAdapter(), paymentService });
+const circleService = new CircleService({ store, config, identityService, safeAdapter: safeCircleAdapter(), paymentService, limitGate: allowanceModuleGate() });
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -82,7 +82,12 @@ route('GET', '/v1/config', async () => ({
   claimVault: config.chain.claimVault || null,
   resolverPublicKey: resolverService.publicKey(),
   claimAuthorizerAddress: safe(() => claimAuthorizerAddress()),
-  relayerAddress: safe(() => relayerAccount().address)
+  relayerAddress: safe(() => relayerAccount().address),
+  // Circle member spending limits. `allowanceModule` is null unless a verified Safe Allowance
+  // Module v1.0.0 is configured — the client uses it to re-derive a spend's transfer hash for
+  // itself, and its absence is simply "this deployment spends by threshold".
+  circleLimitsEnabled: config.circles.limitsEnabled,
+  allowanceModule: config.circles.allowanceModule || null
 }));
 
 // --- onboarding --------------------------------------------------------------
@@ -353,6 +358,57 @@ route('POST', '/v1/circles/:id/payments/:proposalId/approve', async ({ user, par
 }, true);
 // Execute: reads the Safe's live owners/threshold/nonce, re-verifies every signature, SIMULATES
 // execTransaction, and broadcasts only if the simulation succeeds.
+// --- member spending limits (Safe Allowance Module v1.0.0) --------------------
+// A limit is a fact on Monad and changing it is a threshold-approved Circle transaction. There is
+// no route below that writes an allowance: `prepare` builds the Safe transaction the Circle's
+// admins must approve, and `execute` applies it and then READS THE MODULE BACK before calling it
+// active. Every figure reported is read from the module, never summed from Prism's activity.
+route('GET', '/v1/circles/limits/status', async () => circleService.limitsStatus(), true);
+route('GET', '/v1/circles/:id/limits', async ({ user, params }) => circleService.listSpendingLimits(params.id, user.prismId), true);
+route('GET', '/v1/circles/:id/limits/me', async ({ user, params }) => circleService.spendingLimitFor(params.id, user.prismId), true);
+route('POST', '/v1/circles/:id/limits/prepare', async ({ user, params, body }) => {
+  rateLimit(`circle-limit:${user.prismId}`, 60);
+  return circleService.prepareSpendingLimit({
+    circleId: params.id, actorPrismId: user.prismId, prismId: body.prismId,
+    amountAtomic: body.amountAtomic, period: body.period
+  });
+}, true);
+route('POST', '/v1/circles/:id/limits/revoke/prepare', async ({ user, params, body }) =>
+  circleService.prepareSpendingLimitRevoke({ circleId: params.id, actorPrismId: user.prismId, prismId: body.prismId }), true);
+// Governance execution: same live-authority / re-verified-signatures / simulate discipline as a
+// payment, with a chain readback of the change in place of a USDC Transfer.
+route('POST', '/v1/circles/:id/governance/:proposalId/execute', async ({ user, params, idempotencyKey }) =>
+  withIdempotency(store, {
+    scope: 'circle-governance-execute', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint('governance', params.proposalId)
+  }, () => circleService.executeGovernance({ circleId: params.id, proposalId: params.proposalId, actorPrismId: user.prismId })), true);
+route('GET', '/v1/circles/:id/governance/:proposalId', async ({ user, params }) =>
+  circleService.reconcileGovernance({ circleId: params.id, proposalId: params.proposalId, prismId: user.prismId }), true);
+
+// --- spending within a limit -------------------------------------------------
+// `preview` decides the route from live chain state: within the limit the member authorizes alone,
+// over it the payment becomes an ordinary threshold proposal. The over-limit answer is a fork, not
+// a dead end — it names the limit and offers the Circle.
+route('POST', '/v1/circles/:id/payments/preview', async ({ user, params, body }) =>
+  circleService.previewPayment({ circleId: params.id, actorPrismId: user.prismId, amountAtomic: body.amountAtomic }), true);
+route('POST', '/v1/circles/:id/spend/prepare', async ({ user, params, body }) => {
+  rateLimit(`circle-spend:${user.prismId}`, 60);
+  return circleService.prepareSpend({
+    circleId: params.id, actorPrismId: user.prismId, resolution: body.resolution,
+    amountAtomic: body.amountAtomic, memo: body.memo ?? ''
+  });
+}, true);
+route('POST', '/v1/circles/:id/spend/:spendId/submit', async ({ user, params, body, idempotencyKey }) => {
+  requireSig(body.signature, 'signature');
+  return withIdempotency(store, {
+    scope: 'circle-spend-submit', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint(params.spendId, body.signature)
+  }, () => circleService.submitSpend({ circleId: params.id, spendId: params.spendId, prismId: user.prismId, signature: body.signature }));
+}, true);
+route('GET', '/v1/circles/:id/spend', async ({ user, params }) => circleService.listSpends(params.id, user.prismId), true);
+route('GET', '/v1/circles/:id/spend/:spendId', async ({ user, params }) =>
+  circleService.reconcileSpend({ circleId: params.id, spendId: params.spendId, prismId: user.prismId }), true);
+
 route('POST', '/v1/circles/:id/payments/:proposalId/execute', async ({ user, params, idempotencyKey }) =>
   withIdempotency(store, {
     scope: 'circle-execute', key: idempotencyKey, actor: user.prismId,
@@ -444,6 +500,18 @@ async function startupIntegrityChecks() {
     const domain = await verifyUsdcDomain();
     logger.info('integrity.usdcDomain', { ok: domain.ok });
     if (!domain.ok) throw new Error('USDC EIP-712 domain does not match on-chain DOMAIN_SEPARATOR');
+
+    // Circle spending limits: verify the Allowance Module against THIS chain, at boot, so the
+    // answer is known before anybody tries to spend. A failure is not fatal — Circles simply runs
+    // threshold-only, which is the shipped default — but it is always logged with its reason.
+    const limits = await circleService.limitsStatus();
+    logger.info('integrity.circleLimits', limits.enabled
+      ? { enabled: true, module: limits.module.address, version: limits.module.version }
+      : { enabled: false, reason: limits.reason });
+    if (config.circles.limitsEnabled && !limits.enabled) {
+      logger.error('circles.limits.refused', { reason: limits.reason });
+      if (config.nodeEnv === 'production') throw new Error(`CIRCLE_LIMITS_ENABLED is true but the module failed verification: ${limits.reason}`);
+    }
   } catch (e) {
     logger.error('integrity.failed', { error: e.message });
     if (config.nodeEnv === 'production') { console.error('fatal: integrity check failed'); process.exit(1); }

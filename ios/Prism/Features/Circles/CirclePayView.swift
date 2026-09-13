@@ -18,6 +18,14 @@ struct CirclePayView: View {
   @State private var memo = ""
   @State private var error: String?
   @State private var proposed: CirclePayment?
+  /// How this payment can actually happen, from live chain state. Asked before the confirm button
+  /// does anything, so the person learns which it is before committing to it.
+  @State private var preview: CirclePaymentPreview?
+  @State private var overLimit: CirclePaymentPreview?
+  @State private var showAuth = false
+  @State private var circle: CircleDetail?
+  @State private var network: PrismNetworkConfig?
+  @State private var checking = false
 
   var body: some View {
     ZStack {
@@ -47,6 +55,11 @@ struct CirclePayView: View {
 
         paidFromRow.padding(.horizontal, 24).padding(.top, 12)
 
+        if let limit = preview?.limit, limit.hasSpendingAccess {
+          CircleLimitStrip(limit: limit, spending: atomic)
+            .padding(.horizontal, 24).padding(.top, 10)
+        }
+
         if let error {
           ErrorBanner(message: error).padding(.horizontal, 24).padding(.top, 10)
         }
@@ -55,8 +68,8 @@ struct CirclePayView: View {
 
         Spacer()
 
-        PrismPrimaryButton(title: "Review & Pay", enabled: atomic != nil) {
-          Task { await propose() }
+        PrismPrimaryButton(title: confirmTitle, enabled: atomic != nil && !checking) {
+          Task { await confirm() }
         }
         .padding(24)
       }
@@ -69,6 +82,37 @@ struct CirclePayView: View {
     .sheet(item: $proposed) { payment in
       CirclePaymentProposedSheet(payment: payment, circleName: target.circleName) { dismiss() }
     }
+    .sheet(item: $overLimit) { over in
+      // Over the limit is a fork, not a dead end: name the limit, and offer the Circle.
+      CircleOverLimitSheet(preview: over, circleName: target.circleName) {
+        overLimit = nil
+        Task { await propose() }
+      }
+    }
+    .sheet(isPresented: $showAuth) {
+      PaymentAuthorizationSheet(amount: displayAmount) { pin, face in
+        Task { await spend(pin: pin, face: face) }
+      }
+    }
+    .task {
+      circle = try? await PrismAPI.shared.circle(target.circleId)
+      network = try? await PrismAPI.shared.config()
+    }
+    // Re-ask as the amount changes: the answer depends on how much, and a person typing past their
+    // limit should see it happen rather than discover it at the confirm button.
+    .onChange(of: amount) { _, _ in
+      Task {
+        guard let atomic else { preview = nil; return }
+        preview = await coordinator.preview(circleId: target.circleId, amountAtomic: atomic)
+      }
+    }
+  }
+
+  /// The button says what will happen. Within a limit it is the member's own payment; over it, the
+  /// honest verb is "request", because the Circle decides.
+  private var confirmTitle: String {
+    guard let preview, atomic != nil else { return "Review & Pay" }
+    return preview.isWithinLimit ? "Pay \(displayAmount)" : "Request approval"
   }
 
   /// The single line that makes this screen different from a personal send.
@@ -101,6 +145,60 @@ struct CirclePayView: View {
       ? "$0.00"
       : (Decimal(string: amount) ?? 0).formatted(
         .currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))
+  }
+
+  /// Route the payment. Within a limit the member authorizes it alone; otherwise the Circle decides.
+  /// The preview is re-fetched here rather than reused, because the limit could have moved while the
+  /// amount sheet was open.
+  private func confirm() async {
+    guard let atomic else { return }
+    error = nil
+    checking = true
+    defer { checking = false }
+    let decision = await coordinator.preview(circleId: target.circleId, amountAtomic: atomic)
+    preview = decision
+
+    guard let decision else {
+      // The question could not be answered, so fall back to the route that always exists.
+      await propose()
+      return
+    }
+    if decision.isWithinLimit {
+      showAuth = true
+    } else if decision.isOverLimit {
+      overLimit = decision
+    } else {
+      await propose()
+    }
+  }
+
+  private func spend(pin: String?, face: Bool) async {
+    guard let atomic, let circle, let network else { return }
+    guard let moduleAddress = network.allowanceModule else {
+      // No verified module on this deployment, so there is nothing to spend through. The Circle
+      // route always exists, so this is a fallback rather than a failure.
+      await propose()
+      return
+    }
+    error = nil
+    await coordinator.spendWithinLimit(
+      circleId: target.circleId, circle: circle, resolution: target.resolution,
+      amountAtomic: atomic, memo: memo, moduleAddress: moduleAddress, usdcAddress: network.usdc,
+      reviewedRecipient: target.resolution.attestation?.recipientAccount ?? "",
+      availableAtomic: preview?.limit?.availableAtomic, pin: pin, useFaceID: face)
+
+    switch coordinator.state {
+    case .sent(let tx):
+      dismiss()
+      model.presentReceipt = ReceiptPresentation(
+        title: "Paid",
+        amount: displayAmount,
+        subtitle: "to \(target.contact.name) from \(target.circleName)",
+        transactionHash: tx,
+        status: "Completed")
+    case .failed(let message): error = message
+    default: break
+    }
   }
 
   private func propose() async {

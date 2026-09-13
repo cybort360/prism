@@ -270,3 +270,149 @@ struct CircleApprovalPresentation: Identifiable {
   let payment: CirclePayment
   let circle: CircleDetail
 }
+
+// MARK: - member spending limits
+
+/// Whether limits are available on this deployment at all.
+///
+/// They are off unless a verified Safe Allowance Module v1.0.0 exists on the target chain, and
+/// `reason` says why when they are not. The UI must render that as an ordinary state rather than an
+/// error: a Circle without limits is a perfectly good Circle, it just spends by threshold.
+struct CircleLimitsStatus: Codable, Equatable {
+  let enabled: Bool
+  let reason: String?
+  let module: CircleLimitsModule?
+  let asset: String?
+}
+
+struct CircleLimitsModule: Codable, Equatable {
+  let address: String
+  let version: String
+  let codeHash: String
+}
+
+/// One member's limit, as the module reports it.
+///
+/// Every figure here came from `AllowanceModule.getTokenAllowance` on the read that produced it —
+/// none of it is derived from Prism's activity, which would drift on a period rollover or on a
+/// transfer Prism did not originate. `source` is always `"chain"`, and the UI says so.
+struct CircleSpendingLimit: Codable, Identifiable, Equatable {
+  var id: String { prismId }
+  let prismId: String
+  let displayName: String?
+  let handle: String?
+  let authorityAddress: String?
+  let hasSpendingAccess: Bool
+  /// "No spending access", or "$100.00 per day" — the one line a list row shows.
+  let summary: String
+
+  let period: String?
+  let periodLabel: String?
+  let limitAtomic: String?
+  let spentAtomic: String?
+  let availableAtomic: String?
+  let limitDisplay: String?
+  let spentDisplay: String?
+  let availableDisplay: String?
+  let resetsAt: String?
+  let nonce: Int?
+  let asset: String?
+  let token: String?
+  let source: String?
+
+  /// How much of the window is used, 0...1. Nil when there is no limit to be a fraction of.
+  var usedFraction: Double? {
+    guard let limit = limitAtomic.flatMap(Double.init), limit > 0,
+      let spent = spentAtomic.flatMap(Double.init)
+    else { return nil }
+    return min(1, max(0, spent / limit))
+  }
+}
+
+struct CircleLimitsResponse: Codable {
+  let circleId: String
+  let limitsEnabled: Bool
+  let reason: String?
+  let unavailable: String?
+  let module: CircleLimitsModule?
+  let limits: [CircleSpendingLimit]
+}
+
+struct CircleMyLimitResponse: Codable {
+  let circleId: String
+  let limitsEnabled: Bool
+  let reason: String?
+  let limit: CircleSpendingLimit?
+}
+
+/// How a member's intended payment can actually happen, decided from live chain state.
+///
+/// `ALLOWANCE` — they authorize it alone, within a limit the Circle already agreed.
+/// `THRESHOLD` — it needs the Circle. Over a limit, without one, or with limits off entirely.
+///
+/// Over the limit is not an error state. `reason` and `prompt` are the sentence and the question the
+/// sheet shows, and the route that remains open is the whole point of asking.
+struct CirclePaymentPreview: Codable, Equatable, Identifiable {
+  /// Presenting this as a sheet needs an identity; the decision is identified by what it is a
+  /// decision about, so a new amount is a new sheet rather than a stale one.
+  var id: String { "\(circleId):\(amountAtomic):\(route)" }
+  let circleId: String
+  let amountAtomic: String
+  let route: String
+  let requiresApproval: Bool
+  let overLimit: Bool?
+  let reason: String?
+  let prompt: String?
+  let shortfallAtomic: String?
+  let requiredApprovals: Int?
+  let limit: CircleSpendingLimit?
+
+  var isWithinLimit: Bool { route == "ALLOWANCE" }
+  var isOverLimit: Bool { overLimit == true }
+}
+
+/// A spend prepared for the member to sign, with the digest the device must re-derive for itself.
+struct PreparedCircleSpend: Codable {
+  let spend: CircleSpend
+  let transferHash: String
+  let limit: CircleSpendingLimit?
+}
+
+struct CircleSpend: Codable, Identifiable, Equatable {
+  var id: String { spendId }
+  let spendId: String
+  let circleId: String
+  let spenderPrismId: String
+  let recipientPrismId: String?
+  let recipientAccount: String?
+  let recipientDisplayName: String?
+  let recipientHandle: String?
+  let amount: String
+  let amountDisplay: String?
+  let asset: String?
+  let memo: String?
+  let route: String?
+  /// PREPARED · SUBMITTED · CONFIRMING · COMPLETED · FAILED. COMPLETED needs a USDC Transfer from
+  /// the Circle to the reviewed recipient for the exact amount — nothing is rounded up to it.
+  let status: String
+  let transactionHash: String?
+  let evidence: CirclePaymentEvidence?
+  let failureReason: String?
+  let allowanceNonce: Int?
+  /// The limit as it stood when this was signed, and as it stands after — so a receipt can show
+  /// "$58 left" without recomputing anything.
+  let limitAtSigning: CircleSpendLimitSnapshot?
+  let limitAfter: CircleSpendLimitSnapshot?
+
+  var isComplete: Bool { status == "COMPLETED" }
+  var isFailed: Bool { status == "FAILED" }
+}
+
+struct CircleSpendLimitSnapshot: Codable, Equatable {
+  let amountAtomic: String?
+  let spentAtomic: String?
+  let availableAtomic: String?
+  let period: String?
+}
+
+struct CircleSpendStatusResponse: Codable { let spend: CircleSpend }

@@ -19,6 +19,7 @@ export function makeMockChainProvider(overrides = {}) {
     async getChainId() { calls.getChainId++; return provider.chainId; },
     async readContract(args) { calls.readContract++; return overrides.readContract ? overrides.readContract(args) : 0n; },
     async getBalance() { calls.getBalance++; return overrides.balance ?? 0n; },
+    async getCode(address) { return overrides.getCode ? overrides.getCode(address) : '0x'; },
     async simulateContract(args) { calls.simulateContract++; return { request: { ...args } }; },
     async estimateContractGas() { calls.estimateContractGas++; return 120000n; },
     async writeContract() {

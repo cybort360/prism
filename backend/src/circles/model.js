@@ -200,8 +200,22 @@ export const ProposalKind = Object.freeze({
   PAYMENT: 'PAYMENT',
   OWNER_ADD: 'OWNER_ADD',
   OWNER_REMOVE: 'OWNER_REMOVE',
-  THRESHOLD_CHANGE: 'THRESHOLD_CHANGE'
+  THRESHOLD_CHANGE: 'THRESHOLD_CHANGE',
+  // --- member spending limits (Allowance Module v1.0.0) ---
+  // Each is a Safe transaction, which is the whole point: a member's limit is set by the Circle
+  // agreeing, never by the member and never by Prism.
+  MODULE_ENABLE: 'MODULE_ENABLE',
+  SPEND_DELEGATE_ADD: 'SPEND_DELEGATE_ADD',
+  SPEND_DELEGATE_REMOVE: 'SPEND_DELEGATE_REMOVE',
+  SPEND_LIMIT_SET: 'SPEND_LIMIT_SET',
+  SPEND_LIMIT_DELETE: 'SPEND_LIMIT_DELETE'
 });
+
+/** Proposal kinds that change who may spend, or how much. Grouped so the UI can label them as one. */
+export const SPENDING_LIMIT_KINDS = Object.freeze([
+  ProposalKind.MODULE_ENABLE, ProposalKind.SPEND_DELEGATE_ADD, ProposalKind.SPEND_DELEGATE_REMOVE,
+  ProposalKind.SPEND_LIMIT_SET, ProposalKind.SPEND_LIMIT_DELETE
+]);
 
 export const ProposalStatus = Object.freeze({
   PENDING: 'PENDING',       // collecting approvals

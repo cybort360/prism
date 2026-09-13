@@ -17,9 +17,9 @@
  * deployed on no chain (see docs/CIRCLES_DEPENDENCY_AUDIT.md). Circles is threshold-only.
  */
 import crypto from 'node:crypto';
-import { getAddress, isAddress, keccak256, toHex } from 'viem';
+import { getAddress, isAddress, keccak256, toHex, recoverAddress } from 'viem';
 import {
-  CircleStatus, MemberRole, MemberStatus, ProposalKind, ProposalStatus, CIRCLE_ASSET,
+  CircleStatus, MemberRole, MemberStatus, ProposalKind, ProposalStatus, CIRCLE_ASSET, SPENDING_LIMIT_KINDS,
   TERMINAL_MEMBER_STATUSES, CHAIN_BACKED_ROLES, ContributionStatus,
   CirclePaymentState, CIRCLE_PAYMENT_PRE_BROADCAST, APPROVAL_BOUND_FIELDS,
   newCircle, newCircleMember, newCircleProposal, newCircleApproval, newCircleContribution,
@@ -28,8 +28,11 @@ import {
   badRequest, forbidden, notFound, conflict
 } from '../circles/model.js';
 import { assertTemplateChoice, templateOptions, CircleTemplate } from '../circles/templates.js';
-import { sameOwnerSet, normalizeOwnerSet, safeTransaction, safeTxHash, decodeUsdcTransfer, ZERO_ADDRESS } from '../circles/safeEncoding.js';
+import { sameOwnerSet, normalizeOwnerSet, safeTransaction, safeTxHash, decodeUsdcTransfer, safeExecutionOutcome, ZERO_ADDRESS } from '../circles/safeEncoding.js';
 import { contributionHash } from '../chain/eth.js';
+import {
+  assertPeriod, assertAllowanceAmount, periodMinutes, PERIOD_LABELS, PERIOD_ADJECTIVES
+} from '../circles/allowanceModule.js';
 import { assertFreshResolution } from '../lib/continuity.js';
 import { assertAdapterContract, EXPECTED_SAFE_VERSION } from '../circles/safeCircleAdapter.js';
 import { logger } from '../lib/logger.js';
@@ -59,11 +62,14 @@ export class CircleService {
    *        audited router/ERC-3009/relayer path rather than a second settlement mechanism. Optional
    *        only so that Circle suites which never move money need not wire it.
    */
-  constructor({ store, config, identityService, safeAdapter, paymentService = null }) {
+  constructor({ store, config, identityService, safeAdapter, paymentService = null, limitGate = null }) {
     this.store = store;
     this.config = config;
     this.identityService = identityService;
     this.payments = paymentService;
+    // Verifies the Allowance Module against the chain and fails closed. Absent = no spending limits,
+    // which is a perfectly good state: Circles falls back to threshold-only payments.
+    this.limitGate = limitGate;
     this.safe = assertAdapterContract(safeAdapter);
   }
 
@@ -597,7 +603,7 @@ export class CircleService {
    * asked to approve. `requiredApprovals` is the *current on-chain* threshold, because that is what
    * Safe will enforce when this executes.
    */
-  async _createProposal({ circle, actorPrismId, kind, authority, intent, memo, subject, payment = null, trace = [] }) {
+  async _createProposal({ circle, actorPrismId, kind, authority, intent, memo, subject, payment = null, governance = null, trace = [] }) {
     const tx = await this.safe.buildTransaction({ safeAddress: circle.safeAddress, intent, nonce: authority.nonce });
     const digest = await this.safe.getTransactionHash({ safeAddress: circle.safeAddress, tx });
 
@@ -618,6 +624,15 @@ export class CircleService {
       expiresAt: new Date(Date.now() + PROPOSAL_TTL_MS).toISOString()
     });
     proposal.subject = subject;
+    if (governance) {
+      // A governance proposal runs the same lifecycle as a payment — the states mean the same
+      // things — but its completion evidence is a chain READBACK of what it changed rather than a
+      // USDC Transfer. See `executeGovernance`.
+      proposal.governance = governance;
+      proposal.lifecycle = CirclePaymentState.PROPOSED;
+      proposal.trace = [{ state: CirclePaymentState.PROPOSED, at: new Date().toISOString(), detail: { kind, safeTxHash: digest } }];
+      proposal.executionTxHash = null;
+    }
     if (payment) {
       proposal.payment = payment;
       proposal.lifecycle = CirclePaymentState.PROPOSED;
@@ -635,6 +650,7 @@ export class CircleService {
     this._event(circle.circleId, 'circle.proposal.created', { proposalId, kind, safeTxHash: digest });
 
     if (payment) return this._paymentView(circle, this._proposal(circle.circleId, proposalId), { authority, collected: [] });
+    if (governance) return this._governanceView(this._proposal(circle.circleId, proposalId), { authority, collected: [] });
     return this._proposalView(proposal, { collected: [] });
   }
 
@@ -712,6 +728,12 @@ export class CircleService {
     const approval = newCircleApproval({ proposalId, prismId, authorityAddress, signatureType, signature });
     this.store.mutate((d) => { (d.circleApprovals ||= {})[`${proposalId}:${prismId}`] = approval; });
     await this.safe.addConfirmation({ safeTxHash: proposal.safeTxHash, signature });
+    // A proposal that carries a lifecycle (a payment, or a governance change) follows the flow as
+    // approvals land. Whether the threshold is MET is still derived on every read from signatures
+    // against the live owner set — this write only records that collection has begun.
+    if (proposal.lifecycle === CirclePaymentState.PROPOSED) {
+      this._setPaymentState(proposalId, CirclePaymentState.APPROVAL_PENDING, { detail: { approvedBy: prismId } });
+    }
     this._event(circleId, 'circle.proposal.approved', { proposalId, authorityAddress });
     return { proposalId, approvedBy: prismId, signatureType };
   }
@@ -1122,9 +1144,6 @@ export class CircleService {
     }
 
     const recorded = await this.recordApproval({ circleId, proposalId, prismId, signature });
-    // The stored lifecycle follows the flow; whether the threshold is MET is still derived on every
-    // read from signatures against the live owner set, never from this write.
-    this._setPaymentState(proposalId, CirclePaymentState.APPROVAL_PENDING, { detail: { approvedBy: prismId } });
     const view = await this.getPayment({ circleId, proposalId, prismId });
     return { ...recorded, payment: view };
   }
@@ -1542,6 +1561,831 @@ export class CircleService {
   }
 
   // ===========================================================================
+  // Executing a governance proposal
+  // ===========================================================================
+
+  /**
+   * Execute an approved non-payment Circle transaction — a limit change, a delegate add or remove,
+   * enabling the module.
+   *
+   * Structurally identical to `executePayment`: live authority read, approvals re-verified against
+   * the current owner set, the Safe's own nonce, simulate, then broadcast. The only thing that
+   * differs is what counts as done. A payment is done when a USDC `Transfer` proves the money
+   * moved; a limit change is done when **reading the module back** shows the limit the Circle
+   * approved. That readback is the "Active" in the flow — until it succeeds, a limit is proposed,
+   * not in force.
+   */
+  async executeGovernance({ circleId, proposalId, actorPrismId }) {
+    const circle = this._circle(circleId);
+    this._assertAdmin(circleId, actorPrismId);
+    const proposal = this._proposal(circleId, proposalId);
+    if (!proposal.governance) throw badRequest('that proposal is not a governance change');
+    if (circle.status !== CircleStatus.ACTIVE) throw conflict('this Circle is not active on-chain yet');
+
+    if (CIRCLE_PAYMENT_IN_FLIGHT.includes(proposal.lifecycle)) {
+      return this.reconcileGovernance({ circleId, proposalId, prismId: actorPrismId });
+    }
+    if (!CIRCLE_PAYMENT_PRE_BROADCAST.includes(proposal.lifecycle)) {
+      throw conflict(proposal.failureReason
+        ? `this change will not be sent: ${proposal.failureReason}`
+        : `this change is ${proposal.lifecycle.toLowerCase()} and will not be sent`);
+    }
+
+    let authority;
+    try { authority = await this._readAuthority(circle); }
+    catch (e) { throw conflict(`Monad could not be read, so this change cannot be sent: ${e.message}`); }
+
+    const collected = await this._collectApprovals(circle, proposal, authority.owners);
+    if (collected.length < authority.threshold) {
+      this._setPaymentState(proposalId, CirclePaymentState.APPROVAL_PENDING, {
+        detail: { collected: collected.length, required: authority.threshold }
+      });
+      return {
+        ...(await this._governanceView(this._proposal(circleId, proposalId), { authority, collected })),
+        blocked: `${collected.length} of ${authority.threshold} approvals; this change cannot be applied yet`
+      };
+    }
+
+    if (Number(proposal.safeNonce) < authority.nonce) {
+      this._setPaymentState(proposalId, CirclePaymentState.EXPIRED, { detail: { reason: 'the Safe has already used this nonce' } });
+      throw conflict('this change was built against a Safe nonce that has already been used; propose it again');
+    }
+    if (Number(proposal.safeNonce) > authority.nonce) {
+      return {
+        ...(await this._governanceView(proposal, { authority, collected })),
+        blocked: 'an earlier Circle transaction must execute first'
+      };
+    }
+
+    this._setPaymentState(proposalId, CirclePaymentState.APPROVED, {
+      detail: { collected: collected.length, threshold: authority.threshold, source: 'live owner set' }
+    });
+
+    const tx = rehydrateTx(proposal.safeTransaction);
+    const simulation = await this.safe.simulateExecution({ safeAddress: circle.safeAddress, tx, approvals: collected });
+    this.store.mutate((d) => {
+      d.circleProposals[proposalId].lastSimulation = { at: new Date().toISOString(), ok: simulation.ok, reason: simulation.reason ?? null };
+    });
+    if (!simulation.ok) {
+      return {
+        ...(await this._governanceView(this._proposal(circleId, proposalId), { authority, collected })),
+        blocked: `this change was not applied because it would fail: ${simulation.reason}`,
+        simulation: { ok: false, reason: simulation.reason }
+      };
+    }
+
+    if (!this._reserveExecution(proposalId)) {
+      return {
+        ...(await this._governanceView(this._proposal(circleId, proposalId), { authority, collected })),
+        blocked: 'this change is already being applied'
+      };
+    }
+
+    let txHash;
+    try {
+      ({ txHash } = await this.safe.executeTransaction({ safeAddress: circle.safeAddress, tx, approvals: collected }));
+    } catch (error) {
+      this._releaseExecution(proposalId);
+      throw error;
+    }
+    this._setPaymentState(proposalId, CirclePaymentState.SUBMITTED, { extra: { executionTxHash: txHash }, detail: { txHash } });
+    this._event(circleId, 'circle.governance.submitted', { proposalId, kind: proposal.kind, txHash });
+
+    return this.reconcileGovernance({ circleId, proposalId, prismId: actorPrismId });
+  }
+
+  /**
+   * Reconcile a governance change against chain truth.
+   *
+   * Two things must hold: the Safe reports `ExecutionSuccess` for this exact digest, and reading
+   * the module back shows the state the Circle approved. The second is what makes this honest —
+   * a transaction that succeeded but left the allowance at a different number is a failure, and
+   * without the readback it would look like success.
+   */
+  async reconcileGovernance({ circleId, proposalId, prismId }) {
+    const circle = this._circle(circleId);
+    this._assertMember(circleId, prismId);
+    const proposal = this._proposal(circleId, proposalId);
+    if (!proposal.governance) throw badRequest('that proposal is not a governance change');
+    if (proposal.lifecycle === CirclePaymentState.COMPLETED || !proposal.executionTxHash) {
+      return this._governanceView(proposal, {});
+    }
+
+    const receipt = await this.safe.getTransactionReceipt(proposal.executionTxHash).catch(() => null);
+    if (!receipt) {
+      this._setPaymentState(proposalId, CirclePaymentState.CONFIRMING, { detail: { txHash: proposal.executionTxHash } });
+      return this._governanceView(this._proposal(circleId, proposalId), {});
+    }
+    if (receipt.status !== 'success') {
+      this._setPaymentState(proposalId, CirclePaymentState.FAILED, {
+        extra: { failureReason: 'the transaction reverted on Monad' }, detail: { txHash: proposal.executionTxHash }
+      });
+      return this._governanceView(this._proposal(circleId, proposalId), {});
+    }
+
+    const outcome = safeExecutionOutcome(receipt, { safeAddress: circle.safeAddress, safeTxHash: proposal.safeTxHash });
+    if (outcome !== 'success') {
+      this._setPaymentState(proposalId, CirclePaymentState.FAILED, {
+        extra: { failureReason: outcome === 'failure' ? 'the Safe reported ExecutionFailure for this change' : 'the receipt carries no Safe ExecutionSuccess for this change' },
+        detail: { txHash: proposal.executionTxHash }
+      });
+      return this._governanceView(this._proposal(circleId, proposalId), {});
+    }
+
+    this._setPaymentState(proposalId, CirclePaymentState.CONFIRMED, { detail: { txHash: proposal.executionTxHash } });
+
+    // --- the readback. This is what "Active" means.
+    const applied = await this._verifyGovernanceApplied(circle, proposal).catch((e) => ({ ok: false, reason: e.message }));
+    if (!applied.ok) {
+      this._setPaymentState(proposalId, CirclePaymentState.FAILED, {
+        extra: { failureReason: applied.reason }, detail: { reason: applied.reason }
+      });
+      logger.error('circle.governance.readback.failed', { circleId, proposalId, reason: applied.reason });
+      return this._governanceView(this._proposal(circleId, proposalId), {});
+    }
+
+    this._setPaymentState(proposalId, CirclePaymentState.RECONCILED, {
+      extra: { executedAt: new Date().toISOString(), evidence: { transactionHash: proposal.executionTxHash, safeExecutionSuccess: true, readback: applied.state } },
+      detail: { readback: applied.state }
+    });
+    this._setPaymentState(proposalId, CirclePaymentState.COMPLETED, { detail: {} });
+    this.store.mutate((d) => { d.circleProposals[proposalId].status = ProposalStatus.EXECUTED; });
+    this._event(circleId, 'circle.governance.completed', { proposalId, kind: proposal.kind, readback: applied.state });
+    return this._governanceView(this._proposal(circleId, proposalId), {});
+  }
+
+  /** Read the module back and confirm it now says what the Circle approved. */
+  async _verifyGovernanceApplied(circle, proposal) {
+    const g = proposal.governance ?? {};
+    switch (proposal.kind) {
+      case ProposalKind.MODULE_ENABLE: {
+        const enabled = await this.safe.isModuleEnabled(circle.safeAddress);
+        return enabled
+          ? { ok: true, state: { moduleEnabled: true } }
+          : { ok: false, reason: 'the transaction succeeded but the module is still not enabled on this Circle' };
+      }
+      case ProposalKind.SPEND_DELEGATE_ADD: {
+        const delegates = await this.safe.getSpendDelegates(circle.safeAddress);
+        const present = delegates.some((d) => getAddress(d) === getAddress(g.delegate));
+        return present
+          ? { ok: true, state: { delegate: g.delegate, registered: true } }
+          : { ok: false, reason: 'the transaction succeeded but the member is still not a registered spender' };
+      }
+      case ProposalKind.SPEND_DELEGATE_REMOVE: {
+        const delegates = await this.safe.getSpendDelegates(circle.safeAddress);
+        const present = delegates.some((d) => getAddress(d) === getAddress(g.delegate));
+        if (present) return { ok: false, reason: 'the transaction succeeded but the member is still a registered spender' };
+        // Revoking must also have zeroed the figures, or a later re-add would restore an old limit.
+        const allowance = await this.safe.getSpendingLimit({ safeAddress: circle.safeAddress, delegate: g.delegate });
+        if (BigInt(allowance.amountAtomic) !== 0n) {
+          return { ok: false, reason: 'the member was unregistered but their allowance figures were not cleared' };
+        }
+        return { ok: true, state: { delegate: g.delegate, registered: false, amountAtomic: '0' } };
+      }
+      case ProposalKind.SPEND_LIMIT_SET: {
+        const allowance = await this.safe.getSpendingLimit({ safeAddress: circle.safeAddress, delegate: g.delegate });
+        if (allowance.amountAtomic !== String(g.amountAtomic)) {
+          return { ok: false, reason: `the module reports a limit of ${allowance.amountAtomic}, not the ${g.amountAtomic} the Circle approved` };
+        }
+        if (Number(allowance.resetTimeMin) !== periodMinutes(g.period)) {
+          return { ok: false, reason: `the module reports a ${allowance.resetTimeMin}-minute window, not the ${g.period} the Circle approved` };
+        }
+        return { ok: true, state: { delegate: g.delegate, amountAtomic: allowance.amountAtomic, period: allowance.period, spentAtomic: allowance.spentAtomic } };
+      }
+      case ProposalKind.SPEND_LIMIT_DELETE: {
+        const allowance = await this.safe.getSpendingLimit({ safeAddress: circle.safeAddress, delegate: g.delegate });
+        return BigInt(allowance.amountAtomic) === 0n
+          ? { ok: true, state: { delegate: g.delegate, amountAtomic: '0' } }
+          : { ok: false, reason: 'the transaction succeeded but the allowance is still not zero' };
+      }
+      default:
+        return { ok: false, reason: `no readback is defined for ${proposal.kind}` };
+    }
+  }
+
+  /** A governance proposal, with approvals re-counted from signatures against the live owner set. */
+  async _governanceView(proposal, { authority: given = null, collected: givenCollected = null } = {}) {
+    const circle = this._circle(proposal.circleId);
+    const away = !CIRCLE_PAYMENT_PRE_BROADCAST.includes(proposal.lifecycle);
+
+    let authority = given;
+    let collected = givenCollected;
+    if (!away) {
+      authority ??= await this._readAuthority(circle).catch(() => null);
+      if (authority && !collected) collected = await this._collectApprovals(circle, proposal, authority.owners);
+    }
+
+    const required = authority?.threshold ?? proposal.requiredApprovals;
+    const count = collected?.length ?? null;
+    let lifecycle = proposal.lifecycle;
+    if (!away && count !== null) {
+      lifecycle = count >= required ? CirclePaymentState.APPROVED : CirclePaymentState.APPROVAL_PENDING;
+    } else if (away && EVIDENCE_BACKED_STATES.includes(lifecycle) && !proposal.evidence?.readback) {
+      // The same rule as a payment: a change recorded as applied without a chain readback to back
+      // it is a forgery, and reads back as one.
+      lifecycle = CirclePaymentState.INVALIDATED;
+    }
+
+    return {
+      proposalId: proposal.proposalId,
+      circleId: proposal.circleId,
+      circleName: circle.name,
+      kind: proposal.kind,
+      isSpendingLimitChange: SPENDING_LIMIT_KINDS.includes(proposal.kind),
+      lifecycle,
+      storedLifecycle: proposal.lifecycle,
+      proposerPrismId: proposal.proposerPrismId,
+      memo: proposal.memo,
+      subject: proposal.subject ?? null,
+      governance: proposal.governance ?? null,
+      safeAddress: proposal.safeAddress,
+      safeTxHash: proposal.safeTxHash,
+      safeNonce: proposal.safeNonce,
+      safeTransaction: proposal.safeTransaction,
+      requiredApprovals: required,
+      collectedApprovals: count,
+      approvals: (collected ?? []).map((a) => ({ authorityAddress: a.authorityAddress, signatureType: a.signatureType })),
+      approvalsSource: collected ? 'verified signatures against the live owner set' : 'unavailable',
+      executionTxHash: proposal.executionTxHash ?? null,
+      evidence: proposal.evidence ?? null,
+      failureReason: proposal.failureReason ?? null,
+      lastSimulation: proposal.lastSimulation ?? null,
+      createdAt: proposal.createdAt,
+      executedAt: proposal.executedAt ?? null,
+      expiresAt: proposal.expiresAt
+    };
+  }
+
+  // ===========================================================================
+  // Spending limits — Allowance Module v1.0.0, USDC only
+  // ===========================================================================
+  //
+  // The shape of this section follows one rule: **a limit is a fact on Monad, and changing it is a
+  // threshold-approved Circle transaction.** There is no method here that writes an allowance, and
+  // no request shape in which a member changes their own. Prism builds the Safe transaction; the
+  // Circle's admins approve it; the module stores it; and every number this service reports about a
+  // limit is read back from the module rather than remembered.
+  //
+  // The module is verified before any of it is offered. `AllowanceModuleGate` re-reads the chain
+  // and fails closed — a module that is not byte-identical to Safe's canonical v1.0.0 means limits
+  // are simply unavailable and Circles falls back to threshold-only payments.
+
+  /** The gate's verdict, re-checked against the chain. Callers get a reason, never a bare false. */
+  async _assertLimitsAvailable(circle = null) {
+    if (!this.limitGate) throw conflict('spending limits are not available on this deployment');
+    const verdict = await this.limitGate.verify();
+    if (!verdict.usable) throw conflict(`spending limits are unavailable: ${verdict.reason}`);
+    if (circle) {
+      const enabled = await this.safe.isModuleEnabled(circle.safeAddress);
+      if (!enabled) {
+        throw conflict('this Circle has not enabled the Allowance Module yet; an admin must propose enabling it first');
+      }
+    }
+    return verdict;
+  }
+
+  /** Whether limits are on at all, with the reason when they are not. Safe to call unauthenticated-ish. */
+  async limitsStatus() {
+    if (!this.limitGate) return { enabled: false, reason: 'spending limits are not wired on this deployment' };
+    const verdict = await this.limitGate.verify();
+    return {
+      enabled: verdict.usable,
+      reason: verdict.usable ? null : verdict.reason,
+      module: verdict.usable ? { address: verdict.address, version: verdict.version, codeHash: verdict.codeHash } : null,
+      asset: CIRCLE_ASSET
+    };
+  }
+
+  /**
+   * Every member's live spending limit, read from the module.
+   *
+   * Members with no allowance are reported as having none rather than omitted — "Sarah has no
+   * spending access" is a thing the UI has to be able to say, and it must come from the chain.
+   */
+  async listSpendingLimits(circleId, prismId) {
+    const circle = this._circle(circleId);
+    this._assertMember(circleId, prismId);
+    const status = await this.limitsStatus();
+    if (!status.enabled || circle.status !== CircleStatus.ACTIVE) {
+      return { circleId, limitsEnabled: false, reason: status.reason ?? 'this Circle is not active on-chain yet', limits: [] };
+    }
+
+    const moduleEnabled = await this.safe.isModuleEnabled(circle.safeAddress).catch(() => false);
+    if (!moduleEnabled) {
+      return { circleId, limitsEnabled: false, reason: 'the Allowance Module is not enabled on this Circle', limits: [] };
+    }
+
+    const members = this.listMembers(circleId, prismId).filter((m) => !TERMINAL_MEMBER_STATUSES.includes(m.status));
+    const delegates = await this.safe.getSpendDelegates(circle.safeAddress).catch(() => null);
+    if (!delegates) return { circleId, limitsEnabled: true, unavailable: 'Monad could not be read, so limits are unknown', limits: [] };
+    const registered = new Set(delegates.map((d) => d.toLowerCase()));
+
+    const limits = [];
+    for (const member of members) {
+      if (!member.authorityAddress) continue;
+      const isDelegate = registered.has(member.authorityAddress.toLowerCase());
+      const allowance = isDelegate
+        ? await this.safe.getSpendingLimit({ safeAddress: circle.safeAddress, delegate: member.authorityAddress }).catch(() => null)
+        : null;
+      limits.push(this._limitView({ member, allowance, isDelegate }));
+    }
+    return { circleId, limitsEnabled: true, module: status.module, limits };
+  }
+
+  /** One member's limit — the three numbers a person reads, all from the chain. */
+  async spendingLimitFor(circleId, prismId, targetPrismId = null) {
+    const { limits, limitsEnabled, reason } = await this.listSpendingLimits(circleId, prismId);
+    const who = targetPrismId ?? prismId;
+    const mine = limits.find((l) => l.prismId === who) ?? null;
+    return { circleId, limitsEnabled, reason: reason ?? null, limit: mine };
+  }
+
+  /**
+   * Prepare the NEXT threshold-approved transaction needed to put a member on a given limit.
+   *
+   * Up to three Safe transactions stand between "no spending access" and an active limit, and each
+   * is its own proposal because each is its own Safe nonce:
+   *
+   *   1. `MODULE_ENABLE`       once per Circle — install the Allowance Module
+   *   2. `SPEND_DELEGATE_ADD`  once per member — the module refuses `setAllowance` for a delegate
+   *                            it does not know
+   *   3. `SPEND_LIMIT_SET`     the limit itself
+   *
+   * They cannot be batched: batching would need a MultiSend `delegatecall`, and Circles refuses to
+   * construct a delegatecall at all. So this returns the next step and says how many remain; call it
+   * again once that step has executed. A step already satisfied on-chain is skipped, which makes
+   * raising an existing limit a single proposal.
+   */
+  async prepareSpendingLimit({ circleId, actorPrismId, prismId, amountAtomic, period }) {
+    const { circle, authority } = await this._activeCircleWithAuthority(circleId, actorPrismId);
+    await this._assertLimitsAvailable();
+    assertPeriod(period);
+    const amount = assertAllowanceAmount(this._assertAmount(amountAtomic)).toString();
+
+    const member = this.store.read().circleMembers?.[memberKey(circleId, prismId)];
+    if (!member) throw notFound('that person is not in this Circle');
+    if (TERMINAL_MEMBER_STATUSES.includes(member.status)) throw conflict('that person has left this Circle');
+    if (!member.authorityAddress) {
+      throw badRequest(`${member.displayName ?? 'that person'} has not finished setting up their Prism account, so they cannot be given a spending limit`);
+    }
+    // The delegate IS the member's existing Prism authority address — the same account that holds
+    // their personal USDC and, for an admin, owns the Safe. No new credential is minted for spending.
+    const delegate = getAddress(member.authorityAddress);
+    const moduleAddress = getAddress(this.config.circles.allowanceModule);
+
+    const steps = await this._limitSteps({ circle, delegate, amount, period, moduleAddress });
+    if (!steps.length) {
+      return {
+        circleId, prismId, complete: true,
+        note: 'this limit is already what the Circle approved',
+        limit: (await this.spendingLimitFor(circleId, actorPrismId, prismId)).limit
+      };
+    }
+
+    const [next, ...rest] = steps;
+    const proposal = await this._createProposal({
+      circle, actorPrismId, kind: next.kind, authority, intent: next.intent, memo: next.memo,
+      subject: { prismId, authorityAddress: delegate, amount, period, step: next.kind },
+      governance: {
+        delegate, prismId, amountAtomic: amount, period,
+        module: moduleAddress, step: next.kind, remainingSteps: rest.map((r) => r.kind)
+      }
+    });
+
+    return { ...proposal, remainingSteps: rest.map((r) => r.kind), complete: false };
+  }
+
+  /**
+   * Which of the three steps still need doing, decided from chain state rather than from Prism's
+   * records. A Circle that enabled the module months ago and a member who is already a delegate
+   * both skip straight to the limit itself.
+   */
+  async _limitSteps({ circle, delegate, amount, period, moduleAddress }) {
+    const steps = [];
+    const enabled = await this.safe.isModuleEnabled(circle.safeAddress);
+    if (!enabled) {
+      steps.push({
+        kind: ProposalKind.MODULE_ENABLE,
+        intent: { kind: 'MODULE_ENABLE', module: moduleAddress },
+        memo: 'Turn on member spending limits for this Circle'
+      });
+    }
+
+    // A module that is not yet enabled has no delegates and no allowances, so the remaining steps
+    // are both required and there is nothing to read.
+    const delegates = enabled ? await this.safe.getSpendDelegates(circle.safeAddress) : [];
+    const isDelegate = delegates.some((d) => getAddress(d) === delegate);
+    if (!isDelegate) {
+      steps.push({
+        kind: ProposalKind.SPEND_DELEGATE_ADD,
+        intent: { kind: 'SPEND_DELEGATE_ADD', module: moduleAddress, delegate },
+        memo: 'Allow this member to spend from the Circle'
+      });
+    }
+
+    const current = enabled && isDelegate
+      ? await this.safe.getSpendingLimit({ safeAddress: circle.safeAddress, delegate }).catch(() => null)
+      : null;
+    const alreadySet = current
+      && current.amountAtomic === String(amount)
+      && Number(current.resetTimeMin) === periodMinutes(period);
+    if (!alreadySet) {
+      steps.push({
+        kind: ProposalKind.SPEND_LIMIT_SET,
+        intent: { kind: 'SPEND_LIMIT_SET', module: moduleAddress, delegate, amountAtomic: amount, period },
+        memo: `Set this member's limit to ${formatUsdc(amount, this.config.chain.usdcDecimals)} ${PERIOD_LABELS[period]}`
+      });
+    }
+    return steps;
+  }
+
+  /**
+   * Prepare the threshold-approved transaction that removes a member's spending access entirely.
+   *
+   * `removeDelegate(delegate, removeAllowances: true)` unregisters them AND zeroes the figures, so
+   * there is nothing left for a later re-add to silently restore. Nothing about this is visible in
+   * the app until the transaction has executed and the chain has been re-read — a stale session
+   * cannot preserve spending access, because the app never had the authority in the first place.
+   * Only the module's delegate list did, and that is what changes.
+   */
+  async prepareSpendingLimitRevoke({ circleId, actorPrismId, prismId }) {
+    const { circle, authority } = await this._activeCircleWithAuthority(circleId, actorPrismId);
+    await this._assertLimitsAvailable(circle);
+
+    const member = this.store.read().circleMembers?.[memberKey(circleId, prismId)];
+    if (!member?.authorityAddress) throw notFound('that person is not in this Circle');
+    const delegate = getAddress(member.authorityAddress);
+    const moduleAddress = getAddress(this.config.circles.allowanceModule);
+
+    const delegates = await this.safe.getSpendDelegates(circle.safeAddress);
+    if (!delegates.some((d) => getAddress(d) === delegate)) {
+      throw conflict('that person already has no spending access to this Circle');
+    }
+
+    return this._createProposal({
+      circle, actorPrismId, kind: ProposalKind.SPEND_DELEGATE_REMOVE, authority,
+      intent: { kind: 'SPEND_DELEGATE_REMOVE', module: moduleAddress, delegate },
+      memo: `Remove ${member.displayName ?? member.handle ?? 'this member'}'s spending access`,
+      subject: { prismId, authorityAddress: delegate, step: 'SPEND_DELEGATE_REMOVE' },
+      governance: { delegate, prismId, module: moduleAddress, step: 'SPEND_DELEGATE_REMOVE', remainingSteps: [] }
+    });
+  }
+
+  // ===========================================================================
+  // Routing a payment: within the limit, or to the Circle for approval
+  // ===========================================================================
+
+  /**
+   * Decide how a member's intended payment can actually happen, from live chain state.
+   *
+   * This is what makes the over-limit experience a fork rather than a dead end. A member who tries
+   * to spend $140 against a $100 daily limit is not doing anything wrong — they are doing something
+   * that needs the Circle's agreement instead of their own — and the honest answer names the limit,
+   * the amount, and the route that remains open.
+   *
+   * Every number here is read fresh. A cached allowance is exactly the thing that would let a spend
+   * through after the Circle had already cut it.
+   */
+  async previewPayment({ circleId, actorPrismId, amountAtomic }) {
+    const circle = await this._spendableCircle(circleId, actorPrismId, PROPOSING_ROLES, 'pay from');
+    const amount = this._assertAmount(amountAtomic);
+    const decimals = this.config.chain.usdcDecimals;
+
+    const threshold = {
+      route: 'THRESHOLD',
+      requiresApproval: true,
+      // The Circle's live threshold, so the sheet can say "needs 2 of 3" rather than guessing.
+      requiredApprovals: await this._readAuthority(circle).then((a) => a.threshold).catch(() => null)
+    };
+
+    const status = await this.limitsStatus();
+    if (!status.enabled) {
+      return { circleId, amountAtomic: amount, ...threshold, reason: status.reason, limit: null };
+    }
+
+    const member = this._assertMember(circleId, actorPrismId);
+    if (!member.authorityAddress) return { circleId, amountAtomic: amount, ...threshold, reason: 'your Prism account is not ready', limit: null };
+
+    const moduleEnabled = await this.safe.isModuleEnabled(circle.safeAddress).catch(() => false);
+    if (!moduleEnabled) {
+      return { circleId, amountAtomic: amount, ...threshold, reason: 'this Circle has not turned on spending limits', limit: null };
+    }
+
+    const delegates = await this.safe.getSpendDelegates(circle.safeAddress).catch(() => []);
+    if (!delegates.some((d) => getAddress(d) === getAddress(member.authorityAddress))) {
+      return { circleId, amountAtomic: amount, ...threshold, reason: 'you do not have a spending limit in this Circle', limit: null };
+    }
+
+    const allowance = await this.safe.getSpendingLimit({ safeAddress: circle.safeAddress, delegate: member.authorityAddress })
+      .catch(() => null);
+    if (!allowance) {
+      return { circleId, amountAtomic: amount, ...threshold, reason: 'Monad could not be read, so your limit is unknown', limit: null };
+    }
+
+    const limit = this._limitView({ member: { ...member, prismId: actorPrismId }, allowance, isDelegate: true });
+    if (BigInt(amount) <= BigInt(allowance.availableAtomic)) {
+      return {
+        circleId, amountAtomic: amount, route: 'ALLOWANCE', requiresApproval: false,
+        reason: null, limit
+      };
+    }
+
+    // Over the limit. Name the limit in the language it was set in, and offer the way forward —
+    // this is a fork, not a refusal, and the wording is the difference between the two.
+    const headline = formatUsdc(allowance.amountAtomic, decimals);
+    const adjective = PERIOD_ADJECTIVES[allowance.period] ?? 'spending';
+    return {
+      circleId,
+      amountAtomic: amount,
+      ...threshold,
+      overLimit: true,
+      reason: `This is above your ${headline} ${adjective} limit.`,
+      prompt: 'Request approval from the Circle?',
+      shortfallAtomic: (BigInt(amount) - BigInt(allowance.availableAtomic)).toString(),
+      limit
+    };
+  }
+
+  /**
+   * Prepare a within-limit spend for the member to sign.
+   *
+   * The member signs the module's own EIP-712 transfer hash — cross-checked against the deployed
+   * module before it is handed over — and a Prism relayer submits it, so the member still holds
+   * MON = 0. The nonce in that hash is the module's per-delegate counter, which is what makes one
+   * signature good for exactly one transfer.
+   */
+  async prepareSpend({ circleId, actorPrismId, resolution, amountAtomic, memo = '' }) {
+    const circle = await this._spendableCircle(circleId, actorPrismId, PROPOSING_ROLES, 'pay from');
+    await this._assertLimitsAvailable(circle);
+    if (!this.payments) throw conflict('Circle payments are not available on this deployment');
+    const amount = this._assertAmount(amountAtomic);
+
+    const member = this._assertMember(circleId, actorPrismId);
+    const delegate = getAddress(member.authorityAddress ?? '');
+
+    // Same Protected Alias Resolver as every other Prism payment: a spend inside a limit is still a
+    // payment to a person, and it inherits Prism Continuity whole.
+    const { identity: recipient, attestation } = this.payments.assertResolution(resolution, actorPrismId);
+    if (!recipient?.accountAddress) throw badRequest('that person has not finished setting up their Prism account');
+    if (getAddress(recipient.accountAddress) === getAddress(circle.safeAddress)) throw badRequest('a Circle cannot pay itself');
+
+    // Fresh read, immediately before authorization. This is the check that stops a spend authorized
+    // against a limit the Circle has since cut.
+    const allowance = await this.safe.getSpendingLimit({ safeAddress: circle.safeAddress, delegate });
+    if (!allowance.configured) throw conflict('you do not have a spending limit in this Circle');
+    if (BigInt(amount) > BigInt(allowance.availableAtomic)) {
+      throw conflict(`this is above your ${formatUsdc(allowance.amountAtomic, this.config.chain.usdcDecimals)} limit; ask the Circle to approve it instead`);
+    }
+
+    const transferHash = await this.safe.getAllowanceTransferHash({
+      safeAddress: circle.safeAddress, recipient: recipient.accountAddress, amountAtomic: amount, nonce: allowance.nonce
+    });
+
+    const spendId = `spd_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
+    const spend = {
+      spendId,
+      circleId,
+      spenderPrismId: actorPrismId,
+      delegate,
+      recipientPrismId: recipient.prismId,
+      recipientAccount: getAddress(recipient.accountAddress),
+      recipientDisplayName: recipient.displayName ?? null,
+      recipientHandle: recipient.handle ? `@${recipient.handle}` : null,
+      aliasVersion: recipient.aliasVersion,
+      resolutionRequestId: attestation.requestId,
+      amount,
+      asset: CIRCLE_ASSET,
+      memo: String(memo ?? '').trim().slice(0, 120),
+      module: getAddress(this.config.circles.allowanceModule),
+      safeAddress: circle.safeAddress,
+      chainId: circle.chainId,
+      token: getAddress(this.config.chain.usdc),
+      // The module's per-delegate nonce this signature is bound to. A spend prepared against a
+      // stale nonce simply will not verify, which is the replay protection.
+      allowanceNonce: allowance.nonce,
+      transferHash,
+      status: 'PREPARED',
+      transactionHash: null,
+      evidence: null,
+      failureReason: null,
+      createdAt: new Date().toISOString(),
+      limitAtSigning: {
+        amountAtomic: allowance.amountAtomic, spentAtomic: allowance.spentAtomic,
+        availableAtomic: allowance.availableAtomic, period: allowance.period
+      }
+    };
+    this.store.mutate((d) => { (d.circleSpends ||= {})[spendId] = spend; });
+    this._event(circleId, 'circle.spend.prepared', { spendId, amount, spenderPrismId: actorPrismId });
+
+    return { spend: this._spendView(spend), transferHash, limit: this._limitView({ member: { ...member, prismId: actorPrismId }, allowance, isDelegate: true }) };
+  }
+
+  /**
+   * Verify, re-read, simulate, relay.
+   *
+   * The order matters. The signature is checked against the transfer hash and the member's own
+   * authority first; then the allowance is re-read from the chain, because approvals-to-broadcast is
+   * a window in which the Circle may have cut the limit; then the module itself is asked, by
+   * simulation, whether it would allow this. Only then is anything broadcast.
+   */
+  async submitSpend({ circleId, spendId, prismId, signature }) {
+    const circle = this._circle(circleId);
+    this._assertMember(circleId, prismId);
+    await this._assertLimitsAvailable(circle);
+
+    const spend = this.store.read().circleSpends?.[spendId];
+    if (!spend || spend.circleId !== circleId) throw notFound('spend not found');
+    if (spend.spenderPrismId !== prismId) throw forbidden('that spend belongs to someone else');
+    if (spend.status === 'COMPLETED') return this.reconcileSpend({ circleId, spendId, prismId });
+    if (spend.status !== 'PREPARED') throw conflict(`this spend is already ${spend.status.toLowerCase()}`);
+
+    // 1. The signature is the member's own, over this exact transfer hash.
+    const recovered = await recoverAddress({ hash: spend.transferHash, signature }).catch(() => null);
+    if (!recovered || getAddress(recovered) !== getAddress(spend.delegate)) {
+      throw forbidden('that authorization was not signed by your Prism account');
+    }
+
+    // 2. Continuity: the person being paid must still be the person who was reviewed.
+    const continuity = this._paymentContinuity({
+      recipientPrismId: spend.recipientPrismId,
+      recipientAccount: spend.recipientAccount,
+      payment: { aliasVersion: spend.aliasVersion }
+    });
+    if (!continuity.ok) {
+      this._failSpend(spendId, continuity.reason);
+      throw conflict(continuity.reason);
+    }
+
+    // 3. FRESH allowance read, immediately before authorizing. Never the figures from prepare time.
+    const allowance = await this.safe.getSpendingLimit({ safeAddress: circle.safeAddress, delegate: spend.delegate });
+    if (!allowance.configured) {
+      this._failSpend(spendId, 'your spending access was removed');
+      throw conflict('your spending access to this Circle was removed');
+    }
+    if (Number(allowance.nonce) !== Number(spend.allowanceNonce)) {
+      this._failSpend(spendId, 'the allowance moved on; this authorization is stale');
+      throw conflict('this authorization is stale — another spend used it first. Try again.');
+    }
+    if (BigInt(spend.amount) > BigInt(allowance.availableAtomic)) {
+      this._failSpend(spendId, 'the limit changed and no longer covers this spend');
+      throw conflict(`your limit changed: ${formatUsdc(allowance.availableAtomic, this.config.chain.usdcDecimals)} is available now`);
+    }
+
+    // 4. Ask the module. A successful simulation is the MODULE agreeing, not Prism asserting.
+    const simulation = await this.safe.simulateAllowanceTransfer({
+      safeAddress: circle.safeAddress, recipient: spend.recipientAccount,
+      amountAtomic: spend.amount, delegate: spend.delegate, signature
+    });
+    if (!simulation.ok) {
+      return { spend: this._spendView(spend), blocked: `this spend was not sent because it would fail: ${simulation.reason}`, simulation };
+    }
+
+    const balanceBefore = await this.safe.getUsdcBalance(circle.safeAddress).then((b) => b.toString()).catch(() => null);
+    const { txHash } = await this.safe.submitAllowanceTransfer({
+      safeAddress: circle.safeAddress, recipient: spend.recipientAccount,
+      amountAtomic: spend.amount, delegate: spend.delegate, signature
+    });
+    this.store.mutate((d) => {
+      const record = d.circleSpends[spendId];
+      record.status = 'SUBMITTED';
+      record.transactionHash = txHash;
+      record.balanceBefore = balanceBefore;
+      record.submittedAt = new Date().toISOString();
+    });
+    this._event(circleId, 'circle.spend.submitted', { spendId, txHash, amount: spend.amount });
+
+    return this.reconcileSpend({ circleId, spendId, prismId });
+  }
+
+  /** COMPLETED needs the same three-part evidence a threshold payment needs. Nothing is rounded up. */
+  async reconcileSpend({ circleId, spendId, prismId }) {
+    const circle = this._circle(circleId);
+    this._assertMember(circleId, prismId);
+    const spend = this.store.read().circleSpends?.[spendId];
+    if (!spend || spend.circleId !== circleId) throw notFound('spend not found');
+    if (spend.status === 'COMPLETED' || spend.status === 'FAILED' || !spend.transactionHash) {
+      return { spend: this._spendView(spend) };
+    }
+
+    const receipt = await this.safe.getTransactionReceipt(spend.transactionHash).catch(() => null);
+    if (!receipt) {
+      this.store.mutate((d) => { d.circleSpends[spendId].status = 'CONFIRMING'; });
+      return { spend: this._spendView(this.store.read().circleSpends[spendId]) };
+    }
+
+    const evidence = this.safe.verifyAllowanceTransferEvidence({
+      receipt, safeAddress: circle.safeAddress, recipient: spend.recipientAccount, amountAtomic: spend.amount
+    });
+    if (!evidence.ok) {
+      this._failSpend(spendId, evidence.reason);
+      return { spend: this._spendView(this.store.read().circleSpends[spendId]) };
+    }
+
+    const balanceAfter = await this.safe.getUsdcBalance(circle.safeAddress).then((b) => b.toString()).catch(() => null);
+    const limitAfter = await this.safe.getSpendingLimit({ safeAddress: circle.safeAddress, delegate: spend.delegate }).catch(() => null);
+    this.store.mutate((d) => {
+      const record = d.circleSpends[spendId];
+      record.status = 'COMPLETED';
+      record.evidence = { transactionHash: spend.transactionHash, blockNumber: evidence.blockNumber, transfer: evidence.transfer };
+      record.balanceAfter = balanceAfter;
+      record.limitAfter = limitAfter
+        ? { amountAtomic: limitAfter.amountAtomic, spentAtomic: limitAfter.spentAtomic, availableAtomic: limitAfter.availableAtomic }
+        : null;
+      record.completedAt = new Date().toISOString();
+    });
+    this._event(circleId, 'circle.spend.completed', { spendId, amount: spend.amount, transactionHash: spend.transactionHash });
+    return { spend: this._spendView(this.store.read().circleSpends[spendId]) };
+  }
+
+  listSpends(circleId, prismId) {
+    this._circle(circleId);
+    this._assertMember(circleId, prismId);
+    const spends = Object.values(this.store.read().circleSpends ?? {})
+      .filter((s) => s.circleId === circleId)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    return { circleId, spends: spends.map((s) => this._spendView(s)) };
+  }
+
+  _failSpend(spendId, reason) {
+    this.store.mutate((d) => {
+      const spend = d.circleSpends[spendId];
+      if (spend.status === 'COMPLETED') return;
+      spend.status = 'FAILED';
+      spend.failureReason = reason;
+    });
+    logger.warn('circle.spend.failed', { spendId, reason });
+  }
+
+  _limitView({ member, allowance, isDelegate }) {
+    const decimals = this.config.chain.usdcDecimals;
+    if (!isDelegate || !allowance || !allowance.configured) {
+      return {
+        prismId: member.prismId,
+        displayName: member.displayName ?? null,
+        handle: member.handle ?? null,
+        authorityAddress: member.authorityAddress ?? null,
+        hasSpendingAccess: false,
+        // Said in the app's own words, because "no allowance row" and "no spending access" must not
+        // be two different-looking things.
+        summary: 'No spending access',
+        source: 'chain'
+      };
+    }
+    return {
+      prismId: member.prismId,
+      displayName: member.displayName ?? null,
+      handle: member.handle ?? null,
+      authorityAddress: member.authorityAddress,
+      hasSpendingAccess: true,
+      period: allowance.period,
+      periodLabel: PERIOD_LABELS[allowance.period] ?? null,
+      limitAtomic: allowance.amountAtomic,
+      spentAtomic: allowance.spentAtomic,
+      availableAtomic: allowance.availableAtomic,
+      limitDisplay: formatUsdc(allowance.amountAtomic, decimals),
+      spentDisplay: formatUsdc(allowance.spentAtomic, decimals),
+      availableDisplay: formatUsdc(allowance.availableAtomic, decimals),
+      summary: `${formatUsdc(allowance.amountAtomic, decimals)} ${PERIOD_LABELS[allowance.period] ?? ''}`.trim(),
+      windowStartedAt: allowance.windowStartedAt,
+      resetsAt: allowance.resetsAt,
+      nonce: allowance.nonce,
+      asset: CIRCLE_ASSET,
+      token: allowance.token,
+      decimals,
+      // Every figure above came from `AllowanceModule.getTokenAllowance` on this read. None of it is
+      // derived from Prism's activity, which would drift on a period rollover or an unseen transfer.
+      source: 'chain'
+    };
+  }
+
+  _spendView(spend) {
+    const decimals = this.config.chain.usdcDecimals;
+    return {
+      spendId: spend.spendId,
+      circleId: spend.circleId,
+      spenderPrismId: spend.spenderPrismId,
+      recipientPrismId: spend.recipientPrismId,
+      recipientAccount: spend.recipientAccount,
+      recipientDisplayName: spend.recipientDisplayName,
+      recipientHandle: spend.recipientHandle,
+      amount: spend.amount,
+      amountDisplay: formatUsdc(spend.amount, decimals),
+      asset: spend.asset,
+      memo: spend.memo,
+      route: 'ALLOWANCE',
+      status: spend.status,
+      transactionHash: spend.transactionHash,
+      evidence: spend.evidence ?? null,
+      failureReason: spend.failureReason ?? null,
+      allowanceNonce: spend.allowanceNonce,
+      limitAtSigning: spend.limitAtSigning ?? null,
+      limitAfter: spend.limitAfter ?? null,
+      createdAt: spend.createdAt,
+      completedAt: spend.completedAt ?? null
+    };
+  }
+
+  // ===========================================================================
   // Templates (UX defaults only)
   // ===========================================================================
 
@@ -1817,6 +2661,15 @@ const unavailable = (reason) => ({ unavailable: true, reason, source: 'chain' })
  * with a delegatecall, a bad address, or a missing nonce throws here instead of being handed to the
  * chain.
  */
+/** Atomic units to the dollars a person reads. Display only — never fed back into a calculation. */
+function formatUsdc(atomic, decimals = 6) {
+  const value = BigInt(atomic ?? 0);
+  const scale = 10n ** BigInt(decimals);
+  const whole = value / scale;
+  const cents = ((value % scale) * 100n) / scale;
+  return `$${whole.toLocaleString('en-US')}.${String(cents).padStart(2, '0')}`;
+}
+
 function rehydrateTx(tx) {
   return safeTransaction({
     to: tx.to, value: BigInt(tx.value), data: tx.data, operation: Number(tx.operation),

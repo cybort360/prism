@@ -20,12 +20,23 @@ export const USDC_KNOWN = {
 };
 export const USDC_DOMAIN = { name: 'USDC', version: '2' };
 
-// Safe's Allowance Module v0.1.1 — the only one deployed on Monad, and the release *before*
-// v1.0.0 fixed a delegate-transfer replay vulnerability. Named here so that pointing Circles at it
-// is refused explicitly rather than working by accident.
+// Safe Allowance Module releases BEFORE v1.0.0 carry a `uint16` allowance-nonce overflow that lets
+// past delegate transfers be replayed. v0.1.1 is deployed on Monad at the address below, and the
+// official deployments package hands it to any caller who does not pin a version — so pointing
+// Circles at it is the accident this constant exists to make impossible.
 export const VULNERABLE_ALLOWANCE_MODULES = new Set([
-  '0xaa46724893dedd72658219405185fb0fc91e091c'
+  '0xaa46724893dedd72658219405185fb0fc91e091c'   // AllowanceModule v0.1.1 (v0.1.0 shares the bug)
 ]);
+
+// Safe's canonical Allowance Module v1.0.0: the release that fixed the replay. `codeHash` is
+// keccak256 of its runtime bytecode, captured byte-identical from two independent chains — see
+// contracts/vendor/safe-allowances-v1.0.0/PROVENANCE.md. A module is accepted on CODE, not address:
+// a Prism-deployed copy at a different address is fine if its bytecode matches, and the canonical
+// address with different bytecode is not.
+export const CANONICAL_ALLOWANCE_MODULE_ADDRESS = '0x691f59471Bfd2B7d639DCF74671a2d648ED1E331';
+export const CANONICAL_ALLOWANCE_MODULE_CODEHASH =
+  '0xfafc86ce3000fbdc8ad155875c0b3b5a20d17662e7c2cdbf3e95f15945a46657';
+export const MINIMUM_ALLOWANCE_MODULE_VERSION = '1.0.0';
 export const USDC_DECIMALS = 6;
 
 const chainId = BigInt(env('MONAD_CHAIN_ID', '10143'));
@@ -70,13 +81,21 @@ export const config = {
     safeSingleton: env('SAFE_SINGLETON', '0x41675C099F32341bf84BFc5382aF534df5C7461a'),
     safeProxyFactory: env('SAFE_PROXY_FACTORY', '0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67'),
     safeFallbackHandler: env('SAFE_FALLBACK_HANDLER', '0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99'),
-    // Per-member spending limits would need the Safe Allowance Module. Version 1.0.0 fixed a
-    // delegate-transfer replay vulnerability, and it is deployed on NO chain: the only Allowance
-    // Module on Monad is the pre-fix v0.1.1. Circles therefore runs threshold-only rather than
-    // silently adopting the vulnerable release. Re-enable only when a v1.0.0 deployment is
-    // independently verified on the target network.
+    // Per-member spending limits need Safe's Allowance Module at **v1.0.0 or newer** — the release
+    // that fixed an allowance-nonce overflow allowing past delegate transfers to be replayed.
+    //
+    // As of the last audit no v1.0.0 deployment exists on either Monad network (the canonical
+    // address has no code there), and the only Allowance Module that IS deployed on Monad is the
+    // vulnerable v0.1.1. So this ships false. Turning it on requires naming a module that passes
+    // BOTH gates: `tools/circles/verify-allowance-module.mjs` before the fact, and
+    // `AllowanceModuleGate` inside the running server, which re-reads the chain and fails closed.
+    // `contracts/script/DeployAllowanceModuleV1.s.sol` deploys Safe's exact upstream runtime if you
+    // need one. Never point this at v0.1.x — see `assertCircleLimitsAreSafe`.
     limitsEnabled: env('CIRCLE_LIMITS_ENABLED', 'false') === 'true',
     allowanceModule: env('CIRCLE_ALLOWANCE_MODULE', ''),
+    // The codeHash any configured module must have. Overridable only so a future audited release
+    // can be adopted deliberately; it is never inferred from whatever happens to be deployed.
+    allowanceModuleCodeHash: env('CIRCLE_ALLOWANCE_MODULE_CODEHASH', CANONICAL_ALLOWANCE_MODULE_CODEHASH),
     // Safe Transaction Service: shared storage for pending proposals so co-admins on other devices
     // can see them. Never trusted for authority — every confirmation it returns is re-verified
     // against the digest and the live owner set. Unset = proposals stay local to Prism.
@@ -149,6 +168,11 @@ if (!Number.isInteger(config.aurora.integratorFeeBps) || config.aurora.integrato
 export function usdcToken() { return { ...usdc }; }
 
 export function assertSafeConfig() {
+  // The spending-limit gate is not a production-only concern: a dev server pointed at the
+  // vulnerable module would teach a spending model that can never ship. It runs everywhere.
+  const limits = assertCircleLimitsAreSafe([]);
+  if (limits.length) throw new Error(`unsafe Circle spending-limit configuration: ${limits.join(', ')}`);
+
   if (config.nodeEnv !== 'production') return;
   const bad = [];
   if (config.sessionSecret === 'dev-session-secret-change-me' || config.sessionSecret.length < 32) bad.push('SESSION_SECRET');
@@ -166,26 +190,42 @@ export function assertSafeConfig() {
   }
   // A production boot that claims live cross-chain routing must actually have an Aurora key.
   if (config.aurora.mode === 'live' && !config.aurora.appKey) bad.push('AURORA_APP_KEY (required when AURORA_MODE=live)');
-  assertCircleLimitsAreSafe(bad);
   if (bad.length) throw new Error(`unsafe production configuration: ${bad.join(', ')}`);
 }
 
 /// Circle spending limits must never be switched on against a pre-v1.0.0 Allowance Module.
-/// Enabling limits is a deliberate act that requires naming a module address, and that address
-/// must not be a known-vulnerable deployment. Exported so the rule is testable without a
-/// production boot.
+///
+/// This is the static half of the gate: what can be decided from configuration alone, at boot,
+/// before a single RPC call. It runs in EVERY environment, not only production, because a
+/// development server pointed at the vulnerable module would teach the whole team a spending model
+/// that cannot ship. The live half — is there really canonical v1.0.0 bytecode at that address on
+/// this chain? — is `AllowanceModuleGate`, which the server runs at boot and again before every
+/// allowance spend.
+///
+/// Exported so the rule is testable without a production boot.
 export function assertCircleLimitsAreSafe(bad = []) {
-  const { limitsEnabled, allowanceModule } = config.circles;
+  const { limitsEnabled, allowanceModule, allowanceModuleCodeHash } = config.circles;
   if (!limitsEnabled) return bad;
+
   if (!allowanceModule) {
     bad.push('CIRCLE_ALLOWANCE_MODULE (required when CIRCLE_LIMITS_ENABLED=true)');
     return bad;
   }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(allowanceModule)) {
+    bad.push('CIRCLE_ALLOWANCE_MODULE must be an address');
+    return bad;
+  }
   if (VULNERABLE_ALLOWANCE_MODULES.has(allowanceModule.toLowerCase())) {
     bad.push(
-      'CIRCLE_ALLOWANCE_MODULE points at Safe Allowance Module v0.1.1, which predates the v1.0.0 ' +
-      'delegate-transfer replay fix; Circles must stay threshold-only'
+      `CIRCLE_ALLOWANCE_MODULE points at Safe Allowance Module v0.1.1, whose allowance nonce can ` +
+      `overflow and replay past delegate transfers; Circles requires v${MINIMUM_ALLOWANCE_MODULE_VERSION} or newer ` +
+      'and must otherwise stay threshold-only'
     );
+  }
+  // The codeHash is what actually identifies the module. Blanking it would turn the live gate into
+  // a no-op, so an empty or malformed value is a configuration error rather than a default.
+  if (!/^0x[0-9a-fA-F]{64}$/.test(allowanceModuleCodeHash ?? '')) {
+    bad.push('CIRCLE_ALLOWANCE_MODULE_CODEHASH must be a 32-byte hash identifying the audited module build');
   }
   return bad;
 }

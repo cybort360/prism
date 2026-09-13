@@ -26,6 +26,8 @@ final class CircleCoordinator: ObservableObject {
   @Published var lastPayment: CirclePayment?
   /// Set when the backend declined to send: not enough approvals, or a simulation that would fail.
   @Published var blockedReason: String?
+  /// The within-limit spend the last authorization produced, with its live status.
+  @Published var lastSpend: CircleSpend?
 
   private let api = PrismAPI.shared
 
@@ -173,6 +175,91 @@ final class CircleCoordinator: ObservableObject {
     } catch { fail(error) }
   }
 
+  // MARK: - spending within a limit
+
+  /// Which way this payment can happen, from live chain state. Nil means the question could not be
+  /// answered, and the caller falls back to proposing — never to spending.
+  func preview(circleId: String, amountAtomic: String) async -> CirclePaymentPreview? {
+    try? await api.previewCirclePayment(circleId: circleId, amountAtomic: amountAtomic)
+  }
+
+  /// Spend inside a limit the Circle already agreed: the member authorizes it alone.
+  ///
+  /// Validate, then sign — the same order, and for the same reason, as approving a threshold
+  /// payment. `CircleSpendValidator` is handed the backend's payload AND an expectation assembled
+  /// from this device's own Circle record plus the recipient and amount the person read on screen.
+  /// It rebuilds the module's transfer hash from those fields and refuses if it disagrees with the
+  /// digest the backend asked to have signed. Only then is Face ID presented.
+  func spendWithinLimit(
+    circleId: String,
+    circle: CircleDetail,
+    resolution: ResolutionResponse,
+    amountAtomic: String,
+    memo: String,
+    moduleAddress: String,
+    usdcAddress: String,
+    reviewedRecipient: String,
+    availableAtomic: String?,
+    pin: String?,
+    useFaceID: Bool
+  ) async {
+    do {
+      blockedReason = nil
+      state = .preparing
+      let prepared = try await api.prepareCircleSpend(
+        circleId: circleId, resolution: resolution, amountAtomic: amountAtomic, memo: memo)
+      lastSpend = prepared.spend
+
+      let payload = try CircleSpendPayloadBuilder.make(
+        from: prepared, circle: circle, moduleAddress: moduleAddress, usdcAddress: usdcAddress)
+      guard let reviewed = EVMAddress(reviewedRecipient), let reviewedAmount = SafeUInt256(decimalString: amountAtomic) else {
+        throw CircleSpendPayloadBuilder.Failure.malformed("the reviewed recipient or amount")
+      }
+      guard let safeAddress = circle.safeAddress.flatMap(EVMAddress.init),
+        let chainId = SafeUInt256(decimalString: circle.chainId),
+        let module = EVMAddress(moduleAddress),
+        let usdc = EVMAddress(usdcAddress)
+      else { throw CircleSpendPayloadBuilder.Failure.malformed("this Circle's own settings") }
+
+      try CircleSpendValidator.validate(payload, against: CircleSpendExpectation(
+        circleId: circleId, safeAddress: safeAddress, chainId: chainId, moduleAddress: module,
+        usdcAddress: usdc, reviewedRecipientAccount: reviewed, reviewedAmount: reviewedAmount,
+        availableAtomic: availableAtomic.flatMap { SafeUInt256(decimalString: $0) }))
+
+      state = .awaitingAuthorization
+      try await localApproval(pin: pin, useFaceID: useFaceID)
+      state = .sending
+      let submitted = try await api.submitCircleSpend(circleId: circleId, payload: payload)
+      lastSpend = submitted.spend
+      try await settleSpend(circleId: circleId, spendId: submitted.spend.spendId)
+    } catch { fail(error) }
+  }
+
+  private func settleSpend(circleId: String, spendId: String) async throws {
+    state = .settling
+    if let current = lastSpend, current.isComplete {
+      state = .sent(current.transactionHash)
+      PrismHaptics.success()
+      return
+    }
+    for _ in 0..<40 {
+      try await Task.sleep(for: .milliseconds(400))
+      let status = try await api.circleSpendStatus(circleId: circleId, spendId: spendId)
+      lastSpend = status.spend
+      if status.spend.isComplete {
+        state = .sent(status.spend.transactionHash)
+        PrismHaptics.success()
+        return
+      }
+      if status.spend.isFailed {
+        PrismHaptics.error()
+        throw CircleError.rejected(status.spend.failureReason ?? "This didn't go through.")
+      }
+    }
+    PrismHaptics.warning()
+    state = .pendingReview("Your payment was sent and is still confirming. It'll show in the Circle once it settles — don't send it again.")
+  }
+
   // MARK: - shared
 
   private func localApproval(pin: String?, useFaceID: Bool) async throws {
@@ -198,6 +285,12 @@ final class CircleCoordinator: ObservableObject {
     }
     if let failure = error as? CircleApprovalPayloadBuilder.Failure {
       return "This approval was stopped: \(failure.description)"
+    }
+    if let rejection = error as? CircleSpendRejection {
+      return "This payment was stopped: \(rejection.description)"
+    }
+    if let failure = error as? CircleSpendPayloadBuilder.Failure {
+      return "This payment was stopped: \(failure.description)"
     }
     if let circle = error as? CircleError { return circle.errorDescription ?? "That didn't work." }
     return PaymentCoordinator.friendlyMessage(for: error)

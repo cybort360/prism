@@ -119,3 +119,81 @@ extension PrismAPI {
       idempotencyKey: "\(proposalId):execute")
   }
 }
+
+// MARK: - member spending limits
+
+extension PrismAPI {
+  struct CircleLimitBody: Encodable { let prismId: String; let amountAtomic: String; let period: String }
+  struct CircleRevokeBody: Encodable { let prismId: String }
+  struct CirclePreviewBody: Encodable { let amountAtomic: String }
+  struct CircleSpendPrepareBody: Encodable { let resolution: ResolutionResponse; let amountAtomic: String; let memo: String }
+  struct CircleSpendSubmitBody: Encodable { let signature: String }
+
+  /// Are limits available at all on this deployment? `enabled: false` carries the reason, and is an
+  /// ordinary state — the Circle still spends by threshold.
+  func circleLimitsStatus() async throws -> CircleLimitsStatus {
+    try await APIClient.shared.request("/v1/circles/limits/status")
+  }
+
+  func circleLimits(_ circleId: String) async throws -> CircleLimitsResponse {
+    try await APIClient.shared.request("/v1/circles/\(circleId)/limits")
+  }
+
+  func myCircleLimit(_ circleId: String) async throws -> CircleMyLimitResponse {
+    try await APIClient.shared.request("/v1/circles/\(circleId)/limits/me")
+  }
+
+  /// Build the NEXT threshold-approved transaction for a limit change. There may be up to three
+  /// (enable the module, register the member, set the limit) and they cannot be batched, so this
+  /// returns one proposal plus what remains. Call it again after each executes.
+  func prepareCircleLimit(circleId: String, prismId: String, amountAtomic: String, period: String) async throws -> CirclePayment {
+    try await APIClient.shared.send(
+      "/v1/circles/\(circleId)/limits/prepare",
+      body: CircleLimitBody(prismId: prismId, amountAtomic: amountAtomic, period: period))
+  }
+
+  func prepareCircleLimitRevoke(circleId: String, prismId: String) async throws -> CirclePayment {
+    try await APIClient.shared.send("/v1/circles/\(circleId)/limits/revoke/prepare", body: CircleRevokeBody(prismId: prismId))
+  }
+
+  /// Apply an approved governance change, then read the module back. "Active" means the readback
+  /// agreed — not that a transaction succeeded.
+  func executeCircleGovernance(circleId: String, proposalId: String) async throws -> CirclePayment {
+    try await APIClient.shared.send(
+      "/v1/circles/\(circleId)/governance/\(proposalId)/execute", body: EmptyBody(),
+      idempotencyKey: "\(proposalId):governance")
+  }
+
+  /// Allowance or threshold, decided from live chain state. Ask before showing an amount sheet's
+  /// confirm button, so the person learns which one they are doing before they commit to it.
+  func previewCirclePayment(circleId: String, amountAtomic: String) async throws -> CirclePaymentPreview {
+    try await APIClient.shared.send("/v1/circles/\(circleId)/payments/preview", body: CirclePreviewBody(amountAtomic: amountAtomic))
+  }
+
+  func prepareCircleSpend(circleId: String, resolution: ResolutionResponse, amountAtomic: String, memo: String) async throws -> PreparedCircleSpend {
+    try await APIClient.shared.send(
+      "/v1/circles/\(circleId)/spend/prepare",
+      body: CircleSpendPrepareBody(resolution: resolution, amountAtomic: amountAtomic, memo: memo))
+  }
+
+  /// Sign the module's transfer hash with the member's own Prism authority and relay it.
+  ///
+  /// `payload` must already have passed `CircleSpendValidator` — the caller is
+  /// `CircleCoordinator.spendWithinLimit`, which refuses to reach this method otherwise. The
+  /// signature is over the module's EIP-712 `AllowanceTransfer`, rebuilt here from the validated
+  /// fields, so the bytes signed are the bytes checked.
+  @MainActor
+  func submitCircleSpend(circleId: String, payload: CircleSpendPayload) async throws -> CircleSpendStatusResponse {
+    let mera = MeraAccountManager.shared
+    try await mera.beginSession(.payments)
+    let signature = try await mera.signTypedDataHex(AllowanceTypedData.jsonData(for: payload))
+    return try await APIClient.shared.send(
+      "/v1/circles/\(circleId)/spend/\(payload.spendId)/submit",
+      body: CircleSpendSubmitBody(signature: signature),
+      idempotencyKey: "\(payload.spendId):spend")
+  }
+
+  func circleSpendStatus(circleId: String, spendId: String) async throws -> CircleSpendStatusResponse {
+    try await APIClient.shared.request("/v1/circles/\(circleId)/spend/\(spendId)")
+  }
+}

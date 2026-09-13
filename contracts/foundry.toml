@@ -11,6 +11,10 @@ via_ir = true
 fs_permissions = [
     { access = "read-write", path = "../deployments" },
     { access = "read-write", path = "../proof/circles" },
+    # The Allowance Module proof runs against Safe's ACTUAL deployed runtime bytecode, read from
+    # the vendored canonical capture rather than from anything this repository compiles.
+    { access = "read", path = "vendor" },
+    { access = "read-write", path = "../proof/circles" },
 ]
 # Circles compatibility tests compile the archived P-256 PrismAccount in place, so the
 # experiment always measures the real archived source rather than a drifting copy.
@@ -19,6 +23,22 @@ allow_paths = ["../archive"]
 [rpc_endpoints]
 monad_testnet = "${MONAD_TESTNET_RPC_URL}"
 monad_mainnet = "${MONAD_MAINNET_RPC_URL}"
+
+# The vendored Safe Allowance Module v1.0.0 is built with UPSTREAM's exact compiler settings —
+# solc 0.7.6, optimizer DISABLED — as recorded in its CHANGELOG. Anything else produces different
+# bytecode, and this build is what a claimed on-chain deployment is checked against. It is a
+# separate profile because the vendored source is 0.7.x and the rest of Prism is 0.8.28.
+#   forge build --profile allowances
+[profile.allowances]
+src = "vendor/safe-allowances-v1.0.0"
+out = "out-allowances"
+test = "vendor/safe-allowances-v1.0.0"
+script = "vendor/safe-allowances-v1.0.0"
+libs = []
+solc_version = "0.7.6"
+optimizer = false
+via_ir = false
+evm_version = "istanbul"
 
 [profile.circles]
 ffi = true

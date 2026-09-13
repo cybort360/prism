@@ -9,6 +9,7 @@
 import { config } from '../config.js';
 import { chainProvider } from '../providers/index.js';
 import { SafeCircleAdapter } from '../circles/safeCircleAdapter.js';
+import { AllowanceModuleGate } from '../circles/allowanceModuleGate.js';
 import { logger } from '../lib/logger.js';
 
 /** The RPC seam the adapter uses. Everything routes through Prism's existing chain provider. */
@@ -19,7 +20,10 @@ const chainOps = {
   // Every Circle execution is dry-run here first. The provider fills in the relayer as `from`, so
   // the simulation is of the transaction that would actually be broadcast, not an idealized one.
   simulateContract: (args) => chainProvider().simulateContract(args),
-  getReceipt: (hash) => chainProvider().getTransactionReceipt(hash)
+  getReceipt: (hash) => chainProvider().getTransactionReceipt(hash),
+  // The gate compares deployed bytecode against Safe's canonical Allowance Module, so it needs the
+  // code itself rather than a contract read.
+  getCode: (address) => chainProvider().getCode(address)
 };
 
 /**
@@ -81,3 +85,17 @@ export function safeCircleAdapter() {
 
 /** Test seam: drop the memoized adapter so a different chain provider takes effect. */
 export function resetSafeCircleAdapter() { _adapter = null; }
+
+let _limitGate = null;
+/**
+ * The live Allowance Module gate. Verifies, against THIS chain, that the configured module is
+ * byte-identical to Safe's canonical v1.0.0 — and fails closed, which means threshold-only Circles.
+ */
+export function allowanceModuleGate() {
+  if (_limitGate) return _limitGate;
+  _limitGate = new AllowanceModuleGate({ config, chain: chainOps });
+  return _limitGate;
+}
+
+/** Test seam: drop the memoized gate so a different chain provider takes effect. */
+export function resetAllowanceModuleGate() { _limitGate = null; }

@@ -1,4 +1,4 @@
-.PHONY: test test-backend test-contracts test-ios test-circles audit zip
+.PHONY: test test-backend test-contracts test-ios test-circles audit zip gate-allowance build-allowance-module
 
 test: test-backend test-contracts test-ios
 
@@ -10,6 +10,20 @@ test-backend:
 test-contracts:
 	cd contracts && forge install foundry-rs/forge-std --no-git >/dev/null 2>&1 || true; \
 	forge test -vvv --no-match-path 'test/circles/*'
+
+# The Safe Allowance Module hard gate. Queries the official release index and the target chain, and
+# exits non-zero unless a verified v1.0.0+ deployment exists — which is what authorizes
+# CIRCLE_LIMITS_ENABLED=true. Run it before enabling limits, and in CI to catch a module that moved.
+#   make gate-allowance CHAIN_ID=10143
+CHAIN_ID ?= 10143
+gate-allowance:
+	cd tools/circles && npm install --silent && \
+	node verify-allowance-module.mjs --chain-id $(CHAIN_ID) $(if $(MODULE),--module $(MODULE),)
+
+# Rebuild the vendored Safe Allowance Module v1.0.0 with UPSTREAM's exact compiler settings
+# (solc 0.7.6, optimizer off). A cross-check on the source matching its tag; nothing trusts it.
+build-allowance-module:
+	cd contracts && forge build --profile allowances
 
 # Prism Circles architecture proof (Phases 1-3). Needs network access: the suite runs against the
 # real Safe v1.4.1 deployment on a Monad testnet fork, the real EIP-7951 P-256 precompile, and the

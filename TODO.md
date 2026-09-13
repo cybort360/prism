@@ -69,12 +69,17 @@ nothing navigates to them yet, and they have not been compiled.
       escape hatches. Safe already supplies the mechanism (`addOwnerWithThreshold`, `removeOwner`,
       `swapOwner` as ordinary threshold-approved Circle transactions), so this is product design,
       not contract work. Must land before real money sits in Circles.
-- [ ] **Circle spending limits stay OFF.** `SPENDER` therefore confers proposal rights only, with no
-      independent spending authority, and the API says so. `CIRCLE_LIMITS_ENABLED=false`, threshold-only. Safe's
-      Allowance Module v1.0.0 fixed a delegate-transfer replay vulnerability and is deployed on no
-      chain; the only module on Monad is the pre-fix v0.1.1. `backend/src/config.js` refuses to
-      enable limits against that address. Revisit only when a v1.0.0 deployment is independently
-      verifiable on the target network.
+- [~] **Circle spending limits — BUILT, gated OFF (2026-09-13).** The whole feature exists and is
+      tested: governance-approved limits, on-chain allowance truth, fresh-read authorization,
+      over-limit routing to a threshold proposal, revoke. It is **off** because no Allowance Module
+      >= v1.0.0 is deployed on Monad (v1.0.0 lives on Optimism/Gnosis; only the vulnerable v0.1.1 is
+      on Monad, and the official package hands it out by default). `CIRCLE_LIMITS_ENABLED=false`.
+      `docs/CIRCLE_SPENDING_LIMITS.md`, `docs/CIRCLE_MODULE_SECURITY.md`.
+      To turn on: `make gate-allowance`, then either wait for Safe to deploy v1.0.0 to Monad or run
+      `contracts/script/DeployAllowanceModuleV1.s.sol` (deploys Safe's exact canonical runtime —
+      **needs a funded key; not broadcast**), then re-run the gate and set the two env vars.
+      Note for whoever does: a `SPENDER` with a limit CAN move money alone up to it, which is a
+      change from today's "proposal rights only". Founders should confirm that before it ships.
 - [ ] **Live Circle Safe on Monad testnet.** All Circles proofs run against a testnet *fork*; no
       Circle Safe has been broadcast to live Monad (same funded-key constraint as the rest of P2).
 - [ ] **Verify Safe v1.4.1 on Monad mainnet (chainId 143).** Safe lists the same addresses; their
@@ -93,15 +98,20 @@ nothing navigates to them yet, and they have not been compiled.
 ## Prism Circles — remaining work
 
 - [ ] **Compile and run the iOS Circle code.** `CircleAddMoneyView`, `CirclePayView`,
-      `CircleApprovalView`, `PrismCircleModels`, `SafeTypedData`, `PrismAPI+Circles`,
-      `CircleCoordinator` and `CircleApprovalWireTests` were written on Linux, where there is no
-      Swift toolchain. `make test-ios` needs macOS and has not been run against them.
+      `CircleApprovalView`, `CircleLimitViews`, `PrismCircleModels`, `SafeTypedData`,
+      `AllowanceTransferHash`, `PrismAPI+Circles`, `CircleCoordinator` and `CircleApprovalWireTests`
+      were written on Linux, where there is no Swift toolchain. `make test-ios` needs macOS and has
+      not been run against any of them.
 - [ ] **Circle list / detail / creation UI.** The three money screens are wired into `PrismApp` as
       sheets driven by `AppModel.presentCircle*`, but nothing sets those yet: there is no Circles
       tab, no Circle detail screen, and no creation sheet. That is the next UI phase.
 - [ ] **A live Circle payment on Monad testnet.** The payment suite runs against an in-memory Safe
       that enforces Safe's real `execTransaction` rules; no Circle payment has been broadcast to live
       Monad (same funded-key constraint as the rest of P2).
+- [ ] **Deploy Allowance Module v1.0.0 to Monad, or wait for Safe to.** Blocked on a funded key, the
+      same constraint as the rest of P2. `DeployAllowanceModuleV1.s.sol` is written and verified in
+      simulation; it deploys the canonical runtime verbatim so the result is byte-identical to
+      Safe's own deployment. Until then Circles is threshold-only and the gate enforces it.
 - [ ] **Circle send-before-signup — DEFERRED, revisit only with a vault change.** Audited in
       `contracts/test/PrismClaimVaultCircleCompat.t.sol` and recorded in `docs/CIRCLE_PAYMENTS.md`
       §7: the ClaimVault funds exclusively through an ERC-3009 `ecrecover` authorization a Safe

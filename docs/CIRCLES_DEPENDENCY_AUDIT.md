@@ -88,29 +88,36 @@ Two findings worth carrying forward:
   exploitable on the Circles path, but **off-chain code must key proposals by `safeTxHash`, never
   by signature bytes**.
 
-## Safe Allowance Module — NOT USABLE
+## Safe Allowance Module — NOT USABLE ON MONAD
 
-This is the one dependency that fails the gate, and it fails for exactly the reason anticipated.
+This is the one dependency that fails the gate. **Re-audited 2026-09-13** with live registry and
+chain queries; the full write-up is [`CIRCLE_MODULE_SECURITY.md`](CIRCLE_MODULE_SECURITY.md).
 
-| Name | Version | chainId | Address | Released | Usable |
+| Name | Version | chainId | Address | Deployed | Usable |
 |---|---|---|---|---|---|
-| AllowanceModule | **0.1.1** | 10143 | `0xAA46724893dedD72658219405185Fb0Fc91e091C` | yes (2024-09-11) | **NO — vulnerable** |
+| AllowanceModule | **0.1.1** | 10143 | `0xAA46724893dedD72658219405185Fb0Fc91e091C` | yes | **NO — vulnerable** |
 | AllowanceModule | **0.1.1** | 143 | `0xAA46724893dedD72658219405185Fb0Fc91e091C` | yes | **NO — vulnerable** |
-| AllowanceModule | **0.1.0** | — | not deployed on Monad | yes | **NO — vulnerable** |
-| AllowanceModule | **1.0.0** | — | **no deployment exists** | **yes — source released 2026-02-25** | **NO — undeployed** |
+| AllowanceModule | **1.0.0** | 10143 | `0x691f59471Bfd2B7d639DCF74671a2d648ED1E331` | **no code** | **NO — undeployed here** |
+| AllowanceModule | **1.0.0** | 143 | `0x691f59471Bfd2B7d639DCF74671a2d648ED1E331` | **no code** | **NO — undeployed here** |
+| AllowanceModule | **1.0.0** | 10 (Optimism) | same address | **yes**, `VERSION() == "1.0.0"` | reference only |
+| AllowanceModule | **1.0.0** | 100 (Gnosis) | same address | **yes**, byte-identical to Optimism | reference only |
 
 Findings:
 
-- `allowances/v1.0.0` is a **real, non-prerelease** GitHub release of `safe-global/safe-modules`,
-  published **2026-02-25**. Its notes state it *"fixes a security vulnerability that would allow
-  delegate transfers to be replayed"* and that it is a breaking change incompatible with Safe
-  v1.0.0. The premise behind the Circles spending-limit gate is correct.
+- `allowances/v1.0.0` is a **real, non-draft, non-prerelease** release published **2026-02-25**,
+  tag commit `c95f0390…`. Its `CHANGELOG.md` names the bug precisely: the allowance nonce is a
+  `uint16` that **wrapped** in v0.1.x, and a wrapped nonce revalidates every past signed transfer.
+  v1.0.0 refuses to advance past `type(uint16).max`.
 - The latest official `@safe-global/safe-modules-deployments` (**3.0.10**) ships **no deployment
-  record for v1.0.0 on any chain** — only v0.1.0 and v0.1.1.
-- The only Allowance Module actually deployed on Monad is **v0.1.1**, the pre-fix version. Its
-  bytecode on Monad testnet is byte-identical to the same address on Base
-  (`keccak256 = 0x7aa63affdca06fe94576f00077ad61a02ccf203a5da31e1b4ed595df7b65cf3e`), so it is
-  genuinely the vulnerable release and not a patched rebuild.
+  record for v1.0.0 on any chain** — only v0.1.0 (15 chains) and v0.1.1 (53). Worse, its unpinned
+  resolution `getAllowanceModuleDeployment({})` returns **v0.1.1**: the vulnerable module is what a
+  caller gets by default.
+- v1.0.0 **is** deployed on Optimism and Gnosis, byte-identical at both
+  (`keccak256 = 0xfafc86ce3000fbdc8ad155875c0b3b5a20d17662e7c2cdbf3e95f15945a46657`, 15,504 bytes).
+  That gives Prism a canonical reference to verify any deployment against, captured in
+  `contracts/vendor/safe-allowances-v1.0.0/canonical-runtime.hex`.
+- The only Allowance Module actually on Monad is **v0.1.1**, byte-identical to the same address on
+  Base (`keccak256 = 0x7aa63aff…`), so it is genuinely the vulnerable release, not a patched rebuild.
 
 **Decision — no silent downgrade:**
 
@@ -118,9 +125,11 @@ Findings:
 CIRCLE_LIMITS_ENABLED = false
 ```
 
-Prism Circles ships **threshold-only** spending. Per-member allowances stay off until a released
-v1.0.0 is independently verifiable on the target network. Circles must not enable v0.1.1 merely
-because a deployment happens to exist.
+Prism Circles ships **threshold-only** spending. The gate that enforces this is real and proven in
+both directions — it PASSES against the genuine v1.0.0 on Optimism and FAILS on Monad and against
+v0.1.1 (`tools/circles/verify-allowance-module.mjs`, `make gate-allowance`). Option A —
+deploying Safe's exact upstream runtime to Monad ourselves — is built and ready
+(`contracts/script/DeployAllowanceModuleV1.s.sol`) but has not been broadcast.
 
 ## Safe 4337 module — available, deliberately unused
 
@@ -156,6 +165,6 @@ unchanged by this work.
 | Safe Transaction Service (Monad) | **VERIFIED** — live, synced |
 | Monad EIP-7951 P-256 precompile | **VERIFIED** — live (needs Foundry `--network monad`) |
 | USDC on both Monad networks | **VERIFIED** — incl. EIP-712 domain |
-| Safe Allowance Module v1.0.0 | **UNAVAILABLE** — released but undeployed → limits disabled |
+| Safe Allowance Module v1.0.0 | **UNAVAILABLE ON MONAD** — released, deployed on Optimism/Gnosis, absent on both Monad chains → limits disabled, gate proven |
 | Safe 4337 Module v0.3.0 | deployed, **deliberately not enabled** |
 | Safe v1.4.1 core on Monad **mainnet** | **UNKNOWN** — addresses listed, not code-verified yet |

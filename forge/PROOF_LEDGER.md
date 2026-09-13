@@ -182,6 +182,59 @@ where no Swift toolchain is available. `make test-ios` needs macOS and has not b
 claim here is `UNTESTED` until it has. (c) The Safe Transaction Service path is exercised only in its
 absent (local-only) configuration.
 
+## Circle member spending limits — the Allowance Module gate (2026-09-13)
+
+Per-member spending limits are **built and tested but OFF**, because no Allowance Module >= v1.0.0
+exists on Monad. `docs/CIRCLE_MODULE_SECURITY.md`, `docs/CIRCLE_SPENDING_LIMITS.md`.
+
+Commands run:
+
+```
+cd tools/circles && node verify-allowance-module.mjs --chain-id 10143          # exit 1 (correct)
+cd tools/circles && node verify-allowance-module.mjs --chain-id 10 --rpc https://mainnet.optimism.io \
+      --module 0x691f59471Bfd2B7d639DCF74671a2d648ED1E331                       # exit 0 (correct)
+cd contracts && forge test --match-path 'test/AllowanceModuleCompat.t.sol'      # 23 pass / 0 fail
+cd contracts && forge test --no-match-path 'test/circles/*'                     # 74 pass / 0 fail
+cd backend   && node --test test/*.test.js                                      # 291 pass / 0 fail
+```
+
+The contract suite runs against **Safe's actual deployed bytecode**: `canonical-runtime.hex` is the
+runtime read off `0x691f59471Bfd2B7d639DCF74671a2d648ED1E331` (byte-identical on Optimism and
+Gnosis) and `vm.etch`ed under test. Not a recompilation, not a mock.
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| AM-1 | An official Allowance Module release >= v1.0.0 exists: `allowances/v1.0.0`, non-draft, non-prerelease, published 2026-02-25, commit `c95f0390…` | `VERIFIED` | GitHub release index, queried live |
+| AM-2 | v1.0.0 fixes a `uint16` allowance-nonce overflow that allowed past delegate transfers to be replayed | `VERIFIED` | upstream `CHANGELOG.md` (PR #520) + `testNonceExhaustionIsRefusedRatherThanWrapping` — the ceiling is enforced by the code under test |
+| AM-3 | v1.0.0 is **not deployed on either Monad network**; v0.1.1 (vulnerable) **is** | `VERIFIED` | `eth_getCode` on 10143 and 143: `0x691f5947…` empty, `0xAA467248…` 14,909 bytes |
+| AM-4 | The official deployments package (3.0.10, latest) has no v1.0.0 record, and its UNPINNED resolution returns the vulnerable v0.1.1 | `VERIFIED` | `getAllowanceModuleDeployment({})` → v0.1.1; `({version:'1.0.0'})` → undefined |
+| AM-5 | v1.0.0 is deployed on Optimism and Gnosis, byte-identical, `VERSION() == "1.0.0"` — the canonical reference | `VERIFIED` | `eth_getCode` + `eth_call` on both; codeHash `0xfafc86ce…6657`, 15,504 bytes |
+| AM-6 | The build-time gate PASSES where v1.0.0 really is | `VERIFIED` | gate CLI, Optimism: 7/7 checks pass |
+| AM-7 | The build-time gate FAILS on Monad, and FAILS when pointed at v0.1.1 | `VERIFIED` | gate CLI: `FAIL address` / `FAIL bytecode` |
+| AM-8 | Static config refuses limits against v0.1.x, in EVERY environment | `VERIFIED` | `circles-limits.test.js`: *an old Allowance Module version fails the build/integration gate* |
+| AM-9 | The runtime gate identifies a module by CODE, not address; an impostor at the canonical address is refused | `VERIFIED` | *the runtime gate identifies the module by CODE, not by address* |
+| AM-10 | **Execution model: COMPATIBLE** for Prism's shipping authority (Mera EOA) via relayed EIP-712, member holding MON = 0 | `VERIFIED` | `testRelayedEoaDelegateSignatureWorks` |
+| AM-11 | **INCOMPATIBLE for a smart-account delegate, twice over:** v1.0.0 reverts on EIP-1271 contract signatures, and `PrismP256Account` exposes no generic execute | `VERIFIED` | `testEip1271ContractSignaturesAreRejectedOutright`, `testAPrismP256AccountCannotReachTheModule` |
+| AM-12 | The msg.sender path DOES work for a contract that can make arbitrary calls — so the incompatibility is Prism's account shape, not the module's | `VERIFIED` | `testContractDelegateDirectCallWorks` |
+| AM-13 | A delegate cannot make an arbitrary Safe call, change owners, enable a module, or grant an approval | `VERIFIED` | four tests + `testTheOnlyCallADelegateCanCauseIsAPlainTransfer` (to = USDC, value 0, Call, exactly 68 bytes) |
+| AM-14 | Over limit / wrong token / removed delegate / signature reuse all fail | `VERIFIED` | `testSpendingOverTheLimitFails`, `testWrongTokenFails`, `testARemovedDelegateCannotSpend`, `testTheSameTransferSignatureCannotBeReused` |
+| AM-15 | Changing a limit requires the Circle's admin threshold, and is Active only after a module readback | `VERIFIED` | *setting a limit needs the admin threshold, and is Active only after a chain readback* |
+| AM-16 | Backend UI state alone cannot alter a limit; a member cannot raise their own | `VERIFIED` | *the backend cannot change a limit by itself*, *a member cannot raise their own limit* |
+| AM-17 | Limit / spent / available all come from `getTokenAllowance`, never from Prism activity; the window resets on-chain | `VERIFIED` | *limit, spent and available all come from the module…*, *the window rolls over on-chain, with nothing from Prism* |
+| AM-18 | Authorization re-reads the chain: a spend signed before the Circle cut the limit is refused, and a stale nonce cannot be replayed | `VERIFIED` | *a spend authorized before the Circle cut the limit is refused*, *a stale authorization cannot be replayed after the nonce moves* |
+| AM-19 | Revoking is threshold-approved, zeroes the figures, and a stale session cannot preserve access | `VERIFIED` | *spending access ends on-chain, and a stale session cannot preserve it*, *a revoke is itself a threshold decision* |
+| AM-20 | Over-limit is a fork: it names the limit and converts to an ordinary threshold proposal, which does not consume the member's allowance | `VERIFIED` | *the answer is a fork, not a dead end*, *choosing "request approval" produces an ordinary threshold payment* |
+| AM-21 | Prism's transfer-hash implementation agrees with the deployed module | `VERIFIED` | `proof/circles/allowance-transfer-vectors.json`, written by the real module; *the backend computes the same transfer hash the deployed module does* |
+
+**Not claimed:** (a) **Option A was not broadcast.** `DeployAllowanceModuleV1.s.sol` deploys Safe's
+exact canonical runtime and is verified in simulation, but no module has been deployed to Monad —
+that needs a funded key and is an operator decision. Limits therefore remain OFF. (b) **Our
+recompilation of the tagged source does not reproduce upstream's bytecode** — identical 19-function
+ABI, 48 bytes of dispatcher codegen difference, cause identified as Hardhat-vs-Foundry and recorded
+rather than papered over in `vendor/safe-allowances-v1.0.0/PROVENANCE.md`. Nothing load-bearing
+depends on it. (c) **No live allowance transfer on Monad**, for the same reason as (a). (d) **iOS
+was not compiled** — no Swift toolchain on this machine; `make test-ios` needs macOS.
+
 ## How to add a row
 State the exact command, run it, paste the pass/fail counts (or tx hash), then set the status. If a
 prior claim's enforcement code changed, set it to `REGRESSED` until re-run.

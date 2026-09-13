@@ -18,8 +18,13 @@ import { getAddress, isAddress, recoverAddress, recoverMessageAddress } from 'vi
 import {
   safeTransaction, safeTxHash, encodeTransactionData, encodeSetupInitializer, predictSafeAddress,
   encodeUsdcTransfer, encodeAddOwnerWithThreshold, encodeRemoveOwner, encodeChangeThreshold,
-  prevOwnerFor, buildSignatureBytes, SafeOperation, findUsdcTransfer, safeExecutionOutcome
+  prevOwnerFor, buildSignatureBytes, SafeOperation, findUsdcTransfer, safeExecutionOutcome, ZERO_ADDRESS
 } from './safeEncoding.js';
+import {
+  ALLOWANCE_MODULE_ABI, SAFE_MODULE_ABI, allowanceTransferHash, readAllowance,
+  encodeEnableModule, encodeAddDelegate, encodeRemoveDelegate, encodeSetAllowance, encodeDeleteAllowance,
+  encodeExecuteAllowanceTransfer
+} from './allowanceModule.js';
 import { SignatureType, badRequest, conflict } from './model.js';
 import { logger } from '../lib/logger.js';
 
@@ -33,7 +38,10 @@ export const SAFE_ADAPTER_METHODS = Object.freeze([
   'buildTransaction', 'getTransactionHash', 'encodeContractSignature',
   'proposeTransaction', 'addConfirmation', 'getPendingTransactions',
   'simulateExecution', 'executeTransaction', 'getTransactionReceipt', 'verifyExecutionEvidence',
-  'getUsdcBalance', 'getDeploymentReceipt', 'verifyApproval'
+  'getUsdcBalance', 'getDeploymentReceipt', 'verifyApproval',
+  // spending limits (Allowance Module v1.0.0)
+  'isModuleEnabled', 'getSpendingLimit', 'getSpendDelegates', 'getAllowanceTransferHash',
+  'simulateAllowanceTransfer', 'submitAllowanceTransfer', 'verifyAllowanceTransferEvidence'
 ]);
 
 export function assertAdapterContract(adapter) {
@@ -204,6 +212,32 @@ export class SafeCircleAdapter {
       }
       case 'THRESHOLD_CHANGE':
         return { to: safeAddress, data: encodeChangeThreshold({ threshold: intent.threshold }) };
+
+      // --- spending limits ---------------------------------------------------
+      // Every one of these is executed BY the Safe, which is what makes changing a member's limit a
+      // threshold-approved Circle transaction rather than something the backend or the member can
+      // do. `to` is the Safe itself for enabling the module, and the module for everything else.
+      case 'MODULE_ENABLE':
+        return { to: safeAddress, data: encodeEnableModule({ module: this._assertModule(intent.module) }) };
+      case 'SPEND_DELEGATE_ADD':
+        return { to: this._assertModule(intent.module), data: encodeAddDelegate({ delegate: intent.delegate }) };
+      case 'SPEND_DELEGATE_REMOVE':
+        // `removeAllowances: true` — revoking clears the figures too, so re-adding a delegate later
+        // cannot silently restore a limit the Circle thought it had taken away.
+        return { to: this._assertModule(intent.module), data: encodeRemoveDelegate({ delegate: intent.delegate, removeAllowances: true }) };
+      case 'SPEND_LIMIT_SET':
+        return {
+          to: this._assertModule(intent.module),
+          data: encodeSetAllowance({
+            delegate: intent.delegate, token: getAddress(this.config.chain.usdc),
+            amountAtomic: intent.amountAtomic, period: intent.period
+          })
+        };
+      case 'SPEND_LIMIT_DELETE':
+        return {
+          to: this._assertModule(intent.module),
+          data: encodeDeleteAllowance({ delegate: intent.delegate, token: getAddress(this.config.chain.usdc) })
+        };
       default:
         throw badRequest(`unknown circle intent: ${intent.kind}`);
     }
@@ -413,6 +447,135 @@ export class SafeCircleAdapter {
       transfer: { from: transfer.from, to: transfer.to, amountAtomic: transfer.amountAtomic.toString(), token: getAddress(this.config.chain.usdc) },
       blockNumber: receipt.blockNumber ? String(receipt.blockNumber) : null
     };
+  }
+
+  // --- spending limits -------------------------------------------------------
+  //
+  // USDC only, and that is enforced here rather than left to a caller: every method below takes the
+  // token from `config.chain.usdc` and has no token parameter at all. A Circle cannot express an
+  // allowance for anything else, which is what "never allow arbitrary token allowances" means in
+  // code rather than in a review comment.
+
+  /** Is the Allowance Module actually installed on this Circle's Safe? Read live, never assumed. */
+  async isModuleEnabled(safeAddress) {
+    if (!this.config.circles.allowanceModule) return false;
+    return Boolean(await this.chain.readContract({
+      address: this._assertAddress(safeAddress), abi: SAFE_MODULE_ABI,
+      functionName: 'isModuleEnabled', args: [this._assertModule()]
+    }));
+  }
+
+  /**
+   * One member's live USDC allowance, straight from the module.
+   *
+   * `getTokenAllowance` runs the module's own internal `getAllowance`, which applies the period
+   * reset on read — so the `spent` it returns is exactly the figure the next transfer will be
+   * checked against. This is the only honest source for "spent today": summing Prism's activity
+   * would drift the moment a period rolled over, or the moment a transfer happened that Prism did
+   * not originate.
+   */
+  async getSpendingLimit({ safeAddress, delegate }) {
+    const tuple = await this.chain.readContract({
+      address: this._assertModule(), abi: ALLOWANCE_MODULE_ABI, functionName: 'getTokenAllowance',
+      args: [this._assertAddress(safeAddress), getAddress(delegate), getAddress(this.config.chain.usdc)]
+    });
+    return readAllowance(tuple, { token: getAddress(this.config.chain.usdc), decimals: this.config.chain.usdcDecimals });
+  }
+
+  /** Everyone the Circle has registered as a spender, from the module's own list. */
+  async getSpendDelegates(safeAddress, pageSize = 50) {
+    const [results] = await this.chain.readContract({
+      address: this._assertModule(), abi: ALLOWANCE_MODULE_ABI, functionName: 'getDelegates',
+      args: [this._assertAddress(safeAddress), 0, pageSize]
+    });
+    return (results ?? []).map((a) => getAddress(a));
+  }
+
+  /**
+   * The 32 bytes a member signs to authorize one spend, computed locally AND cross-checked against
+   * the deployed module's own `generateTransferHash`.
+   *
+   * Same discipline as the Safe digest, for the same reason: this is the value a compromised
+   * backend would have to lie with, so a disagreement is raised rather than papered over.
+   */
+  async getAllowanceTransferHash({ safeAddress, recipient, amountAtomic, nonce, crossCheck = true }) {
+    const safe = this._assertAddress(safeAddress);
+    const module = this._assertModule();
+    const token = getAddress(this.config.chain.usdc);
+    const local = allowanceTransferHash({
+      chainId: this.chainId, moduleAddress: module, safeAddress: safe, token, recipient, amountAtomic, nonce
+    });
+    if (crossCheck) {
+      const onchain = await this.chain.readContract({
+        address: module, abi: ALLOWANCE_MODULE_ABI, functionName: 'generateTransferHash',
+        args: [safe, token, getAddress(recipient), BigInt(amountAtomic), ZERO_ADDRESS, 0n, Number(nonce)]
+      }).catch(() => null);
+      if (onchain && String(onchain).toLowerCase() !== local.toLowerCase()) {
+        throw conflict('allowance transfer hash disagreement: Prism and the deployed module encode this spend differently');
+      }
+    }
+    return local;
+  }
+
+  /**
+   * Dry-run the allowance transfer. The module re-reads the live allowance, re-derives the transfer
+   * hash and re-checks the delegate's signature inside `executeAllowanceTransfer` — so a successful
+   * simulation is the MODULE confirming, at this block, that this member may spend this much.
+   */
+  async simulateAllowanceTransfer({ safeAddress, recipient, amountAtomic, delegate, signature }) {
+    const args = this._allowanceArgs({ safeAddress, recipient, amountAtomic, delegate, signature });
+    try {
+      await this.chain.simulateContract({
+        address: this._assertModule(), abi: ALLOWANCE_MODULE_ABI, functionName: 'executeAllowanceTransfer', args
+      });
+      return { ok: true };
+    } catch (error) {
+      logger.warn('circle.allowance.simulate.failed', { safeAddress, error: error.shortMessage ?? error.message });
+      return { ok: false, reason: error.shortMessage ?? error.message };
+    }
+  }
+
+  /** Relay the allowance transfer. The member signed; the relayer pays gas and holds no authority. */
+  async submitAllowanceTransfer({ safeAddress, recipient, amountAtomic, delegate, signature }) {
+    const args = this._allowanceArgs({ safeAddress, recipient, amountAtomic, delegate, signature });
+    const txHash = await this.chain.writeContract({
+      address: this._assertModule(), abi: ALLOWANCE_MODULE_ABI, functionName: 'executeAllowanceTransfer', args
+    });
+    logger.info('circle.allowance.exec.submitted', { safeAddress, delegate, txHash });
+    return { txHash };
+  }
+
+  /**
+   * Did this spend really happen, as this spend? A successful receipt is not enough: the evidence
+   * is a USDC `Transfer` emitted by the configured token, FROM the Circle's Safe, TO the reviewed
+   * recipient, for the exact amount — the same three-part test a threshold payment must pass.
+   */
+  verifyAllowanceTransferEvidence({ receipt, safeAddress, recipient, amountAtomic }) {
+    if (!receipt) return { ok: false, reason: 'no receipt yet' };
+    if (receipt.status !== 'success') return { ok: false, reason: 'the allowance transfer reverted' };
+    const transfer = findUsdcTransfer(receipt, {
+      usdcAddress: this.config.chain.usdc, from: this._assertAddress(safeAddress), to: recipient, amountAtomic
+    });
+    if (!transfer) return { ok: false, reason: 'no USDC Transfer from this Circle to the reviewed recipient for the exact amount' };
+    return {
+      ok: true,
+      transfer: { from: transfer.from, to: transfer.to, amountAtomic: transfer.amountAtomic.toString(), token: getAddress(this.config.chain.usdc) },
+      blockNumber: receipt.blockNumber ? String(receipt.blockNumber) : null
+    };
+  }
+
+  /** `paymentToken`/`payment` are always zero — a relayer fee would be a second spend from the member's own limit. */
+  _allowanceArgs({ safeAddress, recipient, amountAtomic, delegate, signature }) {
+    return [
+      this._assertAddress(safeAddress), getAddress(this.config.chain.usdc), getAddress(recipient),
+      BigInt(amountAtomic), ZERO_ADDRESS, 0n, getAddress(delegate), signature ?? '0x'
+    ];
+  }
+
+  _assertModule(override = null) {
+    const address = override ?? this.config.circles.allowanceModule;
+    if (!isAddress(address ?? '')) throw conflict('no Allowance Module is configured for this deployment');
+    return getAddress(address);
   }
 
   // --- internals -------------------------------------------------------------

@@ -51,6 +51,9 @@ export const alchemyProvider = {
   /** eth_call via a contract read. */
   async readContract(args) { return publicClient.readContract(args); },
 
+  /** Deployed bytecode at an address — how the Allowance Module gate identifies a contract. */
+  async getCode(address) { return (await publicClient.getCode({ address })) ?? '0x'; },
+
   /** Native MON balance (used to prove a user can pay with MON = 0). */
   async getBalance(address) { return publicClient.getBalance({ address }); },
 

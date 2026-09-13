@@ -25,6 +25,8 @@
  * on the adapter, so the code under test is the same code that runs in production.
  */
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+import fsSync from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   decodeFunctionData, encodeAbiParameters, getAddress, keccak256, toHex, toBytes,
   toEventSelector, padHex, recoverAddress
@@ -40,6 +42,31 @@ process.env.PRISM_CLAIM_VAULT = '0x0000000000000000000000000000000000000B22';
 process.env.RELAYER_PRIVATE_KEY = `0x${'11'.repeat(32)}`;
 process.env.CLAIM_AUTHORIZER_PRIVATE_KEY = `0x${'22'.repeat(32)}`;
 
+/**
+ * Safe's canonical Allowance Module v1.0.0. The fake serves its REAL deployed runtime bytecode at
+ * this address, read from the vendored capture, so the backend's module gate — which identifies a
+ * module by `keccak256(eth_getCode)` — is exercised against the genuine article rather than waved
+ * through. The module's *behaviour* is simulated below; its *identity* is not.
+ *
+ * The contract-level security properties (replay, over-limit, wrong token, removed delegate, and
+ * what a delegate structurally cannot do) are proven against the real bytecode in Foundry —
+ * `contracts/test/AllowanceModuleCompat.t.sol`. What the JS fake exists to exercise is the
+ * BACKEND's behaviour around it: the gate, the governance flow, the readback, freshness.
+ */
+export const ALLOWANCE_MODULE = '0x691f59471Bfd2B7d639DCF74671a2d648ED1E331';
+
+const CANONICAL_RUNTIME = fsSync.readFileSync(
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../contracts/vendor/safe-allowances-v1.0.0/canonical-runtime.hex'),
+  'utf8'
+).trim();
+
+// Derived independently, as everything else in this harness is.
+const ALLOWANCE_DOMAIN_TYPEHASH = keccak256(toBytes('EIP712Domain(uint256 chainId,address verifyingContract)'));
+const ALLOWANCE_TRANSFER_TYPEHASH = keccak256(toBytes(
+  'AllowanceTransfer(address safe,address token,address to,uint96 amount,address paymentToken,uint96 payment,uint16 nonce)'
+));
+
+export const RELAYER = '0x000000000000000000000000000000000000F00D';
 export const SAFE_SINGLETON = '0x41675C099F32341bf84BFc5382aF534df5C7461a';
 export const SAFE_PROXY_FACTORY = '0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67';
 export const SAFE_FALLBACK_HANDLER = '0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99';
@@ -66,6 +93,15 @@ const TRANSFER_TOPIC = toEventSelector('Transfer(address,address,uint256)');
 const EXEC_SUCCESS_TOPIC = toEventSelector('ExecutionSuccess(bytes32,uint256)');
 const EXEC_FAILURE_TOPIC = toEventSelector('ExecutionFailure(bytes32,uint256)');
 const TRANSFER_SELECTOR = '0xa9059cbb';
+const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
+const sel = (sig) => keccak256(toBytes(sig)).slice(0, 10);
+const SELECTOR = {
+  addDelegate: sel('addDelegate(address)'),
+  removeDelegate: sel('removeDelegate(address,bool)'),
+  setAllowance: sel('setAllowance(address,address,uint96,uint16,uint32)'),
+  deleteAllowance: sel('deleteAllowance(address,address)'),
+  enableModule: sel('enableModule(address)')
+};
 
 /** Safe's own EIP-712 digest, spelled out independently of `safeEncoding.js`. */
 function safeDigest({ chainId, safeAddress, tx }) {
@@ -96,7 +132,12 @@ export function fakeSafeChain({ chainId = 10143, usdc, router }) {
   const receipts = new Map();       // txHash -> { status, blockNumber, logs }
   const balances = new Map();       // address -> bigint
   const usedAuthorizations = new Set(); // `${authorizer}:${nonce}` — the ERC-3009 nonce namespace
-  const calls = { deployments: 0, writes: [], executions: [] };
+  // Allowance Module state, mirroring the real contract's shape.
+  const enabledModules = new Map();     // safe -> Set(module)
+  const spendDelegates = new Map();     // safe -> [delegate]
+  const allowanceBook = new Map();      // `${safe}:${delegate}:${token}` -> { amount, spent, resetTimeMin, lastResetMin, nonce }
+  let nowSeconds = 1_800_000_000;       // a realistic chain age; see the reset arithmetic below
+  const calls = { deployments: 0, writes: [], executions: [], allowanceTransfers: [] };
   let block = 1000n;
 
   const usdcAddress = getAddress(usdc);
@@ -117,7 +158,9 @@ export function fakeSafeChain({ chainId = 10143, usdc, router }) {
     readFails: false,
     // Make the Safe accept the transaction but let the inner USDC call fail, which is how a real
     // Safe produces `status: success` with an `ExecutionFailure` log and no Transfer.
-    innerCallFails: false
+    innerCallFails: false,
+    // Serve different code at the module address, to exercise the gate refusing an impostor.
+    moduleCodeOverride: null
   };
 
   // SafeProxyFactory's address derivation, spelled out independently of the adapter's copy so a
@@ -201,6 +244,19 @@ export function fakeSafeChain({ chainId = 10143, usdc, router }) {
       } else {
         logs.push(transferLog(safe.address, call.to, call.amount));
       }
+    } else if (getAddress(to) === getAddress(ALLOWANCE_MODULE)) {
+      // Module administration: adding a delegate, setting or clearing a limit. Reachable ONLY from
+      // here — i.e. only as a transaction the Safe itself executed, which is what makes a limit
+      // change a threshold-approved act.
+      innerOk = commit ? applyModuleAdmin(safe.address, data) : true;
+    } else if (getAddress(to) === getAddress(safe.address) && String(data).slice(0, 10).toLowerCase() === SELECTOR.enableModule) {
+      if (commit) {
+        const key = getAddress(safe.address).toLowerCase();
+        const set = enabledModules.get(key) ?? new Set();
+        set.add(getAddress(`0x${data.slice(34, 74)}`));
+        enabledModules.set(key, set);
+      }
+      innerOk = true;
     } else {
       // Owner management: the Safe calling itself. Applied only so governance execution can be
       // exercised end to end; the payment tests never take this branch.
@@ -246,9 +302,148 @@ export function fakeSafeChain({ chainId = 10143, usdc, router }) {
     return txHash;
   }
 
+  // --- Allowance Module -------------------------------------------------------
+
+  const allowanceKey = (safe, delegate, token) =>
+    `${getAddress(safe).toLowerCase()}:${getAddress(delegate).toLowerCase()}:${getAddress(token).toLowerCase()}`;
+
+  /**
+   * The module's `getAllowance`: reads storage and applies the period reset on load, exactly as the
+   * contract does. This is why "spent today" is a chain read — the reset happens here, not in Prism.
+   */
+  function readAllowanceState(safe, delegate, token) {
+    const stored = allowanceBook.get(allowanceKey(safe, delegate, token))
+      ?? { amount: 0n, spent: 0n, resetTimeMin: 0, lastResetMin: 0, nonce: 0 };
+    const allowance = { ...stored };
+    const currentMin = Math.floor(nowSeconds / 60);
+    if (allowance.resetTimeMin > 0 && allowance.lastResetMin <= currentMin - allowance.resetTimeMin) {
+      allowance.spent = 0n;
+      allowance.lastResetMin = currentMin - ((currentMin - allowance.lastResetMin) % allowance.resetTimeMin);
+    }
+    return allowance;
+  }
+
+  function moduleTransferHash({ safe, token, to, amount, nonce }) {
+    const domainSeparator = keccak256(encodeAbiParameters(
+      [{ type: 'bytes32' }, { type: 'uint256' }, { type: 'address' }],
+      [ALLOWANCE_DOMAIN_TYPEHASH, BigInt(knobs.reportChainId), getAddress(ALLOWANCE_MODULE)]
+    ));
+    const transferHash = keccak256(encodeAbiParameters(
+      [{ type: 'bytes32' }, { type: 'address' }, { type: 'address' }, { type: 'address' },
+       { type: 'uint96' }, { type: 'address' }, { type: 'uint96' }, { type: 'uint16' }],
+      [ALLOWANCE_TRANSFER_TYPEHASH, getAddress(safe), getAddress(token), getAddress(to),
+       BigInt(amount), ZERO_ADDR, 0n, Number(nonce)]
+    ));
+    return keccak256(`0x1901${domainSeparator.slice(2)}${transferHash.slice(2)}`);
+  }
+
+  /** `executeAllowanceTransfer`, with the real contract's ordering and its v1.0.0 nonce ceiling. */
+  async function runAllowanceTransfer(args, { commit, sender }) {
+    const [safeAddr, token, to, amount, , , delegate, signature] = args;
+    const safe = safes.get(getAddress(safeAddr).toLowerCase());
+    if (!safe) throw new Error('no Safe');
+    if (!(enabledModules.get(getAddress(safeAddr).toLowerCase()) ?? new Set()).has(getAddress(ALLOWANCE_MODULE))) {
+      throw new Error('GS104: module not enabled');
+    }
+
+    const allowance = readAllowanceState(safeAddr, delegate, token);
+    const hash = moduleTransferHash({ safe: safeAddr, token, to, amount, nonce: allowance.nonce });
+
+    // v1.0.0: refuse rather than wrap. This is the fix for the replay bug v0.1.x carried.
+    if (allowance.nonce === 0xffff) throw new Error('allowance.nonce != type(uint16).max (use different delegate)');
+    allowance.nonce += 1;
+
+    const newSpent = allowance.spent + BigInt(amount);
+    if (!(newSpent > allowance.spent && newSpent <= allowance.amount)) {
+      throw new Error('newSpent > allowance.spent && newSpent <= allowance.amount');
+    }
+    allowance.spent = newSpent;
+
+    // checkSignature: an empty signature authenticates msg.sender; otherwise raw ECDSA over the hash.
+    const signer = (!signature || signature === '0x')
+      ? getAddress(sender)
+      : await recoverAddress({ hash, signature }).then(getAddress).catch(() => null);
+    const registered = (spendDelegates.get(getAddress(safeAddr).toLowerCase()) ?? [])
+      .some((d) => getAddress(d) === getAddress(delegate));
+    if (!signer || signer !== getAddress(delegate) || !registered) {
+      throw new Error('expectedDelegate == signer && delegates[address(safe)][uint48(signer)].delegate == signer');
+    }
+
+    if (balanceOf(safeAddr) < BigInt(amount)) throw new Error('Could not execute token transfer');
+
+    const logs = [transferLog(safeAddr, to, amount)];
+    if (commit) {
+      allowanceBook.set(allowanceKey(safeAddr, delegate, token), allowance);
+      debit(safeAddr, amount);
+      credit(to, amount);
+      calls.allowanceTransfers.push({ safe: getAddress(safeAddr), delegate: getAddress(delegate), amount: String(amount) });
+    }
+    return { logs };
+  }
+
+  /** Module administration — only ever reached through a Safe transaction, as on the real thing. */
+  function applyModuleAdmin(safeAddr, data) {
+    const safeKey = getAddress(safeAddr).toLowerCase();
+    const selector = data.slice(0, 10).toLowerCase();
+    const word = (i) => `0x${data.slice(10 + i * 64, 10 + (i + 1) * 64)}`;
+    const addr = (i) => getAddress(`0x${word(i).slice(-40)}`);
+    const num = (i) => BigInt(word(i));
+
+    if (selector === SELECTOR.addDelegate) {
+      const list = spendDelegates.get(safeKey) ?? [];
+      if (!list.some((d) => getAddress(d) === addr(0))) list.push(addr(0));
+      spendDelegates.set(safeKey, list);
+      return true;
+    }
+    if (selector === SELECTOR.removeDelegate) {
+      const delegate = addr(0);
+      const removeAllowances = num(1) !== 0n;
+      spendDelegates.set(safeKey, (spendDelegates.get(safeKey) ?? []).filter((d) => getAddress(d) !== delegate));
+      if (removeAllowances) {
+        for (const key of [...allowanceBook.keys()]) {
+          if (key.startsWith(`${safeKey}:${delegate.toLowerCase()}:`)) {
+            const existing = allowanceBook.get(key);
+            allowanceBook.set(key, { ...existing, amount: 0n, spent: 0n, resetTimeMin: 0, lastResetMin: 0 });
+          }
+        }
+      }
+      return true;
+    }
+    if (selector === SELECTOR.setAllowance) {
+      const delegate = addr(0);
+      if (!(spendDelegates.get(safeKey) ?? []).some((d) => getAddress(d) === delegate)) return false;
+      const token = addr(1);
+      const key = allowanceKey(safeAddr, delegate, token);
+      const existing = allowanceBook.get(key) ?? { amount: 0n, spent: 0n, resetTimeMin: 0, lastResetMin: 0, nonce: 0 };
+      const next = { ...existing };
+      if (next.nonce === 0) next.nonce = 1;        // the module marks an activated allowance
+      const currentMin = Math.floor(nowSeconds / 60);
+      if (next.lastResetMin === 0) next.lastResetMin = currentMin;
+      next.resetTimeMin = Number(num(3));
+      next.amount = num(2);
+      allowanceBook.set(key, next);
+      return true;
+    }
+    if (selector === SELECTOR.deleteAllowance) {
+      const key = allowanceKey(safeAddr, addr(0), addr(1));
+      const existing = allowanceBook.get(key);
+      if (existing) allowanceBook.set(key, { ...existing, amount: 0n, spent: 0n, resetTimeMin: 0, lastResetMin: 0 });
+      return true;
+    }
+    return false;
+  }
+
   const chain = {
     async getChainId() { return knobs.reportChainId; },
     async getBalance() { return 0n; },              // members hold MON = 0; the relayer pays gas
+
+    /** The module's REAL deployed runtime, so the backend's codeHash gate is genuinely exercised. */
+    async getCode(address) {
+      if (getAddress(address) === getAddress(ALLOWANCE_MODULE)) {
+        return knobs.moduleCodeOverride ?? CANONICAL_RUNTIME;
+      }
+      return safes.has(getAddress(address).toLowerCase()) ? '0x60006000' : '0x';
+    },
 
     async readContract({ address, functionName, args }) {
       if (knobs.readFails) throw new Error('rpc unavailable');
@@ -256,6 +451,26 @@ export function fakeSafeChain({ chainId = 10143, usdc, router }) {
       if (functionName === 'balanceOf') return balanceOf(args[0]);
       if (functionName === 'authorizationState') return usedAuthorizations.has(`${getAddress(args[0]).toLowerCase()}:${String(args[1]).toLowerCase()}`);
       if (functionName === 'DOMAIN_SEPARATOR') return keccak256(toHex('fake usdc domain'));
+
+      // --- Allowance Module reads ---
+      if (getAddress(address) === getAddress(ALLOWANCE_MODULE)) {
+        switch (functionName) {
+          case 'VERSION': return knobs.moduleVersion ?? '1.0.0';
+          case 'NAME': return 'Allowance Module';
+          case 'getTokenAllowance': {
+            const a = readAllowanceState(args[0], args[1], args[2]);
+            return [a.amount, a.spent, BigInt(a.resetTimeMin), BigInt(a.lastResetMin), BigInt(a.nonce)];
+          }
+          case 'getDelegates':
+            return [(spendDelegates.get(getAddress(args[0]).toLowerCase()) ?? []).map(getAddress), 0];
+          case 'generateTransferHash':
+            return moduleTransferHash({ safe: args[0], token: args[1], to: args[2], amount: args[3], nonce: args[6] });
+          default: throw new Error(`fake module: unexpected read ${functionName}`);
+        }
+      }
+      if (functionName === 'isModuleEnabled') {
+        return (enabledModules.get(getAddress(address).toLowerCase()) ?? new Set()).has(getAddress(args[0]));
+      }
 
       const safe = safes.get(getAddress(address).toLowerCase());
       if (!safe) throw new Error(`no contract at ${address}`);
@@ -287,6 +502,10 @@ export function fakeSafeChain({ chainId = 10143, usdc, router }) {
       }
       if (functionName === 'settle') {
         await runSettle(args);
+        return { result: undefined, request: { address, functionName, args } };
+      }
+      if (functionName === 'executeAllowanceTransfer') {
+        await runAllowanceTransfer(args, { commit: false, sender: RELAYER });
         return { result: undefined, request: { address, functionName, args } };
       }
       return { request: { address, functionName, args } };
@@ -323,6 +542,10 @@ export function fakeSafeChain({ chainId = 10143, usdc, router }) {
         settlement.apply();
         return mine(`settle:${calls.writes.length}`, settlement.logs);
       }
+      if (functionName === 'executeAllowanceTransfer') {
+        const { logs } = await runAllowanceTransfer(args, { commit: true, sender: RELAYER });
+        return mine(`allowance:${calls.writes.length}`, logs);
+      }
       throw new Error(`fake safe: unexpected write ${functionName}`);
     },
 
@@ -355,7 +578,15 @@ export function fakeSafeChain({ chainId = 10143, usdc, router }) {
       if (threshold !== undefined) safe.threshold = threshold;
     },
     bumpNonce: (address, to) => { safes.get(getAddress(address).toLowerCase()).nonce = to; },
-    safeDigest
+    safeDigest,
+    /** Move the fake chain's clock, so an allowance window can be rolled over. */
+    warp: (seconds) => { nowSeconds += seconds; },
+    now: () => nowSeconds,
+    /** Inspect module state directly, for assertions that must not go through the code under test. */
+    delegatesOf: (safeAddress) => (spendDelegates.get(getAddress(safeAddress).toLowerCase()) ?? []).map(getAddress),
+    allowanceOf: (safeAddress, delegate, token) => readAllowanceState(safeAddress, delegate, token),
+    moduleEnabledOn: (safeAddress) =>
+      (enabledModules.get(getAddress(safeAddress).toLowerCase()) ?? new Set()).has(getAddress(ALLOWANCE_MODULE))
   };
 }
 
@@ -373,7 +604,7 @@ export function tempStore(JsonStore) {
  * at the same fake, so contributions settle through the real router path against the same USDC
  * ledger the Circle's balance is read from.
  */
-export async function circleStack({ withPayments = false } = {}) {
+export async function circleStack({ withPayments = false, withLimits = false } = {}) {
   const { config } = await import('../src/config.js');
   const { JsonStore } = await import('../src/lib/jsonStore.js');
   const { IdentityService } = await import('../src/services/identityService.js');
@@ -409,8 +640,28 @@ export async function circleStack({ withPayments = false } = {}) {
     });
   }
 
-  const circles = new CircleService({ store, config, identityService, safeAdapter, paymentService });
-  return { store, config, identityService, safeAdapter, circles, fake, paymentService, resolverService, restoreProvider };
+  // Spending limits are OFF unless a suite asks for them, exactly as they ship. Turning them on
+  // here points the real `AllowanceModuleGate` at the fake chain — which serves the module's genuine
+  // deployed bytecode, so the gate's codeHash check is a real check rather than a stubbed pass.
+  let limitGate = null;
+  const restoreLimits = { enabled: config.circles.limitsEnabled, module: config.circles.allowanceModule };
+  if (withLimits) {
+    const { AllowanceModuleGate } = await import('../src/circles/allowanceModuleGate.js');
+    config.circles.limitsEnabled = true;
+    config.circles.allowanceModule = ALLOWANCE_MODULE;
+    limitGate = new AllowanceModuleGate({ config, chain: fake.chain });
+  }
+
+  const circles = new CircleService({ store, config, identityService, safeAdapter, paymentService, limitGate });
+  const restore = () => {
+    restoreProvider();
+    config.circles.limitsEnabled = restoreLimits.enabled;
+    config.circles.allowanceModule = restoreLimits.module;
+  };
+  return {
+    store, config, identityService, safeAdapter, circles, fake, paymentService, resolverService,
+    limitGate, restoreProvider: restore
+  };
 }
 
 let keyCounter = 0;
