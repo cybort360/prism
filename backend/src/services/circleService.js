@@ -465,6 +465,144 @@ export class CircleService {
   }
 
   /**
+   * Invitations addressed to this person, across every Circle.
+   *
+   * Without this an invitation is unreachable: `acceptInvitation` needs an id that only the invited
+   * person's own device can supply, and nothing else in Prism would ever hand it to them. Expired
+   * invitations are filtered rather than returned with a flag — an invitation past its TTL is not a
+   * thing anyone can act on, and offering it would only produce a failure at the tap.
+   */
+  listMyInvitations(prismId) {
+    const data = this.store.read();
+    const now = Date.now();
+    return Object.values(data.circleInvitations ?? {})
+      .filter((i) => i.invitedPrismId === prismId && i.status === 'PENDING' && Date.parse(i.expiresAt) > now)
+      .map((i) => {
+        const circle = data.circles?.[i.circleId];
+        const invitedBy = this.identityService.get(i.invitedByPrismId);
+        return {
+          inviteId: i.inviteId,
+          circleId: i.circleId,
+          circleName: circle?.name ?? null,
+          icon: circle?.icon ?? null,
+          role: i.role,
+          // Who is asking matters more than what the role is called, so it is never omitted.
+          invitedBy: invitedBy?.displayName ?? (invitedBy?.handle ? `@${invitedBy.handle}` : null),
+          expiresAt: i.expiresAt,
+          createdAt: i.createdAt
+        };
+      })
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  }
+
+  /**
+   * Change a member's role — but only between the roles Prism alone decides.
+   *
+   * ADMIN is not one of them, in either direction: admin authority IS the Safe's owner set, so
+   * granting or revoking it is `prepareAddAdmin`/`prepareRemoveAdmin` and a threshold of signatures.
+   * Letting this method write `role: 'ADMIN'` would produce a member who looks like an admin in
+   * Prism and holds nothing on Monad, which is the exact lie the whole service is built to avoid.
+   *
+   * SPENDER is Prism-side too, but it has an on-chain shadow: a spender may hold an allowance. So
+   * demoting out of SPENDER is refused while that allowance is live — the limit has to be revoked
+   * by the Circle first, or the role change would take away the label and leave the money access.
+   */
+  async setMemberRole({ circleId, actorPrismId, prismId, role }) {
+    const circle = this._circle(circleId);
+    this._assertAdmin(circleId, actorPrismId);
+    assertRole(role);
+    if (circle.status === CircleStatus.CLOSED) throw conflict('this Circle is closed');
+    if (CHAIN_BACKED_ROLES.includes(role)) {
+      throw badRequest('admin authority is granted by the Circle approving it on Monad, not by changing a role here');
+    }
+
+    const member = this.store.read().circleMembers?.[memberKey(circleId, prismId)];
+    if (!member) throw notFound('that person is not in this Circle');
+    if (TERMINAL_MEMBER_STATUSES.includes(member.status)) throw conflict('that person has left this Circle');
+    if (CHAIN_BACKED_ROLES.includes(member.role)) {
+      throw badRequest("this person is an admin. Removing admin authority is a Circle decision that has to be approved on Monad, so it can't be done by changing a role here");
+    }
+    if (member.role === role) return { circleId, prismId, role, unchanged: true };
+
+    await this._assertNoLiveSpendingAccess(circle, member, 'change what this person can do');
+
+    this.store.mutate((d) => { d.circleMembers[memberKey(circleId, prismId)].role = role; });
+    this._event(circleId, 'circle.member.role_changed', { prismId, from: member.role, to: role, by: actorPrismId });
+    return { circleId, prismId, role, unchanged: false };
+  }
+
+  /**
+   * Remove a member from a Circle.
+   *
+   * Prism-side membership only. An admin cannot be removed here for the same reason they cannot be
+   * demoted here — their authority is on Monad — and neither can anyone still holding a live
+   * spending allowance. Both refusals name the governance action that does work, because a dead end
+   * at this point would push someone toward believing a removal that had not happened.
+   */
+  async removeMember({ circleId, actorPrismId, prismId }) {
+    const circle = this._circle(circleId);
+    this._assertAdmin(circleId, actorPrismId);
+
+    const member = this.store.read().circleMembers?.[memberKey(circleId, prismId)];
+    if (!member) throw notFound('that person is not in this Circle');
+    if (TERMINAL_MEMBER_STATUSES.includes(member.status)) return { circleId, prismId, status: member.status, alreadyRemoved: true };
+    if (CHAIN_BACKED_ROLES.includes(member.role)) {
+      throw badRequest("this person is an admin. Removing an admin is a Circle decision that has to be approved on Monad — use 'Remove as admin', which the Circle's admins approve together");
+    }
+
+    await this._assertNoLiveSpendingAccess(circle, member, 'remove this person');
+
+    this.store.mutate((d) => {
+      const m = d.circleMembers[memberKey(circleId, prismId)];
+      m.status = MemberStatus.REMOVED;
+      m.removedAt = new Date().toISOString();
+      // Any invitation they have not answered dies with the membership, so a pending invite cannot
+      // quietly re-admit someone an admin has just removed.
+      for (const invite of Object.values(d.circleInvitations ?? {})) {
+        if (invite.circleId === circleId && invite.invitedPrismId === prismId && invite.status === 'PENDING') {
+          invite.status = 'REVOKED';
+          invite.respondedAt = new Date().toISOString();
+        }
+      }
+    });
+    this._event(circleId, 'circle.member.removed', { prismId, role: member.role, by: actorPrismId });
+    return { circleId, prismId, status: MemberStatus.REMOVED, alreadyRemoved: false };
+  }
+
+  /**
+   * Refuse a Prism-side membership change while the member can still spend on-chain.
+   *
+   * Fails CLOSED on a read failure, and that is deliberate. The alternative is to record a removal
+   * we cannot verify — the app would then show "no spending access" for someone whose allowance is
+   * still live on the module, which is precisely the stale-session failure limits are designed
+   * against. Being unable to remove someone for a minute is recoverable; telling an admin their
+   * money is safe when it is not is not.
+   */
+  async _assertNoLiveSpendingAccess(circle, member, action) {
+    const moduleAddress = this.config.circles.allowanceModule;
+    // No module configured on this deployment means no allowance can exist to strand.
+    if (!moduleAddress || circle.status !== CircleStatus.ACTIVE || !circle.safeAddress) return;
+    if (!member.authorityAddress) return;
+    if (typeof this.safe.isModuleEnabled !== 'function' || typeof this.safe.getSpendDelegates !== 'function') return;
+
+    let enabled;
+    let delegates;
+    try {
+      enabled = await this.safe.isModuleEnabled(circle.safeAddress);
+      if (!enabled) return;
+      delegates = await this.safe.getSpendDelegates(circle.safeAddress);
+    } catch (e) {
+      logger.error('circle.member.spend_check_failed', { circleId: circle.circleId, error: e.message });
+      throw conflict(`Monad could not be read just now, so Prism can't confirm whether this person can still spend from the Circle. Try again in a moment rather than ${action} without knowing`);
+    }
+
+    const holds = delegates.some((d) => getAddress(d).toLowerCase() === getAddress(member.authorityAddress).toLowerCase());
+    if (holds) {
+      throw conflict(`${member.displayName ?? 'this person'} can still spend from this Circle. The Circle has to approve removing their spending access on Monad first — otherwise they would keep it`);
+    }
+  }
+
+  /**
    * Atomically take an invitation out of PENDING. Every reason an invitation must not be honoured is
    * checked inside one mutate so two concurrent accepts cannot both win.
    */
@@ -546,7 +684,8 @@ export class CircleService {
       circle, actorPrismId, kind: ProposalKind.OWNER_ADD, authority,
       intent: { kind: 'OWNER_ADD', owner, threshold: newThreshold },
       memo: `Add ${target.displayName ?? (target.handle ? `@${target.handle}` : 'an admin')} as an admin`,
-      subject: { prismId: target.prismId, authorityAddress: owner, threshold: newThreshold, ownerCountAfter }
+      subject: { prismId: target.prismId, authorityAddress: owner, threshold: newThreshold, ownerCountAfter },
+      governance: { kind: 'OWNER_ADD', owner, prismId: target.prismId, threshold: newThreshold, ownerCountAfter, step: 'OWNER_ADD', remainingSteps: [] }
     });
   }
 
@@ -579,7 +718,8 @@ export class CircleService {
       circle, actorPrismId, kind: ProposalKind.OWNER_REMOVE, authority,
       intent: { kind: 'OWNER_REMOVE', owner, threshold: newThreshold },
       memo: `Remove ${member.displayName ?? member.handle ?? 'an admin'} as an admin`,
-      subject: { prismId, authorityAddress: owner, threshold: newThreshold, ownerCountAfter }
+      subject: { prismId, authorityAddress: owner, threshold: newThreshold, ownerCountAfter },
+      governance: { kind: 'OWNER_REMOVE', owner, prismId, threshold: newThreshold, ownerCountAfter, step: 'OWNER_REMOVE', remainingSteps: [] }
     });
   }
 
@@ -593,7 +733,8 @@ export class CircleService {
       circle, actorPrismId, kind: ProposalKind.THRESHOLD_CHANGE, authority,
       intent: { kind: 'THRESHOLD_CHANGE', threshold },
       memo: `Require ${threshold} of ${authority.owners.length} approvals`,
-      subject: { threshold, ownerCountAfter: authority.owners.length }
+      subject: { threshold, ownerCountAfter: authority.owners.length },
+      governance: { kind: 'THRESHOLD_CHANGE', threshold, ownerCountAfter: authority.owners.length, step: 'THRESHOLD_CHANGE', remainingSteps: [] }
     });
   }
 
@@ -1146,6 +1287,87 @@ export class CircleService {
     const recorded = await this.recordApproval({ circleId, proposalId, prismId, signature });
     const view = await this.getPayment({ circleId, proposalId, prismId });
     return { ...recorded, payment: view };
+  }
+
+  /**
+   * Approve a Circle change that is not a payment.
+   *
+   * Same discipline as `approvePayment`, and deliberately a separate method rather than a relaxed
+   * version of it: what has to be bound is different. A payment binds a recipient and an amount; a
+   * governance change binds a *target and calldata*, and the only targets a Circle ever signs are
+   * its own Safe and the configured Allowance Module. Everything else — including a proposal whose
+   * fields were edited after the digest was computed — is refused before a signature is taken.
+   */
+  async approveGovernance({ circleId, proposalId, prismId, signature }) {
+    const circle = this._circle(circleId);
+    const proposal = this._proposal(circleId, proposalId);
+    if (proposal.kind === ProposalKind.PAYMENT) throw badRequest('that proposal is a payment');
+    if (!proposal.governance) throw badRequest('that proposal is not a governance change');
+
+    const binding = this._governanceBinding(circle, proposal);
+    if (!binding.ok) {
+      this._setPaymentState(proposalId, CirclePaymentState.INVALIDATED, {
+        extra: { failureReason: binding.reasons.join('; ') }, detail: { reasons: binding.reasons }
+      });
+      throw conflict(`this change was altered after it was proposed and can no longer be approved: ${binding.reasons.join('; ')}`);
+    }
+
+    const recorded = await this.recordApproval({ circleId, proposalId, prismId, signature });
+    const view = await this._governanceView(this._proposal(circleId, proposalId), {});
+    return { ...recorded, payment: view, governance: view };
+  }
+
+  /**
+   * What a governance proposal must still be for its collected signatures to mean anything.
+   *
+   * The target check is the load-bearing one. A Safe transaction can call any address with any
+   * calldata, so a Circle that could be talked into signing an arbitrary target would have no
+   * safety property at all. Two addresses are legitimate and no others: the Circle's own Safe (for
+   * its owner set, its threshold, and enabling the module) and the configured Allowance Module (for
+   * delegates and limits). The digest recomputation then proves the signed bytes are the bytes of
+   * exactly these fields.
+   */
+  _governanceBinding(circle, proposal) {
+    const reasons = [];
+    const tx = proposal.safeTransaction;
+    const same = (a, b) => { try { return getAddress(a) === getAddress(b); } catch { return false; } };
+
+    if (!tx) return { ok: false, reasons: ['this change has no recorded Safe transaction'] };
+    if (!same(proposal.safeAddress, circle.safeAddress)) reasons.push('the Circle Safe is not the Safe this change was built for');
+    if (String(proposal.chainId) !== String(circle.chainId)) reasons.push('the chain is not the chain this change was built for');
+    if (Number(tx.operation) !== 0) reasons.push('the transaction is a delegatecall, which a Circle never signs');
+    if (BigInt(tx.value ?? 0) !== 0n) reasons.push('the transaction moves native MON, which a Circle change never does');
+    if (BigInt(tx.gasPrice ?? 0) !== 0n || BigInt(tx.baseGas ?? 0) !== 0n || BigInt(tx.safeTxGas ?? 0) !== 0n
+      || !same(tx.gasToken, ZERO_ADDRESS) || !same(tx.refundReceiver, ZERO_ADDRESS)) {
+      reasons.push('the gas-refund fields are not neutral, so a second unreviewed transaction could hide inside this one');
+    }
+    if (String(tx.nonce) !== String(proposal.safeNonce)) reasons.push('the Safe nonce is not the nonce this change was built for');
+
+    // The two addresses a Circle may ever target, and which kinds may target which.
+    const module = this.config.circles.allowanceModule;
+    const targetsModule = SPENDING_LIMIT_KINDS.includes(proposal.kind) && proposal.kind !== ProposalKind.MODULE_ENABLE;
+    if (targetsModule) {
+      if (!module) reasons.push('this deployment has no configured Allowance Module, so this change cannot be approved');
+      else if (!same(tx.to, module)) reasons.push('the transaction target is not the verified Allowance Module');
+    } else if (!same(tx.to, circle.safeAddress)) {
+      reasons.push('the transaction target is not this Circle');
+    }
+
+    if (!reasons.length) {
+      const recomputed = safeTxHash({
+        chainId: circle.chainId,
+        safeAddress: circle.safeAddress,
+        tx: safeTransaction({
+          to: tx.to, value: BigInt(tx.value), data: tx.data, operation: Number(tx.operation),
+          safeTxGas: BigInt(tx.safeTxGas), baseGas: BigInt(tx.baseGas), gasPrice: BigInt(tx.gasPrice),
+          gasToken: tx.gasToken, refundReceiver: tx.refundReceiver, nonce: BigInt(tx.nonce)
+        })
+      });
+      if (recomputed.toLowerCase() !== String(proposal.safeTxHash).toLowerCase()) {
+        reasons.push('the recorded approval digest is not the digest of these fields');
+      }
+    }
+    return { ok: reasons.length === 0, reasons };
   }
 
   /**
@@ -1758,6 +1980,38 @@ export class CircleService {
           ? { ok: true, state: { delegate: g.delegate, amountAtomic: '0' } }
           : { ok: false, reason: 'the transaction succeeded but the allowance is still not zero' };
       }
+      // Authority changes read back the Safe's own owner set and threshold. Nothing here trusts the
+      // transaction having succeeded: `ExecutionSuccess` only says the Safe ran the call, and a call
+      // that ran is not the same claim as an owner set that changed.
+      case ProposalKind.OWNER_ADD: {
+        const state = await this.safe.getCircleState(circle.safeAddress);
+        const owners = state.owners.map((o) => getAddress(o));
+        if (!owners.includes(getAddress(g.owner))) {
+          return { ok: false, reason: 'the transaction succeeded but that person is still not an admin of this Circle' };
+        }
+        if (Number(state.threshold) !== Number(g.threshold)) {
+          return { ok: false, reason: `the Circle now requires ${state.threshold} approvals, not the ${g.threshold} that was approved` };
+        }
+        return { ok: true, state: { owners, threshold: Number(state.threshold), added: getAddress(g.owner) } };
+      }
+      case ProposalKind.OWNER_REMOVE: {
+        const state = await this.safe.getCircleState(circle.safeAddress);
+        const owners = state.owners.map((o) => getAddress(o));
+        if (owners.includes(getAddress(g.owner))) {
+          return { ok: false, reason: 'the transaction succeeded but that person is still an admin of this Circle' };
+        }
+        if (Number(state.threshold) !== Number(g.threshold)) {
+          return { ok: false, reason: `the Circle now requires ${state.threshold} approvals, not the ${g.threshold} that was approved` };
+        }
+        return { ok: true, state: { owners, threshold: Number(state.threshold), removed: getAddress(g.owner) } };
+      }
+      case ProposalKind.THRESHOLD_CHANGE: {
+        const state = await this.safe.getCircleState(circle.safeAddress);
+        if (Number(state.threshold) !== Number(g.threshold)) {
+          return { ok: false, reason: `the Circle still requires ${state.threshold} approvals, not the ${g.threshold} that was approved` };
+        }
+        return { ok: true, state: { owners: state.owners.map((o) => getAddress(o)), threshold: Number(state.threshold) } };
+      }
       default:
         return { ok: false, reason: `no readback is defined for ${proposal.kind}` };
     }
@@ -1794,6 +2048,9 @@ export class CircleService {
       isSpendingLimitChange: SPENDING_LIMIT_KINDS.includes(proposal.kind),
       lifecycle,
       storedLifecycle: proposal.lifecycle,
+      // The coarse proposal status alongside the fine-grained lifecycle, so a caller that only
+      // needs "is this still open" does not have to interpret eleven states to find out.
+      status: proposal.status,
       proposerPrismId: proposal.proposerPrismId,
       memo: proposal.memo,
       subject: proposal.subject ?? null,

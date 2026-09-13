@@ -203,3 +203,131 @@ test('an invitation carries no phone number, address, or other private identity 
   assert.ok(!serialized.includes(kemi.accountAddress), 'no wallet address in an invitation');
   assert.deepEqual(Object.keys(invite).sort(), ['circleId', 'expiresAt', 'inviteId', 'role', 'status']);
 });
+
+// ===========================================================================
+// The member page: roles, removal, and the two things it must refuse
+// ===========================================================================
+//
+// The Member screen offers "Change permissions" and "Remove from Circle". Both are Prism-side
+// edits, and both have an on-chain shadow that makes them dangerous if taken at face value: an
+// admin's authority is the Safe's owner set, and a spender's limit is an allowance on the module.
+// Everything below is an attempt to use the cheap Prism-side edit to achieve the expensive
+// on-chain one, and an assertion that it fails.
+
+test('member roles: an admin can move someone between the roles Prism alone decides', async () => {
+  const { circles, ada, circle, identityService } = await circleOfTwo();
+  const kemi = await makeIdentity(identityService, { name: 'Kemi', handle: 'kemi' });
+  const invite = circles.invite({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId, role: 'VIEWER' });
+  circles.acceptInvitation({ circleId: circle.circleId, inviteId: invite.inviteId, prismId: kemi.prismId });
+
+  const changed = await circles.setMemberRole({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId, role: 'CONTRIBUTOR' });
+  assert.equal(changed.role, 'CONTRIBUTOR');
+  assert.equal(changed.unchanged, false);
+  assert.equal(circles.listMembers(circle.circleId, ada.prismId).find((m) => m.prismId === kemi.prismId).role, 'CONTRIBUTOR');
+
+  // Re-applying the same role is a no-op rather than an error: the UI may be a tap behind.
+  const again = await circles.setMemberRole({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId, role: 'CONTRIBUTOR' });
+  assert.equal(again.unchanged, true);
+});
+
+test('member roles: ADMIN cannot be granted by a role change — only the Safe confers authority', async () => {
+  const { circles, ada, circle, identityService } = await circleOfTwo();
+  const kemi = await makeIdentity(identityService, { name: 'Kemi', handle: 'kemi' });
+  const invite = circles.invite({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId, role: 'CONTRIBUTOR' });
+  circles.acceptInvitation({ circleId: circle.circleId, inviteId: invite.inviteId, prismId: kemi.prismId });
+
+  await assert.rejects(
+    () => circles.setMemberRole({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId, role: 'ADMIN' }),
+    /approving it on Monad/);
+  assert.equal(circles.listMembers(circle.circleId, ada.prismId).find((m) => m.prismId === kemi.prismId).role, 'CONTRIBUTOR');
+});
+
+test('member roles: an existing admin cannot be demoted by a role change either', async () => {
+  const { circles, ada, tobi, circle } = await circleOfTwo();
+  await assert.rejects(
+    () => circles.setMemberRole({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: tobi.prismId, role: 'VIEWER' }),
+    /approved on Monad/);
+  assert.equal(circles.listMembers(circle.circleId, ada.prismId).find((m) => m.prismId === tobi.prismId).role, 'ADMIN');
+});
+
+test('member removal: an admin can remove an ordinary member, and their pending invite dies with them', async () => {
+  const { circles, ada, circle, identityService, store } = await circleOfTwo();
+  const kemi = await makeIdentity(identityService, { name: 'Kemi', handle: 'kemi' });
+  const invite = circles.invite({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId, role: 'CONTRIBUTOR' });
+
+  // Removed while the invitation is still unanswered — the invitation must not survive to re-admit them.
+  const removed = await circles.removeMember({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId });
+  assert.equal(removed.status, 'REMOVED');
+  assert.equal(store.read().circleInvitations[invite.inviteId].status, 'REVOKED');
+
+  // `acceptInvitation` is synchronous, so this is assert.throws — assert.rejects would let a
+  // synchronous throw past its validation entirely.
+  assert.throws(
+    () => circles.acceptInvitation({ circleId: circle.circleId, inviteId: invite.inviteId, prismId: kemi.prismId }),
+    /already revoked|no longer valid/);
+});
+
+test('member removal: removing someone twice is idempotent, not an error', async () => {
+  const { circles, ada, circle, identityService } = await circleOfTwo();
+  const kemi = await makeIdentity(identityService, { name: 'Kemi', handle: 'kemi' });
+  const invite = circles.invite({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId, role: 'VIEWER' });
+  circles.acceptInvitation({ circleId: circle.circleId, inviteId: invite.inviteId, prismId: kemi.prismId });
+
+  await circles.removeMember({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId });
+  const second = await circles.removeMember({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId });
+  assert.equal(second.alreadyRemoved, true);
+});
+
+test('member removal: an admin cannot be removed here — it names the governance action instead', async () => {
+  const { circles, ada, tobi, circle } = await circleOfTwo();
+  await assert.rejects(
+    () => circles.removeMember({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: tobi.prismId }),
+    /Remove as admin/);
+  assert.equal(circles.listMembers(circle.circleId, ada.prismId).find((m) => m.prismId === tobi.prismId).status, 'ACTIVE');
+});
+
+test('member removal: only an admin may remove or re-role anyone', async () => {
+  const { circles, ada, circle, identityService } = await circleOfTwo();
+  const kemi = await makeIdentity(identityService, { name: 'Kemi', handle: 'kemi' });
+  const zara = await makeIdentity(identityService, { name: 'Zara', handle: 'zara' });
+  for (const [person, role] of [[kemi, 'CONTRIBUTOR'], [zara, 'VIEWER']]) {
+    const invite = circles.invite({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: person.prismId, role });
+    circles.acceptInvitation({ circleId: circle.circleId, inviteId: invite.inviteId, prismId: person.prismId });
+  }
+  await assert.rejects(
+    () => circles.removeMember({ circleId: circle.circleId, actorPrismId: kemi.prismId, prismId: zara.prismId }),
+    /admin/);
+  await assert.rejects(
+    () => circles.setMemberRole({ circleId: circle.circleId, actorPrismId: kemi.prismId, prismId: zara.prismId, role: 'SPENDER' }),
+    /admin/);
+});
+
+test('my invitations: an invited person can find the invitation addressed to them', async () => {
+  const { circles, ada, circle, identityService } = await circleOfTwo();
+  const kemi = await makeIdentity(identityService, { name: 'Kemi', handle: 'kemi' });
+  const zara = await makeIdentity(identityService, { name: 'Zara', handle: 'zara' });
+  const invite = circles.invite({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId, role: 'SPENDER' });
+
+  const mine = circles.listMyInvitations(kemi.prismId);
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].inviteId, invite.inviteId);
+  assert.equal(mine[0].circleName, 'Household');
+  assert.equal(mine[0].role, 'SPENDER');
+  // Who is asking is never omitted — it is the thing that makes an invitation trustworthy.
+  assert.equal(mine[0].invitedBy, 'Ada');
+
+  // Nobody else can see it.
+  assert.equal(circles.listMyInvitations(zara.prismId).length, 0);
+
+  // Once answered it leaves the list, so the UI cannot offer an invitation that is already spent.
+  circles.acceptInvitation({ circleId: circle.circleId, inviteId: invite.inviteId, prismId: kemi.prismId });
+  assert.equal(circles.listMyInvitations(kemi.prismId).length, 0);
+});
+
+test('my invitations: an expired invitation is not offered', async () => {
+  const { circles, ada, circle, identityService, store } = await circleOfTwo();
+  const kemi = await makeIdentity(identityService, { name: 'Kemi', handle: 'kemi' });
+  const invite = circles.invite({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId, role: 'VIEWER' });
+  store.mutate((d) => { d.circleInvitations[invite.inviteId].expiresAt = new Date(Date.now() - 1000).toISOString(); });
+  assert.equal(circles.listMyInvitations(kemi.prismId).length, 0);
+});

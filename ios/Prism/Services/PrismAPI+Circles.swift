@@ -33,7 +33,11 @@ extension PrismAPI {
   }
 
   /// Everything on this Circle awaiting approval — the admin's inbox.
-  func circlePending(_ circleId: String) async throws -> CirclePendingResponse {
+  ///
+  /// The list holds two different things: payments, and governance changes such as an approval-rule
+  /// change or a spending limit. `CirclePendingItem` decodes the union, so neither is rendered with
+  /// the other's vocabulary.
+  func circlePending(_ circleId: String) async throws -> CirclePendingInboxResponse {
     try await client.request("/v1/circles/\(circleId)/pending")
   }
 
@@ -146,19 +150,19 @@ extension PrismAPI {
   /// Build the NEXT threshold-approved transaction for a limit change. There may be up to three
   /// (enable the module, register the member, set the limit) and they cannot be batched, so this
   /// returns one proposal plus what remains. Call it again after each executes.
-  func prepareCircleLimit(circleId: String, prismId: String, amountAtomic: String, period: String) async throws -> CirclePayment {
+  func prepareCircleLimit(circleId: String, prismId: String, amountAtomic: String, period: String) async throws -> CircleGovernanceProposal {
     try await APIClient.shared.send(
       "/v1/circles/\(circleId)/limits/prepare",
       body: CircleLimitBody(prismId: prismId, amountAtomic: amountAtomic, period: period))
   }
 
-  func prepareCircleLimitRevoke(circleId: String, prismId: String) async throws -> CirclePayment {
+  func prepareCircleLimitRevoke(circleId: String, prismId: String) async throws -> CircleGovernanceProposal {
     try await APIClient.shared.send("/v1/circles/\(circleId)/limits/revoke/prepare", body: CircleRevokeBody(prismId: prismId))
   }
 
   /// Apply an approved governance change, then read the module back. "Active" means the readback
   /// agreed — not that a transaction succeeded.
-  func executeCircleGovernance(circleId: String, proposalId: String) async throws -> CirclePayment {
+  func executeCircleGovernance(circleId: String, proposalId: String) async throws -> CircleGovernanceProposal {
     try await APIClient.shared.send(
       "/v1/circles/\(circleId)/governance/\(proposalId)/execute", body: EmptyBody(),
       idempotencyKey: "\(proposalId):governance")
@@ -195,5 +199,144 @@ extension PrismAPI {
 
   func circleSpendStatus(circleId: String, spendId: String) async throws -> CircleSpendStatusResponse {
     try await APIClient.shared.request("/v1/circles/\(circleId)/spend/\(spendId)")
+  }
+}
+
+// MARK: - creating a Circle, and changing who is in it
+
+extension PrismAPI {
+  struct CreateCircleBody: Encodable {
+    let name: String
+    let icon: String?
+    let template: String
+    let admins: [CreateCircleAdmin]
+    let threshold: Int
+    let policyAcknowledgement: CirclePolicyAcknowledgement
+  }
+  struct CreateCircleAdmin: Encodable { let prismId: String }
+  struct CircleInviteBody: Encodable { let prismId: String?; let handle: String?; let role: String }
+  struct CircleRoleBody: Encodable { let role: String }
+  struct CircleAdminBody: Encodable { let prismId: String?; let handle: String?; let threshold: Int? }
+  struct CircleAdminRemoveBody: Encodable { let prismId: String; let threshold: Int? }
+  struct CircleThresholdBody: Encodable { let threshold: Int }
+
+  /// What threshold to recommend for the admins chosen so far, and the consequence of every valid
+  /// choice. Purely advisory: the creator picks, and `createCircle` re-derives the warnings itself.
+  func circleTemplateGuidance(template: String, admins: Int) async throws -> CircleTemplateGuidance {
+    try await APIClient.shared.request("/v1/circles/templates?template=\(template)&admins=\(admins)")
+  }
+
+  /// Create a Circle and start it on its way to Monad.
+  ///
+  /// The response is a Circle that may still be mid-creation — DEPLOYING or CONFIRMING rather than
+  /// ACTIVE — and that is the honest answer, not a failure. `circle(_:)` advances it on each read,
+  /// so the creation screen polls that rather than holding this request open across block time.
+  ///
+  /// The idempotency key is the creator's own retry token: the backend keys creation on the Circle's
+  /// shape, so a retried request resumes the same Circle rather than deploying a second Safe.
+  func createCircle(
+    name: String, icon: String?, template: String, adminPrismIds: [String], threshold: Int,
+    acknowledgement: CirclePolicyAcknowledgement, idempotencyKey: String
+  ) async throws -> CircleSummary {
+    try await APIClient.shared.send(
+      "/v1/circles",
+      body: CreateCircleBody(
+        name: name, icon: icon, template: template,
+        admins: adminPrismIds.map(CreateCircleAdmin.init(prismId:)),
+        threshold: threshold, policyAcknowledgement: acknowledgement),
+      idempotencyKey: idempotencyKey)
+  }
+
+  func circleMembers(_ circleId: String) async throws -> [CircleMember] {
+    let response: CircleMembersResponse = try await APIClient.shared.request("/v1/circles/\(circleId)/members")
+    return response.members
+  }
+
+  /// Invite someone by Prism id or @handle. An invitation grants nothing on its own — accepting it
+  /// makes someone a member, and an ADMIN invitation still waits on the Circle approving them on
+  /// Monad before any authority exists.
+  func inviteToCircle(circleId: String, prismId: String?, handle: String?, role: String) async throws -> CircleInviteResult {
+    try await APIClient.shared.send(
+      "/v1/circles/\(circleId)/invitations",
+      body: CircleInviteBody(prismId: prismId, handle: handle, role: role))
+  }
+
+  /// Invitations addressed to me, across every Circle.
+  func myCircleInvitations() async throws -> [CircleInvitation] {
+    let response: CircleInvitationsResponse = try await APIClient.shared.request("/v1/circles/invitations")
+    return response.invitations
+  }
+
+  func acceptCircleInvitation(circleId: String, inviteId: String) async throws -> CircleInvitationAcceptance {
+    try await APIClient.shared.send("/v1/circles/\(circleId)/invitations/\(inviteId)/accept", body: EmptyBody())
+  }
+
+  func declineCircleInvitation(circleId: String, inviteId: String) async throws -> CircleInviteResult {
+    try await APIClient.shared.send("/v1/circles/\(circleId)/invitations/\(inviteId)/decline", body: EmptyBody())
+  }
+
+  /// Change what a member may do — between the roles Prism alone decides.
+  ///
+  /// This cannot grant or revoke ADMIN in either direction, and the backend refuses if asked: admin
+  /// authority is the Safe's owner set, so it moves through `prepareAddCircleAdmin` /
+  /// `prepareRemoveCircleAdmin` and a threshold of signatures. It also refuses while the member
+  /// still holds a live spending allowance, because taking away the label while leaving the money
+  /// access would be worse than refusing.
+  func setCircleMemberRole(circleId: String, prismId: String, role: String) async throws -> CircleMemberRoleResult {
+    try await APIClient.shared.send("/v1/circles/\(circleId)/members/\(prismId)/role", body: CircleRoleBody(role: role))
+  }
+
+  func removeCircleMember(circleId: String, prismId: String) async throws -> CircleMemberRemovalResult {
+    try await APIClient.shared.send("/v1/circles/\(circleId)/members/\(prismId)/remove", body: EmptyBody())
+  }
+
+  // MARK: governance — changes the Circle has to approve together
+
+  /// Build the Safe transaction that would make someone an admin. Nothing changes here: this
+  /// returns the proposal the Circle's admins are asked to approve.
+  func prepareAddCircleAdmin(circleId: String, prismId: String?, handle: String?, threshold: Int?) async throws -> CircleGovernanceProposal {
+    try await APIClient.shared.send(
+      "/v1/circles/\(circleId)/admins/prepare-add",
+      body: CircleAdminBody(prismId: prismId, handle: handle, threshold: threshold))
+  }
+
+  /// Removing an admin may force the approval rule down with it — a Circle cannot need three
+  /// approvals from two admins. The backend refuses to choose a weaker rule on the Circle's behalf,
+  /// so `threshold` is required whenever the current one would no longer fit.
+  func prepareRemoveCircleAdmin(circleId: String, prismId: String, threshold: Int?) async throws -> CircleGovernanceProposal {
+    try await APIClient.shared.send(
+      "/v1/circles/\(circleId)/admins/prepare-remove",
+      body: CircleAdminRemoveBody(prismId: prismId, threshold: threshold))
+  }
+
+  func prepareCircleThresholdChange(circleId: String, threshold: Int) async throws -> CircleGovernanceProposal {
+    try await APIClient.shared.send(
+      "/v1/circles/\(circleId)/threshold/prepare", body: CircleThresholdBody(threshold: threshold))
+  }
+
+  /// Approve a governance change. Identical machinery to approving a payment, and identically
+  /// gated: the device rebuilds the Safe digest from the fields it displayed and refuses to sign if
+  /// it disagrees with what the backend asked for.
+  ///
+  /// `payload` must already have passed `CircleGovernanceValidator` — the caller is
+  /// `CircleCoordinator.approveGovernance`, which refuses to reach this method otherwise.
+  @MainActor
+  func approveCircleGovernance(circleId: String, proposalId: String, payload: CircleGovernancePayload) async throws -> CircleGovernanceApprovalResult {
+    let mera = MeraAccountManager.shared
+    try await mera.beginSession(.payments)
+    let signature = try await mera.signTypedDataHex(SafeTypedData.jsonData(for: payload))
+    return try await APIClient.shared.send(
+      "/v1/circles/\(circleId)/governance/\(proposalId)/approve",
+      body: CircleApprovalBody(signature: signature),
+      idempotencyKey: "\(proposalId):approve")
+  }
+
+  func circleGovernanceStatus(circleId: String, proposalId: String) async throws -> CircleGovernanceProposal {
+    try await APIClient.shared.request("/v1/circles/\(circleId)/governance/\(proposalId)")
+  }
+
+  func circleSpends(_ circleId: String) async throws -> [CircleSpend] {
+    let response: CircleSpendsResponse = try await APIClient.shared.request("/v1/circles/\(circleId)/spend")
+    return response.spends
   }
 }

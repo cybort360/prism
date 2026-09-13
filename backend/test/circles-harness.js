@@ -100,8 +100,55 @@ const SELECTOR = {
   removeDelegate: sel('removeDelegate(address,bool)'),
   setAllowance: sel('setAllowance(address,address,uint96,uint16,uint32)'),
   deleteAllowance: sel('deleteAllowance(address,address)'),
-  enableModule: sel('enableModule(address)')
+  enableModule: sel('enableModule(address)'),
+  addOwnerWithThreshold: sel('addOwnerWithThreshold(address,uint256)'),
+  removeOwner: sel('removeOwner(address,address,uint256)'),
+  changeThreshold: sel('changeThreshold(uint256)')
 };
+
+/** The address in the Nth 32-byte argument slot of some calldata. */
+const argAddress = (data, index) => getAddress(`0x${data.slice(10 + index * 64 + 24, 10 + (index + 1) * 64)}`);
+const argUint = (data, index) => BigInt(`0x${data.slice(10 + index * 64, 10 + (index + 1) * 64)}`);
+
+/**
+ * Safe's own owner management, applied for real.
+ *
+ * Emitting `ExecutionSuccess` without actually changing the owner set would make every governance
+ * readback pass vacuously — which is the one thing those readbacks exist to catch. So the fake
+ * enforces what Safe enforces: an owner cannot be added twice, an owner that is not an owner cannot
+ * be removed, and a threshold must be between 1 and the resulting owner count.
+ */
+function applyOwnerManagement(safe, data, commit) {
+  const selector = String(data).slice(0, 10).toLowerCase();
+  if (selector === SELECTOR.addOwnerWithThreshold) {
+    const owner = argAddress(data, 0);
+    const threshold = Number(argUint(data, 1));
+    if (safe.owners.some((o) => getAddress(o) === owner)) return false;
+    const after = safe.owners.length + 1;
+    if (threshold < 1 || threshold > after) return false;
+    if (commit) { safe.owners = [owner, ...safe.owners]; safe.threshold = threshold; }
+    return true;
+  }
+  if (selector === SELECTOR.removeOwner) {
+    const owner = argAddress(data, 1);
+    const threshold = Number(argUint(data, 2));
+    if (!safe.owners.some((o) => getAddress(o) === owner)) return false;
+    const after = safe.owners.length - 1;
+    if (after < 1 || threshold < 1 || threshold > after) return false;
+    if (commit) {
+      safe.owners = safe.owners.filter((o) => getAddress(o) !== owner);
+      safe.threshold = threshold;
+    }
+    return true;
+  }
+  if (selector === SELECTOR.changeThreshold) {
+    const threshold = Number(argUint(data, 0));
+    if (threshold < 1 || threshold > safe.owners.length) return false;
+    if (commit) safe.threshold = threshold;
+    return true;
+  }
+  return false;
+}
 
 /** Safe's own EIP-712 digest, spelled out independently of `safeEncoding.js`. */
 function safeDigest({ chainId, safeAddress, tx }) {
@@ -257,10 +304,13 @@ export function fakeSafeChain({ chainId = 10143, usdc, router }) {
         enabledModules.set(key, set);
       }
       innerOk = true;
+    } else if (getAddress(to) === getAddress(safe.address)) {
+      // Owner management: the Safe calling itself. Genuinely applied, so a governance readback that
+      // passes means the owner set actually changed.
+      innerOk = applyOwnerManagement(safe, data, commit);
     } else {
-      // Owner management: the Safe calling itself. Applied only so governance execution can be
-      // exercised end to end; the payment tests never take this branch.
-      innerOk = getAddress(to) === getAddress(safe.address);
+      // Any other target is something a Circle never signs.
+      innerOk = false;
     }
 
     logs.push({

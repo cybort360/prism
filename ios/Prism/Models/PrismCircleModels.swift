@@ -26,8 +26,24 @@ struct CircleSummary: Codable, Identifiable, Equatable {
   /// True only when Prism holds a chain-verification receipt for this Circle. An ACTIVE Circle
   /// without one is never reported as verified.
   let verifiedOnChain: Bool?
+  /// What the creator *asked for*, which is not the same thing as what Monad says is true. Present
+  /// while a Circle is still being created, when there is no on-chain threshold to show yet.
+  let requested: CircleRequestedShape?
+  /// Why creation stopped, when it did. Never invented — it is the mismatch list from verification.
+  let failureReason: String?
 
   var isActive: Bool { status == "ACTIVE" }
+  /// Still working its way onto Monad: deployed or deploying, but not yet verified.
+  var isBeingCreated: Bool {
+    ["CREATED", "MEMBERS_SELECTED", "POLICY_REVIEWED", "AWAITING_AUTHORIZATION", "DEPLOYING", "CONFIRMING", "RECONCILING"].contains(status)
+  }
+  var hasFailed: Bool { status == "VERIFICATION_FAILED" }
+  var isClosed: Bool { status == "CLOSED" }
+}
+
+struct CircleRequestedShape: Codable, Equatable {
+  let threshold: Int?
+  let adminCount: Int?
 }
 
 struct CircleBalance: Codable, Equatable {
@@ -51,7 +67,7 @@ struct CircleAuthority: Codable, Equatable {
   var isKnown: Bool { unavailable != true && threshold != nil }
 }
 
-struct CircleMember: Codable, Identifiable, Equatable {
+struct CircleMember: Codable, Identifiable, Equatable, Hashable {
   var id: String { prismId }
   let prismId: String
   let displayName: String?
@@ -61,6 +77,10 @@ struct CircleMember: Codable, Identifiable, Equatable {
   /// Nil for non-admins. False means "accepted in Prism, not yet an owner on Monad" — a distinction
   /// the UI must keep, because only the owner set confers authority.
   let authorityConfirmedOnChain: Bool?
+  /// The account that signs for this member. Shown nowhere; used to tell whether an approval on a
+  /// proposal is *this* person's, which is a question only the signing address can answer.
+  let authorityAddress: String?
+  let joinedAt: String?
 }
 
 struct CircleDetail: Codable, Equatable {
@@ -101,6 +121,8 @@ struct CircleContribution: Codable, Identifiable, Equatable {
   let transactionHash: String?
   let failureReason: String?
   let balance: CircleBalanceDelta?
+  let createdAt: String?
+  let completedAt: String?
 
   var isComplete: Bool { status == "COMPLETED" }
   var isFailed: Bool { status == "FAILED" }
@@ -219,6 +241,9 @@ struct CirclePayment: Codable, Identifiable, Equatable {
   let lastSimulation: CircleSimulation?
   let balance: CircleBalanceDelta?
   let trace: [CircleLifecycleStep]?
+  let createdAt: String?
+  let executedAt: String?
+  let expiresAt: String?
 
   /// Non-nil when the backend declined to send: not enough approvals, an earlier transaction must
   /// land first, or a simulation that would have failed.
@@ -246,7 +271,7 @@ struct CirclePayment: Codable, Identifiable, Equatable {
 }
 
 struct CirclePaymentsResponse: Codable { let circleId: String; let payments: [CirclePayment] }
-struct CirclePendingResponse: Codable { let circleId: String; let pending: [CirclePayment]; let authority: CircleAuthority? }
+
 struct CircleApprovalResult: Codable { let proposalId: String; let approvedBy: String?; let signatureType: String?; let payment: CirclePayment }
 
 // MARK: - presentation
@@ -254,7 +279,7 @@ struct CircleApprovalResult: Codable { let proposalId: String; let approvedBy: S
 /// A recipient resolved for a Circle payment. Carries the Circle so the review screen can say
 /// "Paid from Lagos Trip" without inferring it, and the resolution so the proposal is built from
 /// the resolver's signed attestation rather than from an address the UI happened to hold.
-struct CirclePayTarget: Identifiable {
+struct CirclePayTarget: Identifiable, Equatable {
   let id = UUID()
   let circleId: String
   let circleName: String
@@ -265,7 +290,7 @@ struct CirclePayTarget: Identifiable {
 /// An approval an admin has been asked for. The `circle` is this device's own record of the Circle,
 /// and it is what the payment is validated against — taking both halves from the same response
 /// would make the check circular.
-struct CircleApprovalPresentation: Identifiable {
+struct CircleApprovalPresentation: Identifiable, Equatable {
   let id = UUID()
   let payment: CirclePayment
   let circle: CircleDetail
@@ -403,6 +428,8 @@ struct CircleSpend: Codable, Identifiable, Equatable {
   /// "$58 left" without recomputing anything.
   let limitAtSigning: CircleSpendLimitSnapshot?
   let limitAfter: CircleSpendLimitSnapshot?
+  let createdAt: String?
+  let completedAt: String?
 
   var isComplete: Bool { status == "COMPLETED" }
   var isFailed: Bool { status == "FAILED" }
@@ -416,3 +443,245 @@ struct CircleSpendLimitSnapshot: Codable, Equatable {
 }
 
 struct CircleSpendStatusResponse: Codable { let spend: CircleSpend }
+
+// MARK: - creation
+
+/// What the creation sheet is allowed to recommend.
+///
+/// The recommendation is a UX default and the wire format says so: `recommendedThreshold` is
+/// nullable (CUSTOM makes no recommendation), every valid choice is listed with its own
+/// consequences, and `twoPersonTradeoff` exists because a two-admin Circle has no safe default —
+/// 1-of-2 lets either person move money alone, 2-of-2 freezes the money if either phone is lost.
+/// The UI shows both consequences rather than dressing one up as safe.
+struct CircleTemplateGuidance: Codable, Equatable {
+  let template: String
+  let label: String
+  let blurb: String
+  let adminCount: Int
+  let recommendedThreshold: Int?
+  let twoPersonTradeoff: CircleTwoPersonTradeoff?
+  let choices: [CircleThresholdChoice]
+}
+
+struct CircleTwoPersonTradeoff: Codable, Equatable {
+  let oneOfTwo: [CircleThresholdWarning]
+  let twoOfTwo: [CircleThresholdWarning]
+}
+
+struct CircleThresholdChoice: Codable, Equatable, Identifiable {
+  var id: Int { threshold }
+  let threshold: Int
+  let label: String
+  let recommended: Bool
+  let warnings: [CircleThresholdWarning]
+}
+
+/// A consequence the creator has to see — and, when it applies to the shape they chose, acknowledge
+/// by code before the Circle is created. `code` is what gets acknowledged; the two strings are what
+/// a person reads.
+struct CircleThresholdWarning: Codable, Equatable, Identifiable {
+  var id: String { code }
+  let code: String
+  let title: String
+  let detail: String
+}
+
+/// The creator's explicit confirmation of the approval rule, sent with the create request.
+///
+/// It carries the shape it is confirming, so an acknowledgement cannot be replayed against a
+/// different Circle: the backend re-derives the warnings for the threshold and admin count it was
+/// actually given and refuses if any of them is unacknowledged.
+struct CirclePolicyAcknowledgement: Encodable, Equatable {
+  let threshold: Int
+  let adminCount: Int
+  let acknowledgedWarnings: [String]
+}
+
+// MARK: - governance (changes that are not payments)
+
+/// A Circle change that moves no money: adding or removing an admin, changing the approval rule, or
+/// setting a member's spending limit.
+///
+/// It shares the Safe transaction and the approval mechanics with a payment and almost nothing
+/// else, which is why it is a separate type rather than a payment with empty recipient fields. Note
+/// that `lifecycle` and `status` are both optional and both real: a freshly prepared proposal
+/// reports `status` (PENDING · READY · EXPIRED), while one that has been executed reports the same
+/// `lifecycle` vocabulary a payment does.
+struct CircleGovernanceProposal: Codable, Identifiable, Equatable {
+  var id: String { proposalId }
+  let proposalId: String
+  let circleId: String
+  let circleName: String?
+  let kind: String
+  let isSpendingLimitChange: Bool?
+
+  let lifecycle: String?
+  let storedLifecycle: String?
+  let status: String?
+  /// Built against a Safe transaction number the Circle has already used, so it can never execute
+  /// however many approvals it collects. It has to be proposed again.
+  let staleNonce: Bool?
+
+  let proposerPrismId: String?
+  let memo: String?
+  let subject: CircleProposalSubject?
+
+  let safeAddress: String?
+  let safeTxHash: String?
+  let safeNonce: String?
+  let safeTransaction: CircleSafeTransaction?
+
+  let requiredApprovals: Int?
+  let collectedApprovals: Int?
+  let approvals: [CircleApprovalRecord]?
+
+  let executionTxHash: String?
+  let evidence: CirclePaymentEvidence?
+  let failureReason: String?
+  let lastSimulation: CircleSimulation?
+  let blocked: String?
+
+  let createdAt: String?
+  let executedAt: String?
+  let expiresAt: String?
+
+  /// A spending limit can need up to three Safe transactions (enable the module, register the
+  /// member, set the amount) and they cannot be batched. These are the ones still to come after
+  /// this proposal executes — the UI counts them so it never says "done" halfway through.
+  let remainingSteps: [String]?
+  /// True when there was nothing left to change: the limit already is what the Circle approved.
+  let complete: Bool?
+
+  /// The effective state, preferring the executed lifecycle over the prepared status.
+  var state: String { lifecycle ?? status ?? "PENDING" }
+  var isComplete: Bool { lifecycle == "COMPLETED" }
+  var isReadyToApply: Bool { lifecycle == "APPROVED" || status == "READY" }
+  var isDead: Bool {
+    staleNonce == true || ["INVALIDATED", "EXPIRED", "CANCELLED", "FAILED"].contains(state)
+  }
+
+  /// "1 of 2" — the same sentence a payment leads with, and unknown when the chain could not be read.
+  var approvalProgress: String? {
+    guard let required = requiredApprovals else { return nil }
+    guard let collected = collectedApprovals else { return nil }
+    return "\(collected) of \(required)"
+  }
+}
+
+/// Who or what a governance change is about. Every field is optional because each kind of change
+/// fills in a different subset — an approval-rule change has a threshold and no person, a spending
+/// limit has both.
+struct CircleProposalSubject: Codable, Equatable {
+  let prismId: String?
+  let authorityAddress: String?
+  let threshold: Int?
+  let ownerCountAfter: Int?
+  let amount: String?
+  let period: String?
+  let step: String?
+}
+
+/// One row of a Circle's approval inbox.
+///
+/// The inbox holds two genuinely different things, so this decodes the union rather than forcing
+/// one shape onto the other: a payment view carries a lifecycle and no `kind`, a governance view
+/// carries a `kind`. Getting this wrong is not a cosmetic problem — a governance proposal decoded
+/// as a payment would show an empty recipient and a blank amount next to an Approve button.
+struct CirclePendingItem: Identifiable, Equatable {
+  let payment: CirclePayment?
+  let governance: CircleGovernanceProposal?
+
+  /// Both halves always carry a proposal id, so the fallback is unreachable — but it is a constant
+  /// rather than a fresh UUID, because an id that changes on every read would make `ForEach` rebuild
+  /// the row and lose its state.
+  var id: String { payment?.proposalId ?? governance?.proposalId ?? "unknown" }
+}
+
+extension CirclePendingItem: Decodable {
+  private enum ProbeKey: String, CodingKey { case kind }
+
+  init(from decoder: Decoder) throws {
+    let probe = try decoder.container(keyedBy: ProbeKey.self)
+    if let kind = try probe.decodeIfPresent(String.self, forKey: .kind), kind != "PAYMENT" {
+      governance = try CircleGovernanceProposal(from: decoder)
+      payment = nil
+    } else {
+      payment = try CirclePayment(from: decoder)
+      governance = nil
+    }
+  }
+}
+
+struct CirclePendingInboxResponse: Codable {
+  let circleId: String
+  let pending: [CirclePendingItem]
+  let authority: CircleAuthority?
+  /// Set when the Circle is not yet on Monad, or when Monad could not be read — in which case the
+  /// honest answer is that pending approvals are unknown, not that there are none.
+  let note: String?
+  let unavailable: String?
+}
+
+// MARK: - membership
+
+struct CircleMembersResponse: Codable { let members: [CircleMember] }
+
+/// An invitation addressed to this person. Carries who is asking, because that — not the role name
+/// — is what makes an invitation something a person can reasonably judge.
+struct CircleInvitation: Codable, Identifiable, Equatable {
+  var id: String { inviteId }
+  let inviteId: String
+  let circleId: String
+  let circleName: String?
+  let icon: String?
+  let role: String
+  let invitedBy: String?
+  let expiresAt: String?
+  let createdAt: String?
+}
+
+struct CircleInvitationsResponse: Codable { let invitations: [CircleInvitation] }
+
+struct CircleInviteResult: Codable, Equatable {
+  let inviteId: String
+  let circleId: String
+  let role: String
+  let status: String
+  let expiresAt: String?
+}
+
+/// The result of accepting. `authorityConfirmedOnChain` is the whole point: accepting an admin
+/// invitation makes someone a member immediately and an admin not at all — that waits on the Circle
+/// approving it on Monad, and `note` is the sentence that says so.
+struct CircleInvitationAcceptance: Codable, Equatable {
+  let circleId: String
+  let role: String
+  let status: String
+  let authorityConfirmedOnChain: Bool?
+  let note: String?
+}
+
+struct CircleMemberRoleResult: Codable, Equatable {
+  let circleId: String
+  let prismId: String
+  let role: String
+  let unchanged: Bool?
+}
+
+struct CircleMemberRemovalResult: Codable, Equatable {
+  let circleId: String
+  let prismId: String
+  let status: String
+  let alreadyRemoved: Bool?
+}
+
+struct CircleSpendsResponse: Codable { let circleId: String; let spends: [CircleSpend] }
+
+/// The result of approving a Circle change. `governance` is the change as it now stands, with its
+/// approval count recomputed from signatures against the live admin set.
+struct CircleGovernanceApprovalResult: Codable {
+  let proposalId: String
+  let approvedBy: String?
+  let signatureType: String?
+  let governance: CircleGovernanceProposal
+}

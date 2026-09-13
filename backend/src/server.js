@@ -296,6 +296,19 @@ route('POST', '/v1/circles/:id/invitations/:inviteId/accept', async ({ user, par
 route('POST', '/v1/circles/:id/invitations/:inviteId/decline', async ({ user, params }) =>
   circleService.declineInvitation({ circleId: params.id, inviteId: params.inviteId, prismId: user.prismId }), true);
 
+// Invitations addressed to the caller, across every Circle. Without this an invitation is
+// unreachable: accepting one needs an id only the invited person's own device can supply.
+route('GET', '/v1/circles/invitations', async ({ user }) => ({ invitations: circleService.listMyInvitations(user.prismId) }), true);
+
+// Prism-side membership only. Neither route can grant or revoke ADMIN — that is the Safe's owner
+// set, and it moves only through `/admins/prepare-add` / `/admins/prepare-remove` plus a threshold
+// of signatures. Both refuse while the member still holds a live spending allowance on Monad,
+// because taking away the label while leaving the money access is worse than refusing.
+route('POST', '/v1/circles/:id/members/:prismId/role', async ({ user, params, body }) =>
+  circleService.setMemberRole({ circleId: params.id, actorPrismId: user.prismId, prismId: params.prismId, role: body.role }), true);
+route('POST', '/v1/circles/:id/members/:prismId/remove', async ({ user, params }) =>
+  circleService.removeMember({ circleId: params.id, actorPrismId: user.prismId, prismId: params.prismId }), true);
+
 // Governance. These PREPARE a Safe transaction and change nothing on-chain: they return the digest
 // the Circle's admins must approve. Authority moves only when enough owners have signed it.
 route('POST', '/v1/circles/:id/admins/prepare-add', async ({ user, params, body }) =>
@@ -375,6 +388,18 @@ route('POST', '/v1/circles/:id/limits/prepare', async ({ user, params, body }) =
 }, true);
 route('POST', '/v1/circles/:id/limits/revoke/prepare', async ({ user, params, body }) =>
   circleService.prepareSpendingLimitRevoke({ circleId: params.id, actorPrismId: user.prismId, prismId: body.prismId }), true);
+// Approve a governance change. Same machinery as approving a payment, with a different binding
+// check: a change binds a TARGET and CALLDATA, and the only targets a Circle ever signs are its own
+// Safe and the verified Allowance Module.
+route('POST', '/v1/circles/:id/governance/:proposalId/approve', async ({ user, params, body, idempotencyKey }) => {
+  requireSig(body.signature, 'signature');
+  return withIdempotency(store, {
+    scope: 'circle-approve', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint(params.proposalId, body.signature)
+  }, () => circleService.approveGovernance({
+    circleId: params.id, proposalId: params.proposalId, prismId: user.prismId, signature: body.signature
+  }));
+}, true);
 // Governance execution: same live-authority / re-verified-signatures / simulate discipline as a
 // payment, with a chain readback of the change in place of a USDC Transfer.
 route('POST', '/v1/circles/:id/governance/:proposalId/execute', async ({ user, params, idempotencyKey }) =>

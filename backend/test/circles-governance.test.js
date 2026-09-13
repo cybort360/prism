@@ -295,3 +295,118 @@ test('a non-admin cannot record an approval even with a valid signature', async 
     /only an admin/
   );
 });
+
+// ===========================================================================
+// Approving and applying an authority change
+// ===========================================================================
+//
+// Preparing a change is only half of it. These tests take an admin change all the way — signatures
+// collected against the live owner set, simulated, broadcast, and then READ BACK — because
+// "ExecutionSuccess" says the Safe ran a call, which is not the same claim as an owner set that
+// changed. The Circle's own screens say "Active" only on the strength of the readback.
+
+/** Sign a prepared proposal with each admin, then apply it. */
+async function approveAndApply(stack, circleId, proposal, admins) {
+  for (const admin of admins) {
+    const signature = await admin.account.sign({ hash: proposal.safeTxHash });
+    await stack.circles.approveGovernance({ circleId, proposalId: proposal.proposalId, prismId: admin.prismId, signature });
+  }
+  return stack.circles.executeGovernance({ circleId, proposalId: proposal.proposalId, actorPrismId: admins[0].prismId });
+}
+
+test('add an admin: approved by the threshold, applied on Monad, and confirmed by reading the owner set back', async () => {
+  const { circles, ada, tobi, circle, identityService } = await circleOfThree();
+  const zainab = await makeIdentity(identityService, { name: 'Zainab', handle: 'zainab' });
+
+  const proposal = await circles.prepareAddAdmin({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: zainab.prismId });
+  // The view recomputes the state from signatures against the live owner set on every read, so a
+  // freshly prepared change already reads as "waiting for approvals" rather than as merely proposed.
+  assert.equal(proposal.lifecycle, 'APPROVAL_PENDING');
+  assert.equal(proposal.collectedApprovals, 0);
+
+  // One of two is not enough, and the Circle says so rather than applying it.
+  const first = await ada.account.sign({ hash: proposal.safeTxHash });
+  await circles.approveGovernance({ circleId: circle.circleId, proposalId: proposal.proposalId, prismId: ada.prismId, signature: first });
+  const blocked = await circles.executeGovernance({ circleId: circle.circleId, proposalId: proposal.proposalId, actorPrismId: ada.prismId });
+  assert.match(blocked.blocked, /1 of 2 approvals/);
+
+  const second = await tobi.account.sign({ hash: proposal.safeTxHash });
+  await circles.approveGovernance({ circleId: circle.circleId, proposalId: proposal.proposalId, prismId: tobi.prismId, signature: second });
+  const applied = await circles.executeGovernance({ circleId: circle.circleId, proposalId: proposal.proposalId, actorPrismId: ada.prismId });
+
+  assert.equal(applied.lifecycle, 'COMPLETED');
+  // COMPLETED is only reachable with a readback of the Safe's actual owner set behind it.
+  assert.ok(applied.evidence?.readback?.owners.map((o) => getAddress(o)).includes(getAddress(zainab.accountAddress)));
+
+  const detail = await circles.getCircle(circle.circleId, ada.prismId);
+  assert.equal(detail.authority.adminCount, 4);
+});
+
+test('remove an admin: the Circle stops showing them as an admin because the chain stopped showing them', async () => {
+  const { circles, ada, tobi, kemi, circle } = await circleOfThree();
+
+  const proposal = await circles.prepareRemoveAdmin({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: kemi.prismId });
+  const applied = await approveAndApply({ circles }, circle.circleId, proposal, [ada, tobi]);
+  assert.equal(applied.lifecycle, 'COMPLETED');
+
+  const detail = await circles.getCircle(circle.circleId, ada.prismId);
+  assert.equal(detail.authority.adminCount, 2);
+  const gone = detail.members.find((m) => m.prismId === kemi.prismId);
+  assert.equal(gone.status, 'REMOVED');
+  assert.equal(gone.authorityConfirmedOnChain, false);
+});
+
+test('change the approval rule: applied only after the Safe reports the new threshold', async () => {
+  const { circles, ada, tobi, circle } = await circleOfThree();
+
+  const proposal = await circles.prepareThresholdChange({ circleId: circle.circleId, actorPrismId: ada.prismId, threshold: 3 });
+  const applied = await approveAndApply({ circles }, circle.circleId, proposal, [ada, tobi]);
+  assert.equal(applied.lifecycle, 'COMPLETED');
+  assert.equal(applied.evidence.readback.threshold, 3);
+
+  const detail = await circles.getCircle(circle.circleId, ada.prismId);
+  assert.equal(detail.authority.threshold, 3);
+});
+
+test('an authority change cannot be approved after its transaction is altered', async () => {
+  const { circles, ada, circle, identityService, store } = await circleOfThree();
+  const zainab = await makeIdentity(identityService, { name: 'Zainab', handle: 'zainab' });
+  const proposal = await circles.prepareAddAdmin({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: zainab.prismId });
+
+  // Re-aim the transaction at something that is neither the Circle nor the Allowance Module. The
+  // digest no longer matches the fields, and the target is not one a Circle may ever sign.
+  store.mutate((d) => { d.circleProposals[proposal.proposalId].safeTransaction.to = '0x000000000000000000000000000000000000dEaD'; });
+
+  const signature = await ada.account.sign({ hash: proposal.safeTxHash });
+  await assert.rejects(
+    () => circles.approveGovernance({ circleId: circle.circleId, proposalId: proposal.proposalId, prismId: ada.prismId, signature }),
+    /altered after it was proposed/);
+
+  // And it stays dead rather than becoming approvable again.
+  const after = await circles.reconcileGovernance({ circleId: circle.circleId, proposalId: proposal.proposalId, prismId: ada.prismId });
+  assert.equal(after.lifecycle, 'INVALIDATED');
+});
+
+test('a payment cannot be approved through the governance route, and a change cannot be approved through the payment route', async () => {
+  const { circles, ada, circle, identityService } = await circleOfThree();
+  const zainab = await makeIdentity(identityService, { name: 'Zainab', handle: 'zainab' });
+  const proposal = await circles.prepareAddAdmin({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: zainab.prismId });
+  const signature = await ada.account.sign({ hash: proposal.safeTxHash });
+
+  await assert.rejects(
+    () => circles.approvePayment({ circleId: circle.circleId, proposalId: proposal.proposalId, prismId: ada.prismId, signature }),
+    /not a payment/);
+});
+
+test('only an admin can approve an authority change', async () => {
+  const { circles, ada, circle, identityService } = await circleOfThree();
+  const zainab = await makeIdentity(identityService, { name: 'Zainab', handle: 'zainab' });
+  const invite = circles.invite({ circleId: circle.circleId, actorPrismId: ada.prismId, prismId: zainab.prismId, role: 'CONTRIBUTOR' });
+  circles.acceptInvitation({ circleId: circle.circleId, inviteId: invite.inviteId, prismId: zainab.prismId });
+
+  const proposal = await circles.prepareThresholdChange({ circleId: circle.circleId, actorPrismId: ada.prismId, threshold: 3 });
+  const signature = await zainab.account.sign({ hash: proposal.safeTxHash });
+  await assert.rejects(
+    () => circles.approveGovernance({ circleId: circle.circleId, proposalId: proposal.proposalId, prismId: zainab.prismId, signature }),
+    /admin/);
+});

@@ -9,6 +9,9 @@ struct HomeView: View {
   @State private var localPeople: [ContactPerson] = []
   @State private var loading = false
   @State private var error: String?
+  /// Circles sit on Home rather than behind a tab of their own: a Circle is money, and it belongs
+  /// where the person's own money already is.
+  @StateObject private var circles = CirclesHomeModel()
 
   var body: some View {
     ScrollView {
@@ -26,11 +29,22 @@ struct HomeView: View {
         actions.padding(.top, 32).padding(.bottom, 34)
         if let request = incomingRequest { requestCard(request).padding(.bottom, 12) }
         if !claims.isEmpty { claimsSection.padding(.bottom, 30) }
+        CirclesHomeSection(circles: circles).padding(.bottom, 34)
         people.padding(.bottom, 34)
         recent
         if let error { ErrorBanner(message: error).padding(.top, 18) }
       }.padding(.horizontal, 22).padding(.top, 8).padding(.bottom, 28)
-    }.refreshable { await reload() }.task { await reload() }
+    }
+    .refreshable { await reload() }
+    .task { await reload() }
+    // Coming back from a Circle refetches its row, so a balance is never left showing what it was
+    // before the thing that just happened inside it.
+    .onChange(of: model.presentCircleDetail) { old, new in
+      if old != nil && new == nil { Task { await circles.reload() } }
+    }
+    .onChange(of: model.presentCircleCreate) { old, new in
+      if old && !new { Task { await circles.reload() } }
+    }
     // A claim was just collected (the sheet closed) — refetch so the claimed item drops off and
     // the balance updates immediately, rather than leaving a stale, already-consumed claim.
     .onChange(of: model.presentClaim) { old, new in
@@ -76,7 +90,7 @@ struct HomeView: View {
       HomeAction(icon: "plus", title: "Add money") { model.addMoneyPresented = true }
     }
   }
-  private var hasAttention: Bool { incomingRequest != nil || !claims.isEmpty }
+  private var hasAttention: Bool { incomingRequest != nil || !claims.isEmpty || circles.needsAttention }
 
   private var incomingRequest: PaymentRequestRecord? {
     requests.first { $0.payerPrismId == model.identity?.prismId && $0.status == "OPEN" }
@@ -246,6 +260,8 @@ struct HomeView: View {
       async let a = PrismAPI.shared.activity()
       async let r = PrismAPI.shared.requests()
       async let c = PrismAPI.shared.eligibleClaims()
+      // Circles reload independently: a Circle that cannot be read must not blank out the balance.
+      Task { await circles.reload() }
       balance = try await b
       activity = try await a
       requests = try await r

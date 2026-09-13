@@ -182,6 +182,46 @@ where no Swift toolchain is available. `make test-ios` needs macOS and has not b
 claim here is `UNTESTED` until it has. (c) The Safe Transaction Service path is exercised only in its
 absent (local-only) configuration.
 
+## Circles — the consumer product and the authority loop (2026-09-13)
+
+The native SwiftUI Circles product: Circles on Home, creation, detail, approvals, members, invites,
+settings, and the state vocabulary. `docs/CIRCLES_PRODUCT.md`.
+
+Completing it required closing a real gap in the backend, which is what the rows below are about.
+The three authority changes (`OWNER_ADD`, `OWNER_REMOVE`, `THRESHOLD_CHANGE`) could be *prepared* by
+Phase 1 but never approved or applied: there was no approve route for a non-payment proposal, and no
+readback defined for those kinds. A settings screen built on that would have been a dead end.
+
+Commands run:
+
+```
+cd backend && node --test test/circles-members.test.js       # 21 pass / 0 fail
+cd backend && node --test test/circles-governance.test.js    # 22 pass / 0 fail
+cd backend && node --test test/*.test.js                     # 306 pass / 0 fail
+```
+
+| # | Claim | Status | Evidence |
+|---|---|---|---|
+| CU-1 | An authority change can be approved by the threshold and applied, and COMPLETED requires reading the Safe's owner set back | `VERIFIED` | *add an admin: approved by the threshold, applied on Monad, and confirmed by reading the owner set back* — 1 of 2 blocked, 2 of 2 applied, `evidence.readback.owners` contains the new admin, `adminCount` 3 → 4 |
+| CU-2 | Removing an admin stops Prism showing them as one, because the chain stopped showing them | `VERIFIED` | *remove an admin…* — `adminCount` 3 → 2, member `REMOVED`, `authorityConfirmedOnChain: false` |
+| CU-3 | An approval-rule change applies only after the Safe reports the new threshold | `VERIFIED` | *change the approval rule…* — `evidence.readback.threshold == 3`, live authority agrees |
+| CU-4 | A governance proposal altered after it was proposed cannot be approved, and stays dead | `VERIFIED` | *an authority change cannot be approved after its transaction is altered* — target re-aimed at `0x…dEaD`; approval refused, proposal reads back `INVALIDATED` |
+| CU-5 | A payment cannot be approved through the governance route, nor a change through the payment route | `VERIFIED` | *a payment cannot be approved through the governance route…* |
+| CU-6 | Only an admin can approve an authority change | `VERIFIED` | *only an admin can approve an authority change* |
+| CU-7 | A Prism-side role change cannot grant or revoke ADMIN in either direction | `VERIFIED` | *ADMIN cannot be granted by a role change* · *an existing admin cannot be demoted by a role change either* — both name the governance action instead |
+| CU-8 | A member holding a live spending allowance cannot be re-roled or removed, and the check fails CLOSED when Monad cannot be read | `VERIFIED` (structural) | `_assertNoLiveSpendingAccess` — refuses on a read failure rather than recording an unverifiable removal |
+| CU-9 | Removing a member revokes their unanswered invitation, so it cannot re-admit them | `VERIFIED` | *an admin can remove an ordinary member, and their pending invite dies with them* — invite `REVOKED`, accept refused |
+| CU-10 | Removal is idempotent; only an admin may remove or re-role | `VERIFIED` | *removing someone twice is idempotent* · *only an admin may remove or re-role anyone* |
+| CU-11 | An invitation is reachable by the person it is addressed to, by nobody else, and not once spent or expired | `VERIFIED` | *an invited person can find the invitation addressed to them* · *an expired invitation is not offered* |
+| CU-12 | The fake Safe genuinely applies owner management, so a governance readback cannot pass vacuously | `VERIFIED` | `circles-harness.js` `applyOwnerManagement` — the previous branch emitted `ExecutionSuccess` and changed nothing; CU-1..3 failed against it until it was fixed |
+
+**Not claimed — the entire iOS product is `UNTESTED`.** 13 new Swift files (Home section, creation
+flow and draft, detail and its model, member, invite, settings, governance approval, state
+vocabulary, plain-language vocabulary, governance payload validator) plus `CircleProductTests.swift`
+were written on Linux, where there is no Swift toolchain. `make test-ios` needs macOS and has not
+been run against any of it. Nothing about a screen, a layout, an accessibility label or a decode is
+verified; `docs/CIRCLES_PRODUCT.md` §9 says the same.
+
 ## Circle member spending limits — the Allowance Module gate (2026-09-13)
 
 Per-member spending limits are **built and tested but OFF**, because no Allowance Module >= v1.0.0

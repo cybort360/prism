@@ -97,14 +97,22 @@ nothing navigates to them yet, and they have not been compiled.
 
 ## Prism Circles — remaining work
 
-- [ ] **Compile and run the iOS Circle code.** `CircleAddMoneyView`, `CirclePayView`,
-      `CircleApprovalView`, `CircleLimitViews`, `PrismCircleModels`, `SafeTypedData`,
-      `AllowanceTransferHash`, `PrismAPI+Circles`, `CircleCoordinator` and `CircleApprovalWireTests`
-      were written on Linux, where there is no Swift toolchain. `make test-ios` needs macOS and has
-      not been run against any of them.
-- [ ] **Circle list / detail / creation UI.** The three money screens are wired into `PrismApp` as
-      sheets driven by `AppModel.presentCircle*`, but nothing sets those yet: there is no Circles
-      tab, no Circle detail screen, and no creation sheet. That is the next UI phase.
+- [ ] **Compile and run the iOS Circle code.** Now the whole Circles feature folder plus
+      `PrismCircleModels`, `SafeTypedData`, `CircleGovernancePayload`, `AllowanceTransferHash`,
+      `PrismAPI+Circles`, `CircleCoordinator`, `CirclesHomeSection`, `CircleCreateView`/`CircleDraft`,
+      `CircleDetailView`/`CircleDetailModel`, `CircleMemberView`, `CircleInviteView`,
+      `CircleSettingsView`, `CircleGovernanceApprovalView`, `CircleStates`, `CircleVocabulary`, and
+      the tests `CircleApprovalWireTests` + `CircleProductTests`. All written on Linux, where there
+      is no Swift toolchain. `make test-ios` needs macOS and has not been run against any of it.
+      Expect the first pass to be ordinary compile fixes; the logic is covered by
+      `CircleProductTests` once it can run.
+- [x] **Circle list / detail / creation UI — BUILT (2026-09-13), uncompiled.** Circles live on Home
+      (no fifth tab); creation is a six-step flow ending in a plain "who can move this money"
+      statement; the detail is a full-screen place with approvals, a merged activity feed, members,
+      invites and settings. `docs/CIRCLES_PRODUCT.md`. Closing it also closed a real backend gap —
+      `OWNER_ADD` / `OWNER_REMOVE` / `THRESHOLD_CHANGE` could be prepared but never approved or
+      applied (no approve route, no readback), so Settings would have been a dead end. Backend
+      306/306. **The iOS half is UNTESTED** — see the item above.
 - [ ] **A live Circle payment on Monad testnet.** The payment suite runs against an in-memory Safe
       that enforces Safe's real `execTransaction` rules; no Circle payment has been broadcast to live
       Monad (same funded-key constraint as the rest of P2).
@@ -117,6 +125,11 @@ nothing navigates to them yet, and they have not been compiled.
       §7: the ClaimVault funds exclusively through an ERC-3009 `ecrecover` authorization a Safe
       cannot produce, and has no allowance path to pull from. Supporting it means a new funding
       entry point on a deployed, audited vault — a decision, not a task.
+
+- [ ] **Closing a Circle, and withdrawing what's left.** Deliberately not built: returning a shared
+      balance and shutting the Circle down is its own flow with its own consent question (who gets
+      what, and who agrees), and inventing one alongside the rest of the UI would have been worse
+      than leaving it. `CircleStatus.CLOSED` exists in the domain model with no route to it.
 
 ## Nice-to-have / polish
 - [ ] UI test for claim sibling visibility (audit Test F): eligible = [C1,C2,C3], claim C1, assert

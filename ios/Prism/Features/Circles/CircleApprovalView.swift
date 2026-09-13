@@ -58,12 +58,9 @@ struct CircleApprovalView: View {
           .padding(.horizontal, 22)
           .padding(.top, 26)
 
-          if let notice = blockingNotice {
-            HStack(alignment: .top, spacing: 10) {
-              Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(PrismTheme.amber)
-              Text(notice).font(PrismTheme.body(12.5)).foregroundStyle(PrismTheme.muted).lineSpacing(2)
-            }
-            .padding(.horizontal, 24).padding(.top, 16)
+          if let state = blockingState {
+            CircleNotice(state: state, action: noticeAction(for: state))
+              .padding(.horizontal, 22).padding(.top, 16)
           }
 
           if let error {
@@ -135,23 +132,59 @@ struct CircleApprovalView: View {
   }
 
   /// Everything that would stop this approval, in the order a person would want to hear it.
-  private var blockingNotice: String? {
+  ///
+  /// These are the shared Circle states rather than strings written here, so the same situation
+  /// reads identically on this screen, in the Circle's list and on the pay screen — and so each one
+  /// carries a next action instead of dead-ending.
+  private var blockingState: CircleState? {
     if let binding = payment.binding, binding.ok == false {
-      return "This payment changed after it was proposed, so the approvals on it are no longer valid: \(binding.reasons?.first ?? "its details no longer match what was signed")."
+      return .setupFailed(reason: "This payment changed after it was proposed, so the approvals on it no longer count: \(binding.reasons?.first ?? "its details no longer match what was signed").")
     }
     switch payment.lifecycle {
-    case "EXPIRED": return "This payment was built against a Circle transaction number that has already been used. It needs to be proposed again."
-    case "FAILED": return payment.failureReason ?? "This payment didn't go through."
-    case "CANCELLED": return "This payment was cancelled."
+    case "EXPIRED": return .proposalStale
+    case "FAILED": return .setupFailed(reason: payment.failureReason)
+    case "CANCELLED": return .setupFailed(reason: "This payment was cancelled.")
+    case "COMPLETED": return .alreadyExecuted(transactionHash: payment.executionTxHash)
     default: break
     }
-    if let blocked = coordinator.blockedReason { return blocked }
-    if payment.sufficientBalance == false { return "The Circle doesn't hold enough for this yet. It can still be topped up before it's sent." }
+    // The one state only the backend can tell us about: an approval that counted before an admin was
+    // removed no longer counts, so a payment slips back from APPROVED to waiting.
+    if payment.storedLifecycle == "APPROVED" && payment.lifecycle == "APPROVAL_PENDING" {
+      return .adminRemoved
+    }
+    if alreadyApproved { return .approvalAlreadyCounted }
+    if let blocked = coordinator.blockedReason { return .networkUnavailable(detail: blocked) }
+    if payment.approvalProgress == nil { return .networkUnavailable(detail: nil) }
+    if payment.sufficientBalance == false {
+      return .insufficientFunds(
+        available: nil, needed: Money.assetAmount(fromAtomic: payment.amount ?? "0"))
+    }
     return nil
   }
 
+  /// Whether this admin's approval is already counted — matched on the authority that signed, which
+  /// is what the Safe counts, so a second approval is never solicited.
+  private var alreadyApproved: Bool {
+    guard let mine = presentation.circle.members?
+      .first(where: { $0.prismId == model.identity?.prismId })?.authorityAddress?.lowercased()
+    else { return false }
+    return (payment.approvals ?? []).contains { $0.authorityAddress.lowercased() == mine }
+  }
+
+  /// Every notice leads somewhere. Closing returns to the Circle, which is where adding money,
+  /// seeing the receipt and suggesting the payment again all live — so "back to the Circle" is a
+  /// real next step rather than a way of dismissing the problem.
+  private func noticeAction(for state: CircleState) -> (() -> Void)? {
+    switch state {
+    case .networkUnavailable: return { Task { await refresh() } }
+    case .insufficientFunds, .approvalAlreadyCounted, .alreadyExecuted, .proposalStale, .adminRemoved:
+      return { dismiss() }
+    default: return nil
+    }
+  }
+
   private var canApprove: Bool {
-    payment.binding?.ok != false && !payment.isDead && !payment.isComplete
+    payment.binding?.ok != false && !payment.isDead && !payment.isComplete && !alreadyApproved
   }
 
   private var requesterLabel: String {

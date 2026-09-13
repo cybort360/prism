@@ -134,6 +134,89 @@ final class CircleCoordinator: ObservableObject {
     } catch { fail(error) }
   }
 
+  // MARK: - approving a change to the Circle
+
+  /// The change a person approved on screen, as it stands after their approval.
+  @Published var lastGovernance: CircleGovernanceProposal?
+
+  /// Validate, then sign — the same order, and for the same reason, as approving a payment.
+  ///
+  /// What differs is *what* gets proven. A payment binds a recipient and an amount; a change binds a
+  /// target and calldata, and the only two targets a Circle ever signs are its own Safe and the
+  /// verified spending contract. `CircleGovernanceValidator` checks that, checks the gas-refund
+  /// fields cannot smuggle a second payment, and then recomputes the digest from the displayed
+  /// fields. Only then is Face ID presented.
+  func approveGovernance(
+    proposal: CircleGovernanceProposal,
+    circle: CircleDetail,
+    summary: String,
+    allowanceModule: String?,
+    pin: String?,
+    useFaceID: Bool
+  ) async {
+    do {
+      blockedReason = nil
+      state = .preparing
+      let base = try CircleGovernancePayloadBuilder.make(from: proposal, summary: summary)
+      // The chain comes from this device's Circle record, never from the proposal being reviewed.
+      let payload = try CircleGovernancePayloadBuilder.withChain(base, circle: circle)
+      let expectation = try CircleGovernancePayloadBuilder.expectation(
+        circle: circle, allowanceModule: allowanceModule)
+      try CircleGovernanceValidator.validate(payload, against: expectation)
+
+      state = .awaitingAuthorization
+      try await localApproval(pin: pin, useFaceID: useFaceID)
+      state = .sending
+      let result = try await api.approveCircleGovernance(
+        circleId: proposal.circleId, proposalId: proposal.proposalId, payload: payload)
+      lastGovernance = result.governance
+      state = .idle
+      PrismHaptics.success()
+    } catch { fail(error) }
+  }
+
+  /// Apply a change that has reached its threshold.
+  ///
+  /// "Applied" is not "the transaction succeeded". The backend re-reads the Circle's live authority,
+  /// re-verifies every signature, simulates, broadcasts — and then READS THE CHANGE BACK off Monad
+  /// before calling it done. A `blocked` answer is the normal, honest outcome when the change is not
+  /// ready, and is surfaced as a reason rather than an error.
+  func applyGovernance(proposal: CircleGovernanceProposal) async {
+    do {
+      blockedReason = nil
+      state = .sending
+      var result = try await api.executeCircleGovernance(
+        circleId: proposal.circleId, proposalId: proposal.proposalId)
+      lastGovernance = result
+
+      if let blocked = result.blocked {
+        blockedReason = blocked
+        state = .idle
+        PrismHaptics.warning()
+        return
+      }
+
+      state = .settling
+      for _ in 0..<40 {
+        if result.isComplete {
+          state = .sent(result.executionTxHash)
+          PrismHaptics.success()
+          return
+        }
+        if result.isDead {
+          PrismHaptics.error()
+          throw CircleError.rejected(result.failureReason ?? "This change didn't go through.")
+        }
+        try await Task.sleep(for: .milliseconds(400))
+        result = try await api.circleGovernanceStatus(
+          circleId: proposal.circleId, proposalId: proposal.proposalId)
+        lastGovernance = result
+      }
+      PrismHaptics.warning()
+      state = .pendingReview("The change was sent and is still confirming. It'll show in the Circle once Monad confirms it — don't send it again.")
+    } catch { fail(error) }
+  }
+
   // MARK: - sending an approved payment
 
   /// Ask the backend to send a payment that has reached its threshold.
@@ -285,6 +368,12 @@ final class CircleCoordinator: ObservableObject {
     }
     if let failure = error as? CircleApprovalPayloadBuilder.Failure {
       return "This approval was stopped: \(failure.description)"
+    }
+    if let rejection = error as? CircleGovernanceRejection {
+      return "This change was stopped: \(rejection.description)"
+    }
+    if let failure = error as? CircleGovernancePayloadBuilder.Failure {
+      return "This change was stopped: \(failure.description)"
     }
     if let rejection = error as? CircleSpendRejection {
       return "This payment was stopped: \(rejection.description)"

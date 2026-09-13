@@ -19,13 +19,29 @@ enum SafeTypedData {
   ///   Passing an unvalidated payload would sign whatever the backend asked for, which is the whole
   ///   thing this design exists to prevent.
   static func safeTransaction(for payload: CircleApprovalPayload) -> [String: Any] {
-    let tx = payload.safeTransaction
+    Self.payload(chainId: payload.chainId, safeAddress: payload.safeAddress, tx: payload.safeTransaction)
+  }
 
+  /// The same payload for a Circle *change* — adding an admin, changing the approval rule, setting a
+  /// spending limit. Safe signs all of them with one structure, so there is one builder; what
+  /// differs is what the device had to prove first, which is `CircleGovernanceValidator`'s job.
+  ///
+  /// - Parameter payload: a governance payload that has ALREADY passed `CircleGovernanceValidator`.
+  static func safeTransaction(for payload: CircleGovernancePayload) -> [String: Any] {
+    Self.payload(chainId: payload.chainId, safeAddress: payload.safeAddress, tx: payload.safeTransaction)
+  }
+
+  static func jsonData(for payload: CircleGovernancePayload) throws -> Data {
+    try JSONSerialization.data(withJSONObject: safeTransaction(for: payload), options: [.sortedKeys])
+  }
+
+  /// The one place Safe's EIP-712 `SafeTx` payload is spelled out.
+  private static func payload(chainId: SafeUInt256, safeAddress: EVMAddress, tx: SafeTransaction) -> [String: Any] {
     // Safe's domain carries no name and no version — only the chain and the Safe itself. That is
     // what makes one signature unreplayable onto another Circle or another chain.
     let domain: [String: Any] = [
-      "chainId": payload.chainId.decimalString,
-      "verifyingContract": payload.safeAddress.lowercasedHex,
+      "chainId": chainId.decimalString,
+      "verifyingContract": safeAddress.lowercasedHex,
     ]
 
     let types: [String: Any] = [

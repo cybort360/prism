@@ -19,6 +19,10 @@ final class AppModel: ObservableObject {
   @Published var presentCircleAddMoney: CircleSummary?
   @Published var presentCirclePay: CirclePayTarget?
   @Published var presentCircleApproval: CircleApprovalPresentation?
+  /// The Circle being looked at. A full-screen place rather than a sheet, because a Circle is
+  /// somewhere a person stays — with its own members, settings and history to move between.
+  @Published var presentCircleDetail: CircleSummary?
+  @Published var presentCircleCreate = false
   @Published var presentRequestDetail: RequestDetailPresentation?
   @Published var sendPickerPresented = false
   @Published var requestPickerPresented = false
