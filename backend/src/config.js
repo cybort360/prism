@@ -19,6 +19,13 @@ export const USDC_KNOWN = {
   10143: '0x534b2f3A21130d7a60830c2Df862319e593943A3'
 };
 export const USDC_DOMAIN = { name: 'USDC', version: '2' };
+
+// Safe's Allowance Module v0.1.1 — the only one deployed on Monad, and the release *before*
+// v1.0.0 fixed a delegate-transfer replay vulnerability. Named here so that pointing Circles at it
+// is refused explicitly rather than working by accident.
+export const VULNERABLE_ALLOWANCE_MODULES = new Set([
+  '0xaa46724893dedd72658219405185fb0fc91e091c'
+]);
 export const USDC_DECIMALS = 6;
 
 const chainId = BigInt(env('MONAD_CHAIN_ID', '10143'));
@@ -55,6 +62,21 @@ export const config = {
     // 10,000 stablecoin units for normal transfers, 1,000 for pre-user claims.
     maxPaymentAtomic: bigintEnv('MAX_PAYMENT_ATOMIC', '10000000000'),
     maxClaimAtomic: bigintEnv('MAX_CLAIM_ATOMIC', '1000000000')
+  },
+  // Prism Circles: shared USDC accounts governed by a Safe Smart Account on Monad.
+  circles: {
+    // Verified Safe v1.4.1 deployment on Monad. Every address below had its codehash checked
+    // against @safe-global/safe-deployments on-chain — see docs/CIRCLES_DEPENDENCY_AUDIT.md.
+    safeSingleton: env('SAFE_SINGLETON', '0x41675C099F32341bf84BFc5382aF534df5C7461a'),
+    safeProxyFactory: env('SAFE_PROXY_FACTORY', '0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67'),
+    safeFallbackHandler: env('SAFE_FALLBACK_HANDLER', '0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99'),
+    // Per-member spending limits would need the Safe Allowance Module. Version 1.0.0 fixed a
+    // delegate-transfer replay vulnerability, and it is deployed on NO chain: the only Allowance
+    // Module on Monad is the pre-fix v0.1.1. Circles therefore runs threshold-only rather than
+    // silently adopting the vulnerable release. Re-enable only when a v1.0.0 deployment is
+    // independently verified on the target network.
+    limitsEnabled: env('CIRCLE_LIMITS_ENABLED', 'false') === 'true',
+    allowanceModule: env('CIRCLE_ALLOWANCE_MODULE', '')
   },
   twilio: {
     accountSid: env('TWILIO_ACCOUNT_SID'),
@@ -140,5 +162,26 @@ export function assertSafeConfig() {
   }
   // A production boot that claims live cross-chain routing must actually have an Aurora key.
   if (config.aurora.mode === 'live' && !config.aurora.appKey) bad.push('AURORA_APP_KEY (required when AURORA_MODE=live)');
+  assertCircleLimitsAreSafe(bad);
   if (bad.length) throw new Error(`unsafe production configuration: ${bad.join(', ')}`);
+}
+
+/// Circle spending limits must never be switched on against a pre-v1.0.0 Allowance Module.
+/// Enabling limits is a deliberate act that requires naming a module address, and that address
+/// must not be a known-vulnerable deployment. Exported so the rule is testable without a
+/// production boot.
+export function assertCircleLimitsAreSafe(bad = []) {
+  const { limitsEnabled, allowanceModule } = config.circles;
+  if (!limitsEnabled) return bad;
+  if (!allowanceModule) {
+    bad.push('CIRCLE_ALLOWANCE_MODULE (required when CIRCLE_LIMITS_ENABLED=true)');
+    return bad;
+  }
+  if (VULNERABLE_ALLOWANCE_MODULES.has(allowanceModule.toLowerCase())) {
+    bad.push(
+      'CIRCLE_ALLOWANCE_MODULE points at Safe Allowance Module v0.1.1, which predates the v1.0.0 ' +
+      'delegate-transfer replay fix; Circles must stay threshold-only'
+    );
+  }
+  return bad;
 }

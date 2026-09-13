@@ -55,8 +55,48 @@ jobs:
         run: forge install foundry-rs/forge-std --no-git
 
       # The vault invariant suite (256 runs / 128k calls) dominates the ~2.5 min runtime.
+      # The Circles suite is excluded here and runs as its own job: it forks Monad testnet.
       - name: Test
-        run: forge test -vv
+        run: forge test -vv --no-match-path 'test/circles/*'
+
+  circles:
+    name: Circles architecture proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install forge-std
+        working-directory: contracts
+        run: forge install foundry-rs/forge-std --no-git
+
+      # Runs against the real Safe v1.4.1 deployment on a Monad testnet fork, the real EIP-7951
+      # P-256 precompile and the real USDC contract. `--network monad` is mandatory: without it a
+      # call to the precompile returns empty output and every P-256 assertion becomes vacuous.
+      - name: Safe owner compatibility, vectors and relayer model
+        working-directory: contracts
+        env:
+          FOUNDRY_PROFILE: circles
+          MONAD_TESTNET_RPC_URL: https://testnet-rpc.monad.xyz
+        run: forge test --match-path 'test/circles/*' --network monad -vv
+
+      # Independently re-derives every Safe transaction hash with the official protocol-kit and
+      # confirms the committed Swift fixture is still in step with the vector file.
+      - name: Cross-check vectors against the official Safe protocol-kit
+        working-directory: tools/circles
+        run: |
+          npm install
+          npm run verify
+          npm run fixture
+          git diff --exit-code -- ../../ios/PrismTests/CircleSafeTxVectorsFixture.swift
 
   ios:
     name: iOS

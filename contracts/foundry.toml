@@ -8,8 +8,17 @@ solc_version = "0.8.28"
 optimizer = true
 optimizer_runs = 100000
 via_ir = true
-fs_permissions = [{ access = "read-write", path = "../deployments" }]
+fs_permissions = [
+    { access = "read-write", path = "../deployments" },
+    { access = "read-write", path = "../proof/circles" },
+]
+# Circles compatibility tests compile the archived P-256 PrismAccount in place, so the
+# experiment always measures the real archived source rather than a drifting copy.
+allow_paths = ["../archive"]
 
 [rpc_endpoints]
 monad_testnet = "${MONAD_TESTNET_RPC_URL}"
 monad_mainnet = "${MONAD_MAINNET_RPC_URL}"
+
+[profile.circles]
+ffi = true

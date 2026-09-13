@@ -225,6 +225,8 @@ Keychain write fail. CI is green on all four checks. See `proof/SECURITY_PROOF.m
 
 - Design: `docs/ARCHITECTURE.md`, `docs/IOS_ARCHITECTURE.md`, `docs/PRD_ADDENDUM_v1.1.md`,
   `docs/RESEARCH_NOTES.md`
+- Prism Circles (shared USDC accounts, Safe-based — architecture proof only, no UI yet):
+  `docs/CIRCLES_ARCHITECTURE_PROOF.md`, `docs/CIRCLES_DEPENDENCY_AUDIT.md`
 - Security: `docs/SECURITY.md`, `docs/THREAT_MODEL.md`, `docs/FORGE_PROOF_PLAN.md`
 - Integrations: `docs/SPONSOR_MATRIX.md` (Mera / Envio / Alchemy mapping),
   `docs/MERA_INTEGRATION.md`, `docs/ENVIO_INTEGRATION.md`, `docs/ALCHEMY_INTEGRATION.md`,

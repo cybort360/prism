@@ -1,0 +1,21 @@
+{
+  "name": "prism-circles-vectors",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Independently re-derives the Prism Circles Safe test vectors with the official Safe Protocol Kit, so the on-chain, JS and Swift implementations are held to one another.",
+  "scripts": {
+    "verify": "node verify-vectors.mjs",
+    "fixture": "node generate-swift-fixture.mjs",
+    "all": "node verify-vectors.mjs && node generate-swift-fixture.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@safe-global/protocol-kit": "8.0.7",
+    "@safe-global/safe-deployments": "^1.37.63",
+    "@safe-global/safe-modules-deployments": "^3.0.10",
+    "viem": "^2.56.3"
+  }
+}
