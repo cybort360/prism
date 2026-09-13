@@ -76,7 +76,11 @@ export const config = {
     // silently adopting the vulnerable release. Re-enable only when a v1.0.0 deployment is
     // independently verified on the target network.
     limitsEnabled: env('CIRCLE_LIMITS_ENABLED', 'false') === 'true',
-    allowanceModule: env('CIRCLE_ALLOWANCE_MODULE', '')
+    allowanceModule: env('CIRCLE_ALLOWANCE_MODULE', ''),
+    // Safe Transaction Service: shared storage for pending proposals so co-admins on other devices
+    // can see them. Never trusted for authority — every confirmation it returns is re-verified
+    // against the digest and the live owner set. Unset = proposals stay local to Prism.
+    txServiceUrl: env('SAFE_TX_SERVICE_URL', '')
   },
   twilio: {
     accountSid: env('TWILIO_ACCOUNT_SID'),

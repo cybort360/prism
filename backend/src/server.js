@@ -19,6 +19,8 @@ import { ActivityService } from './services/activityService.js';
 import { AuroraService } from './services/auroraService.js';
 import { ProofService } from './services/proofService.js';
 import { P256AccountService } from './services/p256AccountService.js';
+import { CircleService } from './services/circleService.js';
+import { safeCircleAdapter } from './chain/safeCircle.js';
 import { p256ChainOps } from './chain/p256Account.js';
 import { runContinuityLab } from './lab/continuityLab.js';
 import { usdcBalanceOf, claimAuthorizerAddress, relayerAccount, verifyChainId, verifyUsdcDomain } from './chain/eth.js';
@@ -42,6 +44,7 @@ const activityService = new ActivityService({ store, identityService });
 const auroraService = new AuroraService({ store, config, identityService, paymentService });
 const proofService = new ProofService({ paymentService, identityService, config });
 const p256AccountService = new P256AccountService({ store, config, chainOps: p256ChainOps });
+const circleService = new CircleService({ store, config, identityService, safeAdapter: safeCircleAdapter() });
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -242,6 +245,62 @@ route('POST', '/v1/aurora/send/submit', async ({ user, body, idempotencyKey }) =
 route('GET', '/v1/aurora/routes', async ({ user }) => auroraService.listRoutes(user.prismId), true);
 route('GET', '/v1/aurora/routes/:id', async ({ user, params }) =>
   auroraService.reconcileRoute({ prismId: user.prismId, routeId: params.id }), true);
+
+// --- Prism Circles: shared USDC accounts on a Safe Smart Account ---------------
+// Prism holds the Circle's name and who was invited. Monad holds the money, the admin set and the
+// threshold — those are read live on every request and never served from a stored mirror. No route
+// below accepts a Safe address: the Safe always comes from the Circle record the caller belongs to,
+// so there is no request that can aim a Circle operation at someone else's Safe.
+
+// Threshold guidance for the creation sheet. A template is a UX default only: it recommends a
+// threshold for the admins already chosen, invents no admin, and never exceeds the admins selected.
+route('GET', '/v1/circles/templates', async ({ url }) => {
+  const adminCount = Number(url.searchParams.get('admins') ?? '0');
+  const template = url.searchParams.get('template') ?? 'CUSTOM';
+  return circleService.templateGuidance({ template, adminCount });
+}, true);
+
+route('POST', '/v1/circles', async ({ user, body, idempotencyKey }) => {
+  rateLimit(`circle-create:${user.prismId}`, 20);
+  // Creation is idempotent on the Circle's own shape (creator + name + admins + threshold), so a
+  // retry resumes the same Circle rather than deploying a second Safe even without a key.
+  const run = () => circleService.createCircle({
+    creatorPrismId: user.prismId, name: body.name, icon: body.icon ?? null,
+    template: body.template ?? 'CUSTOM', admins: body.admins ?? [], threshold: Number(body.threshold),
+    policyAcknowledgement: body.policyAcknowledgement ?? null
+  });
+  if (!idempotencyKey) return run();
+  return withIdempotency(store, {
+    scope: 'circle-create', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint(String(body.name), String(body.threshold), JSON.stringify(body.admins ?? []))
+  }, run);
+}, true);
+
+route('GET', '/v1/circles', async ({ user }) => ({ circles: circleService.listCircles(user.prismId) }), true);
+route('GET', '/v1/circles/:id', async ({ user, params }) => circleService.getCircle(params.id, user.prismId), true);
+route('GET', '/v1/circles/:id/members', async ({ user, params }) => ({ members: circleService.listMembers(params.id, user.prismId) }), true);
+
+// Invitations go through Prism's existing human identity layer (@handle or Prism id). Accepting one
+// makes someone a member; it never grants admin authority, which only the Safe can confer.
+route('POST', '/v1/circles/:id/invitations', async ({ user, params, body }) => {
+  rateLimit(`circle-invite:${user.prismId}`, 60);
+  return circleService.invite({ circleId: params.id, actorPrismId: user.prismId, prismId: body.prismId ?? null, handle: body.handle ?? null, role: body.role ?? 'VIEWER' });
+}, true);
+route('POST', '/v1/circles/:id/invitations/:inviteId/accept', async ({ user, params }) =>
+  circleService.acceptInvitation({ circleId: params.id, inviteId: params.inviteId, prismId: user.prismId }), true);
+route('POST', '/v1/circles/:id/invitations/:inviteId/decline', async ({ user, params }) =>
+  circleService.declineInvitation({ circleId: params.id, inviteId: params.inviteId, prismId: user.prismId }), true);
+
+// Governance. These PREPARE a Safe transaction and change nothing on-chain: they return the digest
+// the Circle's admins must approve. Authority moves only when enough owners have signed it.
+route('POST', '/v1/circles/:id/admins/prepare-add', async ({ user, params, body }) =>
+  circleService.prepareAddAdmin({ circleId: params.id, actorPrismId: user.prismId, prismId: body.prismId ?? null, handle: body.handle ?? null, threshold: body.threshold === undefined ? null : Number(body.threshold) }), true);
+route('POST', '/v1/circles/:id/admins/prepare-remove', async ({ user, params, body }) =>
+  circleService.prepareRemoveAdmin({ circleId: params.id, actorPrismId: user.prismId, prismId: body.prismId, threshold: body.threshold === undefined ? null : Number(body.threshold) }), true);
+route('POST', '/v1/circles/:id/threshold/prepare', async ({ user, params, body }) =>
+  circleService.prepareThresholdChange({ circleId: params.id, actorPrismId: user.prismId, threshold: Number(body.threshold) }), true);
+
+route('GET', '/v1/circles/:id/pending', async ({ user, params }) => circleService.listPending(params.id, user.prismId), true);
 
 // --- infrastructure: Alchemy webhook, dev proof surface, observability -------
 

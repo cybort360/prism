@@ -37,10 +37,19 @@ Blocked on external keys/funds; nothing here is a code defect.
 - [ ] Point the proof surface (`GET /v1/proof/:id`, `GET /v1/metrics`) at the live deployment for the
       judge demo.
 
-## Prism Circles — open decisions (architecture proven, product not built)
+## Prism Circles — open decisions (domain, persistence and creation built; no UI)
 
-Phases 0-3 of the Circles architecture proof are complete and green; see
-`docs/CIRCLES_ARCHITECTURE_PROOF.md` and `docs/CIRCLES_DEPENDENCY_AUDIT.md`. No Circle UI exists yet.
+Phases 0-3 of the architecture proof are complete and green (`docs/CIRCLES_ARCHITECTURE_PROOF.md`,
+`docs/CIRCLES_DEPENDENCY_AUDIT.md`). The canonical domain model, persistence, Safe integration layer
+and Circle creation are now built on top of it — `docs/CIRCLES_ARCHITECTURE.md` and
+`docs/CIRCLES_AUTHORITY_MODEL.md`. **No Circle UI exists yet**, and no Circle payment flow: the
+`PAYMENT` proposal kind and its USDC-transfer intent are modelled and tested, but approve-and-execute
+is the next phase.
+
+- [ ] **Circle payments — NEXT.** Approve and execute a `PAYMENT` proposal: an approval route over
+      `CircleService.recordApproval` (already implemented and tested) and execution through
+      `SafeCircleAdapter.executeTransaction`. Recipient identity comes from the Protected Alias
+      Resolver; the phone re-derives the Safe digest before signing (`ios/Prism/Core/Circles/`).
 
 - [x] **Admin identity — DECIDED (2026-09-13).** A Circle admin's Safe owner is their existing Mera
       passkey-derived secp256k1 address. No new credential, no per-admin contract, no EIP-1271.
@@ -58,7 +67,8 @@ Phases 0-3 of the Circles architecture proof are complete and green; see
       escape hatches. Safe already supplies the mechanism (`addOwnerWithThreshold`, `removeOwner`,
       `swapOwner` as ordinary threshold-approved Circle transactions), so this is product design,
       not contract work. Must land before real money sits in Circles.
-- [ ] **Circle spending limits stay OFF.** `CIRCLE_LIMITS_ENABLED=false`, threshold-only. Safe's
+- [ ] **Circle spending limits stay OFF.** `SPENDER` therefore confers proposal rights only, with no
+      independent spending authority, and the API says so. `CIRCLE_LIMITS_ENABLED=false`, threshold-only. Safe's
       Allowance Module v1.0.0 fixed a delegate-transfer replay vulnerability and is deployed on no
       chain; the only module on Monad is the pre-fix v0.1.1. `backend/src/config.js` refuses to
       enable limits against that address. Revisit only when a v1.0.0 deployment is independently
