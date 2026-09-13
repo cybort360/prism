@@ -18,7 +18,7 @@ import { getAddress, isAddress, recoverAddress, recoverMessageAddress } from 'vi
 import {
   safeTransaction, safeTxHash, encodeTransactionData, encodeSetupInitializer, predictSafeAddress,
   encodeUsdcTransfer, encodeAddOwnerWithThreshold, encodeRemoveOwner, encodeChangeThreshold,
-  prevOwnerFor, buildSignatureBytes, SafeOperation
+  prevOwnerFor, buildSignatureBytes, SafeOperation, findUsdcTransfer, safeExecutionOutcome
 } from './safeEncoding.js';
 import { SignatureType, badRequest, conflict } from './model.js';
 import { logger } from '../lib/logger.js';
@@ -29,9 +29,10 @@ import { logger } from '../lib/logger.js';
  * halfway through a creation flow.
  */
 export const SAFE_ADAPTER_METHODS = Object.freeze([
-  'predictCircleAddress', 'createCircle', 'getCircleState', 'getOwners', 'getThreshold',
+  'predictCircleAddress', 'createCircle', 'getCircleState', 'getOwners', 'getThreshold', 'getNonce',
   'buildTransaction', 'getTransactionHash', 'encodeContractSignature',
-  'proposeTransaction', 'addConfirmation', 'getPendingTransactions', 'executeTransaction',
+  'proposeTransaction', 'addConfirmation', 'getPendingTransactions',
+  'simulateExecution', 'executeTransaction', 'getTransactionReceipt', 'verifyExecutionEvidence',
   'getUsdcBalance', 'getDeploymentReceipt', 'verifyApproval'
 ]);
 
@@ -317,7 +318,44 @@ export class SafeCircleAdapter {
     return out;
   }
 
-  /** Submit a fully-approved Safe transaction. The relayer pays gas; authority is in the signatures. */
+  // --- execution -------------------------------------------------------------
+
+  /**
+   * Dry-run `execTransaction` against current chain state, without broadcasting.
+   *
+   * This is the gate in front of every Circle payment, and it is not a nicety. Safe re-derives the
+   * digest and re-checks every signature against its own live owner set inside `execTransaction`, so
+   * a successful simulation is the Safe itself confirming — at this block, with these owners, at this
+   * nonce — that the approvals Prism collected really do authorize this transaction. A failure means
+   * the broadcast would have burned gas to revert, or (worse) that Prism's view of authority and the
+   * Safe's have diverged. Either way the answer is: do not broadcast.
+   */
+  async simulateExecution({ safeAddress, tx, approvals }) {
+    const safe = this._assertAddress(safeAddress);
+    const signatures = buildSignatureBytes(approvals);
+    try {
+      const result = await this.chain.simulateContract({
+        address: safe, abi: SAFE_ABI, functionName: 'execTransaction',
+        args: [tx.to, tx.value, tx.data, tx.operation, tx.safeTxGas, tx.baseGas, tx.gasPrice, tx.gasToken, tx.refundReceiver, signatures]
+      });
+      // Safe's `execTransaction` returns false when the inner call fails but the Safe itself did
+      // not revert. That is still a payment that would not happen, so it is not a success here.
+      if (result?.result === false) return { ok: false, reason: 'the Safe would execute but the USDC transfer itself would fail' };
+      return { ok: true, request: result?.request ?? null, signatures };
+    } catch (error) {
+      logger.warn('circle.safe.simulate.failed', { safeAddress: safe, nonce: String(tx.nonce), error: error.shortMessage ?? error.message });
+      return { ok: false, reason: error.shortMessage ?? error.message };
+    }
+  }
+
+  /**
+   * Submit a fully-approved Safe transaction. The relayer pays gas; authority is in the signatures.
+   *
+   * The relayer is a courier and nothing more. Every field it submits is covered by the owners'
+   * signatures, so rewriting the recipient, the token, the amount or the nonce on the way out does
+   * not redirect the money — it produces a digest the signatures do not authorize and the Safe
+   * reverts. `circles-payments.test.js` asserts exactly that against a Safe that checks signatures.
+   */
   async executeTransaction({ safeAddress, tx, approvals }) {
     const safe = this._assertAddress(safeAddress);
     const signatures = buildSignatureBytes(approvals);
@@ -327,6 +365,54 @@ export class SafeCircleAdapter {
     });
     logger.info('circle.safe.exec.submitted', { safeAddress: safe, nonce: String(tx.nonce), txHash });
     return { txHash };
+  }
+
+  /** A mined transaction, or null while it is still in flight. Never a guess. */
+  async getTransactionReceipt(txHash) {
+    const receipt = await this.chain.getReceipt(txHash).catch(() => null);
+    if (!receipt) return null;
+    const ok = receipt.status === 'success' || receipt.status === 1 || receipt.status === '0x1';
+    return { status: ok ? 'success' : 'reverted', blockNumber: receipt.blockNumber ?? null, logs: receipt.logs ?? [], raw: receipt };
+  }
+
+  /**
+   * Turn a receipt into an answer to one question: did THIS Circle pay THIS recipient THIS amount?
+   *
+   * Three separate facts have to line up, and the reason all three are required is that each alone
+   * is forgeable or merely circumstantial:
+   *
+   *   1. the transaction succeeded                     — otherwise nothing happened at all;
+   *   2. the Safe emitted ExecutionSuccess for this
+   *      exact safeTxHash                              — Safe swallows a failing inner call and emits
+   *                                                      ExecutionFailure while the *outer* receipt
+   *                                                      still says success, so (1) does not imply it;
+   *   3. the configured USDC emitted Transfer, from
+   *      the Circle's Safe, to the reviewed recipient,
+   *      for the exact amount                          — the only evidence that money moved, and the
+   *                                                      only one tied to who was actually paid.
+   *
+   * Anything less is reported as a mismatch with a reason, never rounded up to "completed".
+   */
+  verifyExecutionEvidence({ receipt, safeAddress, safeTxHash: digest, recipient, amountAtomic }) {
+    const safe = this._assertAddress(safeAddress);
+    if (!receipt) return { ok: false, reason: 'no receipt yet' };
+    if (receipt.status !== 'success') return { ok: false, reason: 'the execution transaction reverted' };
+
+    const outcome = safeExecutionOutcome(receipt, { safeAddress: safe, safeTxHash: digest });
+    if (outcome === 'failure') return { ok: false, reason: 'the Safe reported ExecutionFailure for this transaction' };
+    if (outcome !== 'success') return { ok: false, reason: 'the receipt carries no Safe ExecutionSuccess for this transaction' };
+
+    const transfer = findUsdcTransfer(receipt, {
+      usdcAddress: this.config.chain.usdc, from: safe, to: recipient, amountAtomic
+    });
+    if (!transfer) {
+      return { ok: false, reason: 'no USDC Transfer from this Circle to the reviewed recipient for the exact amount' };
+    }
+    return {
+      ok: true,
+      transfer: { from: transfer.from, to: transfer.to, amountAtomic: transfer.amountAtomic.toString(), token: getAddress(this.config.chain.usdc) },
+      blockNumber: receipt.blockNumber ? String(receipt.blockNumber) : null
+    };
   }
 
   // --- internals -------------------------------------------------------------

@@ -44,7 +44,7 @@ const activityService = new ActivityService({ store, identityService });
 const auroraService = new AuroraService({ store, config, identityService, paymentService });
 const proofService = new ProofService({ paymentService, identityService, config });
 const p256AccountService = new P256AccountService({ store, config, chainOps: p256ChainOps });
-const circleService = new CircleService({ store, config, identityService, safeAdapter: safeCircleAdapter() });
+const circleService = new CircleService({ store, config, identityService, safeAdapter: safeCircleAdapter(), paymentService });
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -301,6 +301,63 @@ route('POST', '/v1/circles/:id/threshold/prepare', async ({ user, params, body }
   circleService.prepareThresholdChange({ circleId: params.id, actorPrismId: user.prismId, threshold: Number(body.threshold) }), true);
 
 route('GET', '/v1/circles/:id/pending', async ({ user, params }) => circleService.listPending(params.id, user.prismId), true);
+
+// --- contributions: money INTO a Circle --------------------------------------
+// A contribution is an ordinary Prism payment whose recipient is the Circle's Safe: same envelope,
+// same ERC-3009 receive-authorization to the audited router, same relayer, same reconciliation.
+// There is no contribution vault, and the Circle's balance is never incremented by Prism — it rises
+// because a transfer landed, and is read back from the token contract.
+route('POST', '/v1/circles/:id/contributions/prepare', async ({ user, params, body }) => {
+  rateLimit(`circle-contribute:${user.prismId}`, 60);
+  return circleService.prepareContribution({ circleId: params.id, prismId: user.prismId, amountAtomic: body.amountAtomic });
+}, true);
+route('POST', '/v1/circles/:id/contributions/:contributionId/submit', async ({ user, params, body, idempotencyKey }) => {
+  requireSig(body.prismSignature, 'prismSignature'); requireSig(body.tokenSignature, 'tokenSignature');
+  return withIdempotency(store, {
+    scope: 'circle-contribute-submit', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint(params.contributionId, body.prismSignature, body.tokenSignature)
+  }, () => circleService.submitContribution({
+    circleId: params.id, contributionId: params.contributionId, prismId: user.prismId,
+    prismSignature: body.prismSignature, tokenSignature: body.tokenSignature
+  }));
+}, true);
+route('GET', '/v1/circles/:id/contributions', async ({ user, params }) => circleService.listContributions(params.id, user.prismId), true);
+route('GET', '/v1/circles/:id/contributions/:contributionId', async ({ user, params }) =>
+  circleService.reconcileContribution({ circleId: params.id, contributionId: params.contributionId, prismId: user.prismId }), true);
+
+// --- Circle payments: money OUT of a Circle, under the threshold --------------
+// The recipient comes from the SAME Protected Alias Resolver as a personal payment, so a Circle
+// payment inherits Prism Continuity whole. No route accepts a target address or calldata: the Safe
+// transaction is always `USDC.transfer(resolvedRecipient, amount)` against the configured token,
+// built by CircleService and by nothing else.
+route('POST', '/v1/circles/:id/payments/propose', async ({ user, params, body }) => {
+  rateLimit(`circle-pay:${user.prismId}`, 60);
+  return circleService.proposePayment({
+    circleId: params.id, actorPrismId: user.prismId, resolution: body.resolution,
+    amountAtomic: body.amountAtomic, memo: body.memo ?? ''
+  });
+}, true);
+route('GET', '/v1/circles/:id/payments', async ({ user, params }) => circleService.listPayments(params.id, user.prismId), true);
+route('GET', '/v1/circles/:id/payments/:proposalId', async ({ user, params }) =>
+  circleService.getPayment({ circleId: params.id, proposalId: params.proposalId, prismId: user.prismId }), true);
+// Approve: the signature is verified against the digest and the LIVE owner set, and the payment's
+// bound fields are re-checked first, so an approval can never attach to a mutated payment.
+route('POST', '/v1/circles/:id/payments/:proposalId/approve', async ({ user, params, body, idempotencyKey }) => {
+  requireSig(body.signature, 'signature');
+  return withIdempotency(store, {
+    scope: 'circle-approve', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint(params.proposalId, body.signature)
+  }, () => circleService.approvePayment({
+    circleId: params.id, proposalId: params.proposalId, prismId: user.prismId, signature: body.signature
+  }));
+}, true);
+// Execute: reads the Safe's live owners/threshold/nonce, re-verifies every signature, SIMULATES
+// execTransaction, and broadcasts only if the simulation succeeds.
+route('POST', '/v1/circles/:id/payments/:proposalId/execute', async ({ user, params, idempotencyKey }) =>
+  withIdempotency(store, {
+    scope: 'circle-execute', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint('execute', params.proposalId)
+  }, () => circleService.executePayment({ circleId: params.id, proposalId: params.proposalId, actorPrismId: user.prismId })), true);
 
 // --- infrastructure: Alchemy webhook, dev proof surface, observability -------
 

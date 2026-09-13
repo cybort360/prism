@@ -14,6 +14,11 @@ final class AppModel: ObservableObject {
   @Published var presentPaymentDetails: PaymentDetailsPresentation?
   @Published var presentIdentityChange: IdentityChangeCandidate?
   @Published var presentClaimDetail: ClaimDetailPresentation?
+  /// Circles. Adding money and proposing a payment are separate sheets because they are separate
+  /// authorities: one needs only the contributor's own consent, the other needs the Circle's.
+  @Published var presentCircleAddMoney: CircleSummary?
+  @Published var presentCirclePay: CirclePayTarget?
+  @Published var presentCircleApproval: CircleApprovalPresentation?
   @Published var presentRequestDetail: RequestDetailPresentation?
   @Published var sendPickerPresented = false
   @Published var requestPickerPresented = false

@@ -12,10 +12,11 @@ import { appendEvent, ensureEvents, canonicalPayment, receiptFor, lifecycleState
 import { assertFreshResolution } from '../lib/continuity.js';
 
 const AUTH_WINDOW_SECONDS = 5 * 60;
-// Operation kinds settled through PrismPaymentRouter.settle(). Both are a signed PaymentEnvelope
-// plus an ERC-3009 receive-authorization; they differ only in what the opaque hash slot binds —
-// a Prism resolution for a direct payment, an Aurora route for a cross-chain send.
-const SETTLE_KINDS = new Set(['payment', 'aurora-send']);
+// Operation kinds settled through PrismPaymentRouter.settle(). All three are a signed
+// PaymentEnvelope plus an ERC-3009 receive-authorization; they differ only in what the opaque hash
+// slot binds — a Prism resolution for a direct payment, an Aurora route for a cross-chain send, a
+// Circle contribution for money moving into a shared account. One settlement path, three meanings.
+const SETTLE_KINDS = new Set(['payment', 'aurora-send', 'circle-contribution']);
 const ZERO32 = `0x${'00'.repeat(32)}`;
 
 /**

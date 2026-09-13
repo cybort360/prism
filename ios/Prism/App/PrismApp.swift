@@ -63,6 +63,11 @@ struct MainShell: View {
     }
     .sheet(item: $model.presentClaimDetail) { item in ClaimDetailView(claim: item.claim) }
     .sheet(item: $model.presentRequestDetail) { item in RequestDetailView(request: item.request) }
+    // Circles. Adding money needs only the contributor's own consent; paying out needs the Circle's,
+    // which is why proposing and approving are two separate screens rather than one flow.
+    .sheet(item: $model.presentCircleAddMoney) { circle in CircleAddMoneyView(circle: circle) }
+    .sheet(item: $model.presentCirclePay) { target in CirclePayView(target: target) }
+    .sheet(item: $model.presentCircleApproval) { item in CircleApprovalView(presentation: item) }
     .sheet(isPresented: $model.sendPickerPresented) { PersonPickerView(mode: .send) }
     .sheet(isPresented: $model.sendAnywherePresented) { SendToAnywhereView() }
     .sheet(isPresented: $model.requestPickerPresented) { PersonPickerView(mode: .request) }

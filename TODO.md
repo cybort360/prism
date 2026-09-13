@@ -37,19 +37,21 @@ Blocked on external keys/funds; nothing here is a code defect.
 - [ ] Point the proof surface (`GET /v1/proof/:id`, `GET /v1/metrics`) at the live deployment for the
       judge demo.
 
-## Prism Circles — open decisions (domain, persistence and creation built; no UI)
+## Prism Circles — open decisions (domain, persistence, creation and money movement built)
 
 Phases 0-3 of the architecture proof are complete and green (`docs/CIRCLES_ARCHITECTURE_PROOF.md`,
-`docs/CIRCLES_DEPENDENCY_AUDIT.md`). The canonical domain model, persistence, Safe integration layer
-and Circle creation are now built on top of it — `docs/CIRCLES_ARCHITECTURE.md` and
-`docs/CIRCLES_AUTHORITY_MODEL.md`. **No Circle UI exists yet**, and no Circle payment flow: the
-`PAYMENT` proposal kind and its USDC-transfer intent are modelled and tested, but approve-and-execute
-is the next phase.
+`docs/CIRCLES_DEPENDENCY_AUDIT.md`). The canonical domain model, persistence, Safe integration layer,
+Circle creation and now the money movement are built on top of it — `docs/CIRCLES_ARCHITECTURE.md`,
+`docs/CIRCLES_AUTHORITY_MODEL.md` and `docs/CIRCLE_PAYMENTS.md`. What is still missing is the
+**Circle list/detail/creation UI**: the three money screens exist (`ios/Prism/Features/Circles/`) but
+nothing navigates to them yet, and they have not been compiled.
 
-- [ ] **Circle payments — NEXT.** Approve and execute a `PAYMENT` proposal: an approval route over
-      `CircleService.recordApproval` (already implemented and tested) and execution through
-      `SafeCircleAdapter.executeTransaction`. Recipient identity comes from the Protected Alias
-      Resolver; the phone re-derives the Safe digest before signing (`ios/Prism/Core/Circles/`).
+- [x] **Circle payments — DONE (2026-09-13).** Contributions in (reusing the existing
+      PaymentEnvelope + ERC-3009 + router + relayer path, no contribution vault) and
+      threshold-governed payments out (propose → approve → simulate → execute → reconcile), with
+      recipient identity from the Protected Alias Resolver and mutation security on the six fields a
+      Safe signature covers. `docs/CIRCLE_PAYMENTS.md`; backend 269/269, contracts 51/51.
+      **iOS is written but uncompiled** — see "Prism Circles — remaining work" below.
 
 - [x] **Admin identity — DECIDED (2026-09-13).** A Circle admin's Safe owner is their existing Mera
       passkey-derived secp256k1 address. No new credential, no per-admin contract, no EIP-1271.
@@ -87,6 +89,24 @@ is the next phase.
       demo-visible effect and high regression cost. Pair this with the P2 deployment.
 - [ ] **F-09 — Alchemy Gas Manager** sponsorship (currently MON-funded relayer only). Optional; the
       relayer path already gives users MON = 0.
+
+## Prism Circles — remaining work
+
+- [ ] **Compile and run the iOS Circle code.** `CircleAddMoneyView`, `CirclePayView`,
+      `CircleApprovalView`, `PrismCircleModels`, `SafeTypedData`, `PrismAPI+Circles`,
+      `CircleCoordinator` and `CircleApprovalWireTests` were written on Linux, where there is no
+      Swift toolchain. `make test-ios` needs macOS and has not been run against them.
+- [ ] **Circle list / detail / creation UI.** The three money screens are wired into `PrismApp` as
+      sheets driven by `AppModel.presentCircle*`, but nothing sets those yet: there is no Circles
+      tab, no Circle detail screen, and no creation sheet. That is the next UI phase.
+- [ ] **A live Circle payment on Monad testnet.** The payment suite runs against an in-memory Safe
+      that enforces Safe's real `execTransaction` rules; no Circle payment has been broadcast to live
+      Monad (same funded-key constraint as the rest of P2).
+- [ ] **Circle send-before-signup — DEFERRED, revisit only with a vault change.** Audited in
+      `contracts/test/PrismClaimVaultCircleCompat.t.sol` and recorded in `docs/CIRCLE_PAYMENTS.md`
+      §7: the ClaimVault funds exclusively through an ERC-3009 `ecrecover` authorization a Safe
+      cannot produce, and has no allowance path to pull from. Supporting it means a new funding
+      entry point on a deployed, audited vault — a decision, not a task.
 
 ## Nice-to-have / polish
 - [ ] UI test for claim sibling visibility (audit Test F): eligible = [C1,C2,C3], claim C1, assert

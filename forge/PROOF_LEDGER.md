@@ -132,6 +132,56 @@ the classic SwiftUI dropped-presentation risk was flagged (finding #5) and not v
 (c) Amber-on-white small-label contrast was darkened to pass AA for the review labels (finding #6);
 a full contrast/VoiceOver audit of the app was not done.
 
+## Circle contributions and threshold-governed payments (2026-09-13)
+
+Money now moves into and out of a Circle. Contributions reuse the existing Prism payment path
+(PaymentEnvelope + ERC-3009 to the audited router + relayer); payments out are Safe transactions that
+Prism can only propose. See `docs/CIRCLE_PAYMENTS.md`.
+
+Commands run:
+
+```
+cd backend   && node --test test/*.test.js          # 269 pass / 0 fail
+cd contracts && forge test --no-match-path 'test/circles/*'   # 51 pass / 0 fail (137s, incl. fuzz + invariants)
+```
+
+The Circle payment suite runs against a fake chain that implements Safe's real `execTransaction`
+rules — it recomputes the digest from the arguments it is handed, recovers each signature, requires
+strictly ascending owner order and current ownership, and enforces its own nonce — over a **single
+USDC ledger shared with the payment router**. The digest, the CREATE2 address and the event topics
+are derived independently in the harness from the type strings and the factory formula, so the suite
+checks Prism's encoding rather than agreeing with it.
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| CP-1 | A contribution moves USDC from a personal Prism account to the Circle Safe, and the Circle's balance rises — read back from the token, never incremented | `VERIFIED` (harness) | `circles-payments.test.js`: *USDC moves from a personal Prism account into the Circle, and the balance rises* — balance 0 → $100, contributor $500 → $400 |
+| CP-2 | Contributions reuse the existing payment infrastructure; no contribution vault | `VERIFIED` | *reuses the existing Prism payment path rather than a contribution vault* — op kind `circle-contribution`, ERC-3009 authorization addressed to the configured router |
+| CP-3 | A contribution re-labelled after signing does not reconcile | `VERIFIED` | *a contribution re-labelled after signing does not reconcile* — `contributionHash` mismatch → FAILED |
+| CP-4 | The payment recipient comes from the Protected Alias Resolver; the Safe transaction is `USDC.transfer` to the configured token, value 0, CALL, neutral gas refund | `VERIFIED` | *the recipient comes from the Protected Alias Resolver, and the Safe transaction is fixed in shape* |
+| CP-5 | No caller can supply a target or calldata | `VERIFIED` (structural) | *no caller can supply a target or calldata* — `_intentToCall` rejects any intent but the four Circle intents |
+| CP-6 | 1 of 2 cannot execute; 2 of 2 executes | `VERIFIED` | *1 of 2 cannot execute, 2 of 2 executes* — zero executions at 1 of 2; at 2 of 2 recipient +$40, Circle $500 → $460 |
+| CP-7 | The threshold is read from the Safe, never inferred from Prism's rows | `VERIFIED` | *the required count comes from the Safe, never from a Prism row* — `requiredApprovals: 1` / `collectedApprovals: 99` / stored `threshold: 1` all ignored |
+| CP-8 | A signature from a non-owner never counts, even written straight into the database | `VERIFIED` | *a signature from someone who is not an admin never counts* |
+| CP-9 | An approval from an admin removed on-chain stops counting; APPROVED reverts to APPROVAL_PENDING | `VERIFIED` | *an approval from an admin removed on-chain stops counting…* |
+| CP-10 | A duplicate approval is refused | `VERIFIED` | *approving twice is refused…* |
+| CP-11 | Mutating any of recipient / amount / USDC target / Safe nonce / Safe / chain after approval invalidates it | `VERIFIED` | six tests, one per field: *changing {…} after approval invalidates it*; plus *the six bound fields are exactly the fields a Safe signature covers* |
+| CP-12 | A Safe nonce already consumed cannot be replayed; a completed payment re-executes as a reconcile | `VERIFIED` | *a payment built against a nonce the Safe has already used cannot be replayed* (one execution, paid once) · *re-executing a completed payment reconciles instead of broadcasting again* |
+| CP-12b | Two simultaneous sends produce exactly one broadcast | `VERIFIED` | *two simultaneous sends produce exactly one broadcast* — one `execTransaction`, paid once; the loser is told it is already being sent |
+| CP-13 | A relayer that rewrites the transaction cannot redirect the funds | `VERIFIED` (harness) | *a relayer that rewrites the transaction cannot redirect the funds* — hostile relayer with two genuine approvals submits a $480 transfer to itself; the Safe answers `GS026` and the Circle is untouched |
+| CP-14 | A failed simulation is never broadcast | `VERIFIED` | *a simulation that fails is never broadcast* — fully approved but underfunded; zero executions |
+| CP-15 | COMPLETED is unreachable without chain evidence (receipt + Safe `ExecutionSuccess` + matching USDC `Transfer`) | `VERIFIED` | *a receipt with no USDC Transfer never becomes COMPLETED* · *a payment hand-marked COMPLETED in the database reads back as INVALIDATED* |
+| CP-16 | Circle balance before/after reconciles: contributions in − payments out == `balanceOf(safe)` | `VERIFIED` | *contribute, propose, approve 2 of 2, execute, and the ledger reconciles* — $800 in, $480 out, $320 left, host holds $480 |
+| CP-17 | A recipient whose identity changed after proposal blocks the payment (Prism Continuity, re-checked at approve AND at execute) | `VERIFIED` | *a recipient whose account changed without an authenticated rotation blocks the payment* |
+| CP-18 | Circle send-before-signup: **DEFERRED**, with the reason asserted, not merely written | `VERIFIED` (audit) | `contracts/test/PrismClaimVaultCircleCompat.t.sol`, 4 tests: funding is `ecrecover`-only so a Safe cannot fund; approving the vault is inert (no pull path); refund would correctly return to a contract sender; no EIP-1271 funding variant exists. `docs/CIRCLE_PAYMENTS.md` §7 |
+
+**Not claimed:** (a) **No live Circle Safe on Monad** — the payment suite runs against the in-memory
+Safe above; the digest agreement with a real Safe v1.4.1 is the separately-recorded fork proof. The
+same funded-key constraint as the rest of P2. (b) **iOS was not compiled for this change** — the
+Circle screens, wire models, typed-data builder and `CircleApprovalWireTests` were written on Linux,
+where no Swift toolchain is available. `make test-ios` needs macOS and has not been run; every iOS
+claim here is `UNTESTED` until it has. (c) The Safe Transaction Service path is exercised only in its
+absent (local-only) configuration.
+
 ## How to add a row
 State the exact command, run it, paste the pass/fail counts (or tx hash), then set the status. If a
 prior claim's enforcement code changed, set it to `REGRESSED` until re-run.

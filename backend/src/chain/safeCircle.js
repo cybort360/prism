@@ -16,6 +16,9 @@ const chainOps = {
   getChainId: () => chainProvider().getChainId(),
   readContract: (args) => chainProvider().readContract(args),
   writeContract: (args) => chainProvider().writeContract(args),
+  // Every Circle execution is dry-run here first. The provider fills in the relayer as `from`, so
+  // the simulation is of the transaction that would actually be broadcast, not an idealized one.
+  simulateContract: (args) => chainProvider().simulateContract(args),
   getReceipt: (hash) => chainProvider().getTransactionReceipt(hash)
 };
 

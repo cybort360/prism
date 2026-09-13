@@ -20,24 +20,50 @@ import crypto from 'node:crypto';
 import { getAddress, isAddress, keccak256, toHex } from 'viem';
 import {
   CircleStatus, MemberRole, MemberStatus, ProposalKind, ProposalStatus, CIRCLE_ASSET,
-  TERMINAL_MEMBER_STATUSES, CHAIN_BACKED_ROLES,
-  newCircle, newCircleMember, newCircleProposal, newCircleApproval,
-  assertCircleTransition, assertThresholdWithinOwners, thresholdWarnings, assertRole,
+  TERMINAL_MEMBER_STATUSES, CHAIN_BACKED_ROLES, ContributionStatus,
+  CirclePaymentState, CIRCLE_PAYMENT_PRE_BROADCAST, APPROVAL_BOUND_FIELDS,
+  newCircle, newCircleMember, newCircleProposal, newCircleApproval, newCircleContribution,
+  assertCircleTransition, assertCirclePaymentTransition, assertContributionTransition,
+  assertThresholdWithinOwners, thresholdWarnings, assertRole,
   badRequest, forbidden, notFound, conflict
 } from '../circles/model.js';
 import { assertTemplateChoice, templateOptions, CircleTemplate } from '../circles/templates.js';
-import { sameOwnerSet, normalizeOwnerSet } from '../circles/safeEncoding.js';
+import { sameOwnerSet, normalizeOwnerSet, safeTransaction, safeTxHash, decodeUsdcTransfer, ZERO_ADDRESS } from '../circles/safeEncoding.js';
+import { contributionHash } from '../chain/eth.js';
+import { assertFreshResolution } from '../lib/continuity.js';
 import { assertAdapterContract, EXPECTED_SAFE_VERSION } from '../circles/safeCircleAdapter.js';
 import { logger } from '../lib/logger.js';
 
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;   // an invitation that goes unanswered for a fortnight is stale
 const PROPOSAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// How long one broadcast attempt holds the execution slot before a retry may take it over.
+const EXECUTION_RESERVATION_MS = 60_000;
+
+/** Roles allowed to put money into a Circle. A VIEWER may look at one and nothing else. */
+const CONTRIBUTING_ROLES = Object.freeze([MemberRole.ADMIN, MemberRole.SPENDER, MemberRole.CONTRIBUTOR]);
+/** Broadcast and not yet settled: calling execute again must reconcile, never re-broadcast. */
+const CIRCLE_PAYMENT_IN_FLIGHT = Object.freeze([
+  CirclePaymentState.SUBMITTED, CirclePaymentState.CONFIRMING,
+  CirclePaymentState.CONFIRMED, CirclePaymentState.RECONCILED, CirclePaymentState.COMPLETED
+]);
+/** Payment states that are only truthful when `proposal.evidence` backs them. */
+const EVIDENCE_BACKED_STATES = Object.freeze([CirclePaymentState.RECONCILED, CirclePaymentState.COMPLETED]);
+/** Roles allowed to *propose* a spend. Proposing is not spending: only signatures move money. */
+const PROPOSING_ROLES = CONTRIBUTING_ROLES;
 
 export class CircleService {
-  constructor({ store, config, identityService, safeAdapter }) {
+  /**
+   * @param {object} deps
+   * @param {object} [deps.paymentService] Prism's existing payment service. Contributions are
+   *        ordinary Prism payments whose recipient is the Circle's Safe, so they run through the
+   *        audited router/ERC-3009/relayer path rather than a second settlement mechanism. Optional
+   *        only so that Circle suites which never move money need not wire it.
+   */
+  constructor({ store, config, identityService, safeAdapter, paymentService = null }) {
     this.store = store;
     this.config = config;
     this.identityService = identityService;
+    this.payments = paymentService;
     this.safe = assertAdapterContract(safeAdapter);
   }
 
@@ -571,21 +597,35 @@ export class CircleService {
    * asked to approve. `requiredApprovals` is the *current on-chain* threshold, because that is what
    * Safe will enforce when this executes.
    */
-  async _createProposal({ circle, actorPrismId, kind, authority, intent, memo, subject }) {
+  async _createProposal({ circle, actorPrismId, kind, authority, intent, memo, subject, payment = null, trace = [] }) {
     const tx = await this.safe.buildTransaction({ safeAddress: circle.safeAddress, intent, nonce: authority.nonce });
     const digest = await this.safe.getTransactionHash({ safeAddress: circle.safeAddress, tx });
 
     const proposalId = `prp_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
     const proposal = newCircleProposal({
       proposalId, circleId: circle.circleId, kind, proposerPrismId: actorPrismId,
-      recipientPrismId: subject.prismId ?? null, recipientAccount: subject.authorityAddress ?? null,
-      amount: null, asset: null, memo,
+      recipientPrismId: payment?.recipientPrismId ?? subject.prismId ?? null,
+      recipientAccount: payment?.recipientAccount ?? subject.authorityAddress ?? null,
+      amount: payment?.amount ?? null, asset: payment ? CIRCLE_ASSET : null, memo,
       safeTxHash: digest, safeNonce: tx.nonce.toString(),
       safeTransaction: serializeTx(tx),
+      // The Safe, the chain and the token this digest was built against, stored alongside it so a
+      // later edit to any of them is detectable rather than invisible (see `_paymentBinding`).
+      safeAddress: circle.safeAddress,
+      chainId: circle.chainId,
+      token: payment ? getAddress(this.config.chain.usdc) : null,
       requiredApprovals: authority.threshold,
       expiresAt: new Date(Date.now() + PROPOSAL_TTL_MS).toISOString()
     });
     proposal.subject = subject;
+    if (payment) {
+      proposal.payment = payment;
+      proposal.lifecycle = CirclePaymentState.PROPOSED;
+      proposal.trace = [...trace, { state: CirclePaymentState.PROPOSED, at: new Date().toISOString(), detail: { safeTxHash: digest, safeNonce: tx.nonce.toString() } }];
+      proposal.executionTxHash = null;
+      proposal.balanceBefore = null;
+      proposal.balanceAfter = null;
+    }
 
     this.store.mutate((d) => { (d.circleProposals ||= {})[proposalId] = proposal; });
     await this.safe.proposeTransaction({
@@ -594,6 +634,7 @@ export class CircleService {
     });
     this._event(circle.circleId, 'circle.proposal.created', { proposalId, kind, safeTxHash: digest });
 
+    if (payment) return this._paymentView(circle, this._proposal(circle.circleId, proposalId), { authority, collected: [] });
     return this._proposalView(proposal, { collected: [] });
   }
 
@@ -622,6 +663,13 @@ export class CircleService {
 
     const out = [];
     for (const proposal of proposals) {
+      // A payment carries its own lifecycle and its own binding check, so it is rendered by the
+      // payment view rather than flattened into the governance one — this is the admin's approval
+      // inbox, and it must show what is actually being approved.
+      if (proposal.kind === ProposalKind.PAYMENT) {
+        out.push(await this._paymentView(circle, proposal, { authority }));
+        continue;
+      }
       // A proposal built against a nonce the Safe has already consumed can never execute. Say so
       // rather than leaving a permanently un-executable row in the list.
       const stale = Number(proposal.safeNonce) < authority.nonce;
@@ -653,11 +701,844 @@ export class CircleService {
       throw forbidden('that approval was signed by a different account than your Prism authority');
     }
 
+    // One approval per authority. Safe counts an owner once however many signatures it is handed, so
+    // a second approval could never raise the count — but silently accepting it would let the API
+    // imply progress that does not exist.
+    const duplicate = Object.values(this.store.read().circleApprovals ?? {}).find(
+      (a) => a.proposalId === proposalId && a.authorityAddress && getAddress(a.authorityAddress) === authorityAddress
+    );
+    if (duplicate) throw conflict('you have already approved this');
+
     const approval = newCircleApproval({ proposalId, prismId, authorityAddress, signatureType, signature });
     this.store.mutate((d) => { (d.circleApprovals ||= {})[`${proposalId}:${prismId}`] = approval; });
     await this.safe.addConfirmation({ safeTxHash: proposal.safeTxHash, signature });
     this._event(circleId, 'circle.proposal.approved', { proposalId, authorityAddress });
     return { proposalId, approvedBy: prismId, signatureType };
+  }
+
+  // ===========================================================================
+  // Contributions — money moving INTO a Circle
+  // ===========================================================================
+
+  /**
+   * Prepare a contribution: a personal Prism account pays USDC to the Circle's Safe.
+   *
+   * There is deliberately no contribution vault and no second settlement mechanism. A contribution
+   * is an ordinary Prism payment whose recipient happens to be a Safe, so it goes through the same
+   * PaymentEnvelope, the same ERC-3009 receive-authorization to the audited router, the same
+   * relayer, and the same reconciliation as paying a person. The Circle's balance then rises for
+   * exactly the reason any ERC-20 balance rises — a transfer landed — and Prism reads it back from
+   * the token rather than adding to a number it keeps.
+   *
+   * What makes this a *contribution* rather than a payment that happens to hit a Safe is the opaque
+   * hash slot in the envelope: `contributionHash` binds the Circle, its Safe, the contributor and
+   * the amount into the signature, so reconciliation can hold the settled payment to the claim the
+   * contributor actually signed.
+   */
+  async prepareContribution({ circleId, prismId, amountAtomic }) {
+    const circle = await this._spendableCircle(circleId, prismId, CONTRIBUTING_ROLES, 'add money to');
+    if (!this.payments) throw conflict('contributions are not available on this deployment');
+
+    const amount = this._assertAmount(amountAtomic);
+    const contributionId = `ctb_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
+
+    // Read before, so "the Circle went up by exactly this" is checkable later rather than asserted.
+    // Unreadable is recorded as unknown; it is never defaulted to a number.
+    const balanceBefore = await this.safe.getUsdcBalance(circle.safeAddress).then((b) => b.toString()).catch(() => null);
+
+    const bound = contributionHash({
+      contributionId, circleId, safeAddress: circle.safeAddress,
+      contributorPrismId: prismId, amountAtomic: amount
+    });
+
+    const prepared = await this.payments.prepareExternalSend({
+      senderPrismId: prismId,
+      recipientAddress: circle.safeAddress,
+      amountAtomic: amount,
+      boundHash: bound,
+      kind: 'circle-contribution',
+      intent: { circleId, contributionId, entryMethod: 'circle', memo: `Added to ${circle.name}` }
+    });
+
+    const contribution = newCircleContribution({
+      contributionId, circleId, contributorPrismId: prismId, amount, asset: CIRCLE_ASSET,
+      operationId: prepared.paymentId, safeAddress: circle.safeAddress, balanceBefore
+    });
+    contribution.boundHash = bound;
+    this.store.mutate((d) => { (d.circleContributions ||= {})[contributionId] = contribution; });
+    this._event(circleId, 'circle.contribution.prepared', { contributionId, amount, contributorPrismId: prismId });
+
+    return {
+      ...prepared,
+      contribution: this._contributionView(contribution, circle),
+      circle: { circleId: circle.circleId, name: circle.name, icon: circle.icon, safeAddress: circle.safeAddress }
+    };
+  }
+
+  /**
+   * Relay a signed contribution. `SUBMITTED` means a transaction was broadcast and nothing more —
+   * the money is not in the Circle until a receipt says so, which is `reconcileContribution`'s job.
+   */
+  async submitContribution({ circleId, contributionId, prismId, prismSignature, tokenSignature }) {
+    const { contribution } = this._ownContribution({ circleId, contributionId, prismId });
+    if (!this.payments) throw conflict('contributions are not available on this deployment');
+    if (contribution.status === ContributionStatus.COMPLETED) return this.reconcileContribution({ circleId, contributionId, prismId });
+
+    const result = await this.payments.submitPayment({
+      paymentId: contribution.operationId, prismSignature, tokenSignature, actorPrismId: prismId
+    });
+    if (result.state === 'submitted' || result.state === 'confirming') {
+      this._setContributionStatus(contributionId, ContributionStatus.SUBMITTED, { transactionHash: result.txHash ?? null });
+    }
+    return this.reconcileContribution({ circleId, contributionId, prismId, payment: result });
+  }
+
+  /**
+   * Reconcile a contribution against chain truth.
+   *
+   * COMPLETED requires three things, not one: the underlying Prism payment reached `completed` (which
+   * only an on-chain receipt can do), the settled envelope really paid *this* Circle's Safe, and the
+   * signed contribution hash still describes this contribution. The last check is what makes a later
+   * edit to the stored row — a different Circle, a different amount — surface as a contradiction
+   * instead of quietly re-labelling somebody's money.
+   */
+  async reconcileContribution({ circleId, contributionId, prismId, payment = null }) {
+    const { contribution, circle } = this._ownContribution({ circleId, contributionId, prismId });
+    if (!this.payments) throw conflict('contributions are not available on this deployment');
+    // Terminal: a settled contribution is read, never re-transitioned. Without this, polling a
+    // completed contribution would keep re-asking the chain for an answer it already has.
+    if (contribution.status === ContributionStatus.COMPLETED || contribution.status === ContributionStatus.FAILED) {
+      return { contribution: this._contributionView(contribution, circle) };
+    }
+
+    const settled = payment && payment.state === 'completed'
+      ? payment
+      : await this.payments.reconcile(contribution.operationId, prismId).catch(() => null);
+
+    if (!settled) return { contribution: this._contributionView(this._contribution(contributionId), circle) };
+
+    if (settled.state === 'failed') {
+      this._setContributionStatus(contributionId, ContributionStatus.FAILED, { failureReason: 'the contribution transaction reverted on Monad' });
+      return { contribution: this._contributionView(this._contribution(contributionId), circle), payment: settled };
+    }
+
+    if (settled.state !== 'completed') {
+      if (contribution.status === ContributionStatus.SUBMITTED) {
+        this._setContributionStatus(contributionId, ContributionStatus.CONFIRMING, { transactionHash: settled.txHash ?? contribution.transactionHash });
+      }
+      return { contribution: this._contributionView(this._contribution(contributionId), circle), payment: settled };
+    }
+
+    // --- completed on-chain. Now check it is completed *as this contribution*. -----------------
+    const operation = this.store.read().operations?.[contribution.operationId];
+    const mismatch = this._contributionMismatch(contribution, operation);
+    if (mismatch) {
+      this._setContributionStatus(contributionId, ContributionStatus.FAILED, { failureReason: mismatch });
+      logger.error('circle.contribution.mismatch', { contributionId, reason: mismatch });
+      return { contribution: this._contributionView(this._contribution(contributionId), circle), payment: settled, mismatch };
+    }
+
+    const balanceAfter = await this.safe.getUsdcBalance(circle.safeAddress).then((b) => b.toString()).catch(() => null);
+    this._setContributionStatus(contributionId, ContributionStatus.COMPLETED, {
+      transactionHash: settled.transactionHash ?? settled.txHash ?? contribution.transactionHash,
+      balanceAfter,
+      completedAt: new Date().toISOString()
+    });
+    this._event(circleId, 'circle.contribution.completed', {
+      contributionId, amount: contribution.amount, transactionHash: settled.transactionHash ?? settled.txHash
+    });
+    return { contribution: this._contributionView(this._contribution(contributionId), circle), payment: settled };
+  }
+
+  /** Contributions to this Circle, newest first. Visible to every member. */
+  listContributions(circleId, prismId) {
+    const circle = this._circle(circleId);
+    this._assertMember(circleId, prismId);
+    const all = Object.values(this.store.read().circleContributions ?? {})
+      .filter((c) => c.circleId === circleId)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    return { circleId, contributions: all.map((c) => this._contributionView(c, circle)) };
+  }
+
+  /**
+   * The settled payment must agree with the contribution in every field the contributor signed.
+   * Returns a human reason, or null when everything lines up.
+   */
+  _contributionMismatch(contribution, operation) {
+    if (!operation?.env) return 'the settled payment for this contribution is missing';
+    if (operation.kind !== 'circle-contribution') return 'that operation is not a Circle contribution';
+    if (!contribution.safeAddress || getAddress(operation.env.recipient) !== getAddress(contribution.safeAddress)) {
+      return 'the settled payment did not pay this Circle';
+    }
+    if (String(operation.env.amount) !== String(contribution.amount)) {
+      return 'the settled amount is not the amount this contribution recorded';
+    }
+    const expected = contributionHash({
+      contributionId: contribution.contributionId, circleId: contribution.circleId,
+      safeAddress: contribution.safeAddress, contributorPrismId: contribution.contributorPrismId,
+      amountAtomic: contribution.amount
+    });
+    if (String(operation.env.resolutionHash).toLowerCase() !== expected.toLowerCase()) {
+      return 'this contribution no longer matches what the contributor signed';
+    }
+    return null;
+  }
+
+  _setContributionStatus(contributionId, status, extra = {}) {
+    this.store.mutate((d) => {
+      const c = d.circleContributions[contributionId];
+      assertContributionTransition(c.status, status);
+      Object.assign(c, extra);
+      c.status = status;
+    });
+  }
+
+  _contribution(contributionId) {
+    const contribution = this.store.read().circleContributions?.[contributionId];
+    if (!contribution) throw notFound('contribution not found');
+    return contribution;
+  }
+
+  _ownContribution({ circleId, contributionId, prismId }) {
+    const circle = this._circle(circleId);
+    this._assertMember(circleId, prismId);
+    const contribution = this._contribution(contributionId);
+    if (contribution.circleId !== circleId) throw notFound('contribution not found');
+    if (contribution.contributorPrismId !== prismId) throw forbidden('that contribution belongs to someone else');
+    return { contribution, circle };
+  }
+
+  _contributionView(contribution, circle) {
+    const before = contribution.balanceBefore;
+    const after = contribution.balanceAfter;
+    return {
+      contributionId: contribution.contributionId,
+      circleId: contribution.circleId,
+      circleName: circle?.name ?? null,
+      contributorPrismId: contribution.contributorPrismId,
+      amount: contribution.amount,
+      asset: contribution.asset,
+      status: contribution.status,
+      operationId: contribution.operationId,
+      transactionHash: contribution.transactionHash,
+      failureReason: contribution.failureReason ?? null,
+      createdAt: contribution.createdAt,
+      completedAt: contribution.completedAt ?? null,
+      // The Circle's balance either side of this contribution, as read from the token contract.
+      // `delta` is present only when both reads succeeded — never inferred from the amount.
+      balance: {
+        before, after,
+        delta: before !== null && after !== null ? (BigInt(after) - BigInt(before)).toString() : null,
+        source: 'chain'
+      }
+    };
+  }
+
+  // ===========================================================================
+  // Circle payments — money moving OUT of a Circle, under the threshold
+  // ===========================================================================
+
+  /**
+   * Propose a payment from a Circle to a person.
+   *
+   * The recipient comes from the *same* Protected Alias Resolver as every other Prism payment. That
+   * is not code reuse for its own sake: it means paying someone from a Circle inherits Prism
+   * Continuity whole — a contact whose alias now resolves to a different PrismIdentity is blocked
+   * and reviewed, never silently redirected, exactly as it would be for a personal payment.
+   *
+   * The Safe transaction this builds is fixed in shape and Prism is the only thing that chooses it:
+   *
+   *     to        = the officially configured USDC contract
+   *     value     = 0
+   *     data      = USDC.transfer(resolvedRecipient, amount)
+   *     operation = CALL
+   *
+   * No caller — app, admin, or backend route — supplies a target or calldata. `_intentToCall` is the
+   * only function that turns a Circle intent into a Safe call, and `PAYMENT` is hardcoded there to
+   * the configured token. There is no request shape that reaches `execTransaction` with an arbitrary
+   * destination, which is why "the relayer cannot redirect funds" is a structural claim rather than
+   * a validation rule that could be forgotten.
+   */
+  async proposePayment({ circleId, actorPrismId, resolution, amountAtomic, memo = '' }) {
+    const circle = await this._spendableCircle(circleId, actorPrismId, PROPOSING_ROLES, 'pay from');
+    if (!this.payments) throw conflict('Circle payments are not available on this deployment');
+    const amount = this._assertAmount(amountAtomic);
+    const note = String(memo ?? '').trim().slice(0, 120);
+
+    const proposalId = `prp_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
+    const trace = [];
+    const mark = (state, detail = {}) => trace.push({ state, at: new Date().toISOString(), detail });
+    mark(CirclePaymentState.CREATED, { amount });
+
+    // --- RESOLVING / RESOLVED: the recipient is a Prism identity, not an address the caller typed.
+    mark(CirclePaymentState.RESOLVING, {});
+    const { identity: recipient, attestation } = this.payments.assertResolution(resolution, actorPrismId);
+    if (!recipient?.accountAddress) throw badRequest('that person has not finished setting up their Prism account');
+    if (getAddress(recipient.accountAddress) === getAddress(circle.safeAddress)) throw badRequest('a Circle cannot pay itself');
+    mark(CirclePaymentState.RESOLVED, { recipientPrismId: recipient.prismId, route: attestation.route });
+
+    const authority = await this._readAuthority(circle);
+    const balance = await this.safe.getUsdcBalance(circle.safeAddress).catch(() => null);
+
+    const proposal = await this._createProposal({
+      circle, actorPrismId, kind: ProposalKind.PAYMENT, authority,
+      intent: { kind: 'PAYMENT', recipient: getAddress(recipient.accountAddress), amountAtomic: amount },
+      memo: note || `Payment to ${recipient.displayName ?? (recipient.handle ? `@${recipient.handle}` : 'a contact')}`,
+      subject: { prismId: recipient.prismId, authorityAddress: getAddress(recipient.accountAddress) },
+      payment: {
+        amount,
+        recipientPrismId: recipient.prismId,
+        recipientAccount: getAddress(recipient.accountAddress),
+        recipientDisplayName: recipient.displayName ?? null,
+        recipientHandle: recipient.handle ? `@${recipient.handle}` : null,
+        // Kept so continuity can be re-checked before every signature and before execution: the
+        // alias that found this person may change, and a change to a DIFFERENT identity must block.
+        aliasVersion: recipient.aliasVersion,
+        resolutionRequestId: attestation.requestId,
+        resolutionRoute: attestation.route ?? null
+      },
+      trace
+    });
+
+    return {
+      ...proposal,
+      // Stated, never enforced by refusing to propose: a Circle can be topped up while approvals are
+      // collected, and simulation is the gate that actually decides whether it can execute.
+      sufficientBalance: balance === null ? null : balance >= BigInt(amount)
+    };
+  }
+
+  /**
+   * Everything a Circle payment's approvals are *about*, re-derived and compared.
+   *
+   * A Safe signature covers a digest, and the digest covers the Circle's address, the chain id, the
+   * nonce, the target, the value, the operation, the gas-refund fields and `keccak256(calldata)`.
+   * So changing the recipient, the amount, the token, the nonce, the Safe or the chain already
+   * invalidates every signature *cryptographically* — Safe would refuse to execute.
+   *
+   * This function makes that failure visible *before* anyone is asked to sign again, and before a
+   * relayer burns gas discovering it. It rebuilds the digest from the stored fields and compares it
+   * with the digest the approvals were collected against. A backend row edited after approval
+   * therefore reads as a contradiction rather than as a payment waiting to go out.
+   */
+  _paymentBinding(circle, proposal) {
+    const reasons = [];
+    const tx = proposal.safeTransaction;
+    const usdc = getAddress(this.config.chain.usdc);
+    const same = (a, b) => { try { return getAddress(a) === getAddress(b); } catch { return false; } };
+
+    if (!tx) return { ok: false, reasons: ['this payment has no recorded Safe transaction'] };
+    if (!same(proposal.safeAddress, circle.safeAddress)) reasons.push('the Circle Safe is not the Safe this payment was approved for');
+    if (String(proposal.chainId) !== String(circle.chainId)) reasons.push('the chain is not the chain this payment was approved for');
+    if (!same(proposal.token, usdc)) reasons.push('the recorded token is not this deployment\'s USDC');
+    if (!same(tx.to, usdc)) reasons.push('the transaction target is not this deployment\'s USDC contract');
+    if (Number(tx.operation) !== 0) reasons.push('the transaction is a delegatecall, which a Circle never signs');
+    if (BigInt(tx.value ?? 0) !== 0n) reasons.push('the transaction moves native MON, which a USDC payment never does');
+    if (BigInt(tx.gasPrice ?? 0) !== 0n || BigInt(tx.baseGas ?? 0) !== 0n || BigInt(tx.safeTxGas ?? 0) !== 0n
+      || !same(tx.gasToken, ZERO_ADDRESS) || !same(tx.refundReceiver, ZERO_ADDRESS)) {
+      reasons.push('the gas-refund fields are not neutral, so a second unreviewed payment could hide inside this one');
+    }
+    if (String(tx.nonce) !== String(proposal.safeNonce)) reasons.push('the Safe nonce is not the nonce this payment was approved for');
+
+    let decoded = null;
+    try { decoded = decodeUsdcTransfer(tx.data); }
+    catch { reasons.push('the calldata is not a plain USDC transfer'); }
+    if (decoded) {
+      if (!same(decoded.recipient, proposal.recipientAccount)) reasons.push('the calldata pays a different recipient than this payment records');
+      if (decoded.amountAtomic !== BigInt(proposal.amount)) reasons.push('the calldata moves a different amount than this payment records');
+    }
+
+    // The digest of exactly these fields must be the digest the approvals were collected against.
+    if (!reasons.length) {
+      const recomputed = safeTxHash({
+        chainId: circle.chainId,
+        safeAddress: circle.safeAddress,
+        tx: safeTransaction({
+          to: tx.to, value: BigInt(tx.value), data: tx.data, operation: Number(tx.operation),
+          safeTxGas: BigInt(tx.safeTxGas), baseGas: BigInt(tx.baseGas), gasPrice: BigInt(tx.gasPrice),
+          gasToken: tx.gasToken, refundReceiver: tx.refundReceiver, nonce: BigInt(tx.nonce)
+        })
+      });
+      if (recomputed.toLowerCase() !== String(proposal.safeTxHash).toLowerCase()) {
+        reasons.push('the recorded approval digest is not the digest of these fields');
+      }
+    }
+    return { ok: reasons.length === 0, reasons, boundFields: APPROVAL_BOUND_FIELDS };
+  }
+
+  /**
+   * Re-check the recipient's identity against the live resolver state.
+   *
+   * The person was resolved when the payment was proposed, and approvals may be collected over
+   * hours. Prism Continuity says a reachability route may change without changing who is paid — but
+   * if it now leads to a *different* PrismIdentity, or the account rotated without an authenticated
+   * version advance, the payment must be blocked and reviewed rather than sent.
+   */
+  _paymentContinuity(proposal) {
+    const recipient = this.identityService.get(proposal.recipientPrismId);
+    const attestation = {
+      prismIdentity: proposal.recipientPrismId,
+      recipientAccount: proposal.recipientAccount,
+      aliasVersion: proposal.payment?.aliasVersion,
+      // Freshness of the original attestation is not the question here — the question is whether the
+      // identity Prism is about to pay is still the identity that was reviewed. `expiresAt` is set
+      // forward so the classifier answers that question and not a staleness question it already
+      // answered at propose time.
+      expiresAt: new Date(Date.now() + 60_000).toISOString()
+    };
+    const verdict = assertFreshResolution(attestation, recipient);
+    if (verdict.ok) return { ok: true };
+    return {
+      ok: false,
+      state: verdict.state,
+      reason: verdict.state === 'IDENTITY_DISCONTINUITY'
+        ? 'this contact now resolves to a different person; the payment must be reviewed again'
+        : 'the recipient identity has changed since this payment was proposed; resolve them again'
+    };
+  }
+
+  /**
+   * Approve a Circle payment. Everything the signature is about is re-checked first.
+   *
+   * `recordApproval` already verifies the signature itself — that it recovers to a CURRENT Safe
+   * owner over this exact digest. What this adds for a payment is the two checks a signature cannot
+   * make on its own: that the fields behind the digest still describe the payment on file, and that
+   * the human being paid is still the human who was reviewed.
+   */
+  async approvePayment({ circleId, proposalId, prismId, signature }) {
+    const circle = this._circle(circleId);
+    const proposal = this._proposal(circleId, proposalId);
+    if (proposal.kind !== ProposalKind.PAYMENT) throw badRequest('that proposal is not a payment');
+
+    const binding = this._paymentBinding(circle, proposal);
+    if (!binding.ok) {
+      this._invalidatePayment(proposalId, binding.reasons.join('; '));
+      throw conflict(`this payment changed after it was proposed and can no longer be approved: ${binding.reasons.join('; ')}`);
+    }
+    const continuity = this._paymentContinuity(proposal);
+    if (!continuity.ok) {
+      this._invalidatePayment(proposalId, continuity.reason);
+      throw conflict(continuity.reason);
+    }
+
+    const recorded = await this.recordApproval({ circleId, proposalId, prismId, signature });
+    // The stored lifecycle follows the flow; whether the threshold is MET is still derived on every
+    // read from signatures against the live owner set, never from this write.
+    this._setPaymentState(proposalId, CirclePaymentState.APPROVAL_PENDING, { detail: { approvedBy: prismId } });
+    const view = await this.getPayment({ circleId, proposalId, prismId });
+    return { ...recorded, payment: view };
+  }
+
+  /**
+   * Execute a Circle payment, if — and only if — the chain itself says it may be executed.
+   *
+   * The order of these checks is the security argument, so it is worth reading as a whole:
+   *
+   *   1. the binding still holds                    (nothing was edited after approval)
+   *   2. the recipient is still the same person     (Prism Continuity)
+   *   3. the Safe's owners, threshold and nonce are
+   *      read LIVE from Monad                       (never inferred from Prism's rows)
+   *   4. every stored approval is re-verified as a
+   *      signature from a CURRENT owner over this
+   *      exact digest                               (a removed admin's approval stops counting)
+   *   5. the count meets the LIVE threshold
+   *   6. the proposal's nonce is the Safe's next
+   *      nonce                                      (a consumed nonce is a replay, not a payment)
+   *   7. `execTransaction` is SIMULATED             (the Safe re-derives the digest and re-checks
+   *                                                  every signature itself; success here is the
+   *                                                  Safe agreeing, not Prism asserting)
+   *
+   * Only after all seven is anything broadcast. A failed simulation returns the reason and leaves the
+   * payment exactly where it was — it is never broadcast "to see what happens".
+   */
+  async executePayment({ circleId, proposalId, actorPrismId }) {
+    const circle = this._circle(circleId);
+    const member = this._assertMember(circleId, actorPrismId);
+    const proposal = this._proposal(circleId, proposalId);
+    if (proposal.kind !== ProposalKind.PAYMENT) throw badRequest('that proposal is not a payment');
+    if (member.role !== MemberRole.ADMIN && proposal.proposerPrismId !== actorPrismId) {
+      throw forbidden('only an admin or the person who proposed this payment can send it');
+    }
+    if (circle.status !== CircleStatus.ACTIVE) throw conflict('this Circle is not active on-chain yet');
+
+    // Already away: this call becomes a reconcile rather than a second broadcast.
+    if (CIRCLE_PAYMENT_IN_FLIGHT.includes(proposal.lifecycle)) {
+      return this.reconcilePayment({ circleId, proposalId, prismId: actorPrismId });
+    }
+    // Off the path entirely — invalidated, expired, cancelled or failed. Say why, rather than
+    // returning a view that reads like a payment still on its way.
+    if (!CIRCLE_PAYMENT_PRE_BROADCAST.includes(proposal.lifecycle)) {
+      throw conflict(proposal.failureReason
+        ? `this payment will not be sent: ${proposal.failureReason}`
+        : `this payment is ${proposal.lifecycle.toLowerCase()} and will not be sent`);
+    }
+
+    const binding = this._paymentBinding(circle, proposal);
+    if (!binding.ok) {
+      this._invalidatePayment(proposalId, binding.reasons.join('; '));
+      throw conflict(`this payment changed after it was approved and will not be sent: ${binding.reasons.join('; ')}`);
+    }
+    const continuity = this._paymentContinuity(proposal);
+    if (!continuity.ok) {
+      this._invalidatePayment(proposalId, continuity.reason);
+      throw conflict(continuity.reason);
+    }
+
+    // --- 3. LIVE authority. Never the stored mirror, and an unreadable chain is not an excuse to
+    // fall back to what Prism remembers: with no authority reading, there is no authority.
+    let authority;
+    try { authority = await this._readAuthority(circle); }
+    catch (e) { throw conflict(`Monad could not be read, so this payment cannot be sent: ${e.message}`); }
+
+    // --- 4 & 5. Approvals counted from signatures against the CURRENT owner set.
+    const collected = await this._collectApprovals(circle, proposal, authority.owners);
+    if (collected.length < authority.threshold) {
+      this._setPaymentState(proposalId, CirclePaymentState.APPROVAL_PENDING, {
+        detail: { collected: collected.length, required: authority.threshold }
+      });
+      return {
+        ...(await this._paymentView(circle, this._proposal(circleId, proposalId), { authority, collected })),
+        blocked: `${collected.length} of ${authority.threshold} approvals; this payment cannot be sent yet`
+      };
+    }
+
+    // --- 6. The Safe's nonce must be this proposal's nonce.
+    if (Number(proposal.safeNonce) < authority.nonce) {
+      this._setPaymentState(proposalId, CirclePaymentState.EXPIRED, {
+        detail: { reason: 'the Safe has already used this nonce' }
+      });
+      throw conflict('this payment was built against a Safe nonce that has already been used; propose it again');
+    }
+    if (Number(proposal.safeNonce) > authority.nonce) {
+      return {
+        ...(await this._paymentView(circle, proposal, { authority, collected })),
+        blocked: 'an earlier Circle transaction must execute first'
+      };
+    }
+
+    this._setPaymentState(proposalId, CirclePaymentState.APPROVED, {
+      detail: { collected: collected.length, threshold: authority.threshold, source: 'live owner set' }
+    });
+
+    // --- 7. Simulate. The Safe re-derives the digest and re-checks the signatures itself.
+    const tx = rehydrateTx(proposal.safeTransaction);
+    const simulation = await this.safe.simulateExecution({ safeAddress: circle.safeAddress, tx, approvals: collected });
+    this.store.mutate((d) => {
+      d.circleProposals[proposalId].lastSimulation = { at: new Date().toISOString(), ok: simulation.ok, reason: simulation.reason ?? null };
+    });
+    if (!simulation.ok) {
+      logger.warn('circle.payment.simulation.failed', { circleId, proposalId, reason: simulation.reason });
+      return {
+        ...(await this._paymentView(circle, this._proposal(circleId, proposalId), { authority, collected })),
+        blocked: `this payment was not sent because it would fail: ${simulation.reason}`,
+        simulation: { ok: false, reason: simulation.reason }
+      };
+    }
+
+    // Claim the right to broadcast, atomically, before anything leaves the process.
+    //
+    // Two simultaneous "send" taps would otherwise both pass every check above and both broadcast.
+    // The Safe would reject the second — its nonce is consumed — so the money is never at risk, but
+    // the reservation turns a wasted, confusing revert into a reconcile. `JsonStore.mutate` is
+    // synchronous, so the check and the write happen with no await between them.
+    if (!this._reserveExecution(proposalId)) {
+      return {
+        ...(await this._paymentView(circle, this._proposal(circleId, proposalId), { authority, collected })),
+        blocked: 'this payment is already being sent'
+      };
+    }
+
+    // Balance before, for the reconciliation record. Best effort: an unreadable balance must not
+    // stop a fully-approved payment, it just means the delta is reported as unknown.
+    const balanceBefore = await this.safe.getUsdcBalance(circle.safeAddress).then((b) => b.toString()).catch(() => null);
+
+    let txHash;
+    try {
+      ({ txHash } = await this.safe.executeTransaction({ safeAddress: circle.safeAddress, tx, approvals: collected }));
+    } catch (error) {
+      // The broadcast never happened (the adapter throws before returning a hash), so the
+      // reservation is released and a genuine retry can proceed.
+      this._releaseExecution(proposalId);
+      throw error;
+    }
+    this._setPaymentState(proposalId, CirclePaymentState.SUBMITTED, {
+      extra: { executionTxHash: txHash, balanceBefore },
+      detail: { txHash }
+    });
+    this._event(circleId, 'circle.payment.submitted', { proposalId, txHash, amount: proposal.amount });
+    logger.info('circle.payment.submitted', { circleId, proposalId, txHash });
+
+    return this.reconcilePayment({ circleId, proposalId, prismId: actorPrismId });
+  }
+
+  /**
+   * Reconcile a broadcast Circle payment against on-chain evidence.
+   *
+   * COMPLETED is unreachable from here without three separate facts: a successful receipt, the
+   * Safe's own `ExecutionSuccess` for this exact digest, and a USDC `Transfer` from this Circle to
+   * the reviewed recipient for the exact amount. A receipt alone is not enough — Safe swallows a
+   * failing inner call and emits `ExecutionFailure` while the outer transaction still succeeds — and
+   * that is precisely the case where a backend that trusted `status: success` would report a payment
+   * that never happened.
+   */
+  async reconcilePayment({ circleId, proposalId, prismId }) {
+    const circle = this._circle(circleId);
+    this._assertMember(circleId, prismId);
+    let proposal = this._proposal(circleId, proposalId);
+    if (proposal.kind !== ProposalKind.PAYMENT) throw badRequest('that proposal is not a payment');
+
+    if (proposal.lifecycle === CirclePaymentState.COMPLETED || !proposal.executionTxHash) {
+      return this._paymentView(circle, proposal, {});
+    }
+
+    const receipt = await this.safe.getTransactionReceipt(proposal.executionTxHash).catch(() => null);
+    if (!receipt) {
+      this._setPaymentState(proposalId, CirclePaymentState.CONFIRMING, { detail: { txHash: proposal.executionTxHash } });
+      return this._paymentView(circle, this._proposal(circleId, proposalId), {});
+    }
+
+    const evidence = this.safe.verifyExecutionEvidence({
+      receipt,
+      safeAddress: circle.safeAddress,
+      safeTxHash: proposal.safeTxHash,
+      recipient: proposal.recipientAccount,
+      amountAtomic: proposal.amount
+    });
+
+    if (!evidence.ok) {
+      // Broadcast, mined, and NOT the payment that was approved. This is a terminal failure with a
+      // reason attached; it is never rounded up, and it is never retried automatically.
+      this._setPaymentState(proposalId, CirclePaymentState.FAILED, {
+        extra: { failureReason: evidence.reason },
+        detail: { reason: evidence.reason, txHash: proposal.executionTxHash }
+      });
+      logger.error('circle.payment.evidence.failed', { circleId, proposalId, reason: evidence.reason });
+      return this._paymentView(circle, this._proposal(circleId, proposalId), {});
+    }
+
+    this._setPaymentState(proposalId, CirclePaymentState.CONFIRMED, {
+      detail: { blockNumber: evidence.blockNumber, txHash: proposal.executionTxHash }
+    });
+
+    const balanceAfter = await this.safe.getUsdcBalance(circle.safeAddress).then((b) => b.toString()).catch(() => null);
+    this._setPaymentState(proposalId, CirclePaymentState.RECONCILED, {
+      extra: {
+        executedAt: new Date().toISOString(),
+        balanceAfter,
+        evidence: {
+          transactionHash: proposal.executionTxHash,
+          blockNumber: evidence.blockNumber,
+          safeExecutionSuccess: true,
+          transfer: evidence.transfer
+        }
+      },
+      detail: { transfer: evidence.transfer }
+    });
+    this._setPaymentState(proposalId, CirclePaymentState.COMPLETED, { detail: {} });
+    this.store.mutate((d) => { d.circleProposals[proposalId].status = ProposalStatus.EXECUTED; });
+    this._event(circleId, 'circle.payment.completed', {
+      proposalId, amount: proposal.amount, recipientPrismId: proposal.recipientPrismId,
+      transactionHash: proposal.executionTxHash
+    });
+    logger.info('circle.payment.completed', { circleId, proposalId, txHash: proposal.executionTxHash });
+
+    return this._paymentView(circle, this._proposal(circleId, proposalId), {});
+  }
+
+  /** One Circle payment, with its approvals re-counted from signatures against the live owner set. */
+  async getPayment({ circleId, proposalId, prismId }) {
+    const circle = this._circle(circleId);
+    this._assertMember(circleId, prismId);
+    const proposal = this._proposal(circleId, proposalId);
+    if (proposal.kind !== ProposalKind.PAYMENT) throw notFound('payment not found');
+    return this._paymentView(circle, proposal, {});
+  }
+
+  /** Payments on this Circle, newest first. */
+  async listPayments(circleId, prismId) {
+    const circle = this._circle(circleId);
+    this._assertMember(circleId, prismId);
+    const authority = await this._readAuthority(circle).catch(() => null);
+    const proposals = Object.values(this.store.read().circleProposals ?? {})
+      .filter((p) => p.circleId === circleId && p.kind === ProposalKind.PAYMENT)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    const payments = [];
+    for (const proposal of proposals) payments.push(await this._paymentView(circle, proposal, { authority }));
+    return { circleId, payments };
+  }
+
+  /**
+   * Re-verify every approval on file against the digest and a given owner set, and drop duplicates.
+   * Local rows and Safe Transaction Service confirmations are treated identically: both are
+   * signature *claims* until `verifyApproval` says otherwise.
+   */
+  async _collectApprovals(circle, proposal, owners) {
+    const data = this.store.read();
+    const local = Object.values(data.circleApprovals ?? {}).filter((a) => a.proposalId === proposal.proposalId);
+    const external = await this.safe.getPendingTransactions(circle.safeAddress).catch(() => []);
+    const fromService = external.find((e) => String(e.safeTxHash).toLowerCase() === String(proposal.safeTxHash).toLowerCase())?.confirmations ?? [];
+
+    const verified = [];
+    for (const approval of [...local, ...fromService]) {
+      if (!approval?.signature) continue;
+      const ok = await this.safe.verifyApproval({
+        safeAddress: circle.safeAddress, safeTxHash: proposal.safeTxHash, signature: approval.signature, owners
+      }).catch(() => null);
+      if (ok) verified.push({ ...approval, authorityAddress: ok.authorityAddress, signatureType: ok.signatureType });
+    }
+    return dedupeApprovals(verified, owners);
+  }
+
+  /**
+   * The effective lifecycle of a payment.
+   *
+   * Everything up to and including APPROVED is *derived*, on every read, from signatures verified
+   * against the live owner set — so an admin removed on-chain drops a payment back from APPROVED to
+   * APPROVAL_PENDING without anyone telling Prism. From SUBMITTED onwards the stored state governs,
+   * because a broadcast is a fact about the world that no later read can undo.
+   */
+  async _paymentView(circle, proposal, { authority: given = null, collected: givenCollected = null } = {}) {
+    const terminalOrAway = !CIRCLE_PAYMENT_PRE_BROADCAST.includes(proposal.lifecycle);
+    const binding = this._paymentBinding(circle, proposal);
+
+    let authority = given;
+    let collected = givenCollected;
+    if (!terminalOrAway && binding.ok) {
+      authority ??= await this._readAuthority(circle).catch(() => null);
+      if (authority && !collected) collected = await this._collectApprovals(circle, proposal, authority.owners);
+    }
+
+    const required = authority?.threshold ?? proposal.requiredApprovals;
+    const count = collected?.length ?? null;
+    let lifecycle = proposal.lifecycle;
+    let integrity = null;
+    if (!terminalOrAway) {
+      if (!binding.ok) lifecycle = CirclePaymentState.INVALIDATED;
+      else if (authority && Number(proposal.safeNonce) < authority.nonce) lifecycle = CirclePaymentState.EXPIRED;
+      else if (count !== null) lifecycle = count >= required ? CirclePaymentState.APPROVED : CirclePaymentState.APPROVAL_PENDING;
+    } else if (EVIDENCE_BACKED_STATES.includes(lifecycle) && !proposal.evidence?.transfer) {
+      // A payment claiming to have completed without the evidence that completes it is a forgery, in
+      // exactly the sense that an ACTIVE Circle without an activation receipt is one. `reconcilePayment`
+      // is the only writer of `evidence`, and it writes it only from a receipt carrying the Safe's
+      // ExecutionSuccess and a matching USDC Transfer. A row hand-edited to COMPLETED therefore reads
+      // back as INVALIDATED, with what it claimed still visible as `storedLifecycle`.
+      integrity = 'this payment is recorded as complete but carries no on-chain evidence';
+      lifecycle = CirclePaymentState.INVALIDATED;
+      logger.error('circle.payment.evidence.missing', { proposalId: proposal.proposalId, storedLifecycle: proposal.lifecycle });
+    }
+
+    return {
+      proposalId: proposal.proposalId,
+      circleId: proposal.circleId,
+      circleName: circle.name,
+      kind: proposal.kind,
+      lifecycle,
+      storedLifecycle: proposal.lifecycle,
+      proposerPrismId: proposal.proposerPrismId,
+      recipientPrismId: proposal.recipientPrismId,
+      recipientAccount: proposal.recipientAccount,
+      recipientDisplayName: proposal.payment?.recipientDisplayName ?? null,
+      recipientHandle: proposal.payment?.recipientHandle ?? null,
+      amount: proposal.amount,
+      asset: proposal.asset,
+      memo: proposal.memo,
+      // The exact Safe transaction, so the phone can re-derive the digest for itself rather than
+      // trusting the one below. See ios/Prism/Core/Circles/CircleApprovalPayload.swift.
+      safeAddress: proposal.safeAddress,
+      chainId: proposal.chainId,
+      token: proposal.token,
+      safeTxHash: proposal.safeTxHash,
+      safeNonce: proposal.safeNonce,
+      safeTransaction: proposal.safeTransaction,
+      requiredApprovals: required,
+      collectedApprovals: count,
+      approvals: (collected ?? []).map((a) => ({ authorityAddress: a.authorityAddress, signatureType: a.signatureType, prismId: a.prismId ?? null })),
+      approvalsSource: collected ? 'verified signatures against the live owner set' : 'unavailable',
+      binding: binding.ok && !integrity
+        ? { ok: true, boundFields: binding.boundFields }
+        : { ok: false, reasons: integrity ? [integrity] : binding.reasons, boundFields: binding.boundFields },
+      executionTxHash: proposal.executionTxHash ?? null,
+      evidence: proposal.evidence ?? null,
+      failureReason: proposal.failureReason ?? null,
+      lastSimulation: proposal.lastSimulation ?? null,
+      balance: {
+        before: proposal.balanceBefore ?? null,
+        after: proposal.balanceAfter ?? null,
+        delta: proposal.balanceBefore != null && proposal.balanceAfter != null
+          ? (BigInt(proposal.balanceAfter) - BigInt(proposal.balanceBefore)).toString() : null,
+        source: 'chain'
+      },
+      createdAt: proposal.createdAt,
+      executedAt: proposal.executedAt ?? null,
+      expiresAt: proposal.expiresAt,
+      trace: proposal.trace ?? []
+    };
+  }
+
+  /**
+   * Take the single broadcast slot for this payment, or report that someone else holds it.
+   *
+   * A reservation older than the window is treated as abandoned (a crashed producer) so a retry can
+   * take it over rather than being locked out forever — the same discipline `withIdempotency` uses.
+   */
+  _reserveExecution(proposalId) {
+    let reserved = false;
+    this.store.mutate((d) => {
+      const proposal = d.circleProposals[proposalId];
+      const held = proposal.executionReservedAt
+        && Date.now() - Date.parse(proposal.executionReservedAt) < EXECUTION_RESERVATION_MS;
+      if (held) return;
+      proposal.executionReservedAt = new Date().toISOString();
+      reserved = true;
+    });
+    return reserved;
+  }
+
+  _releaseExecution(proposalId) {
+    this.store.mutate((d) => { d.circleProposals[proposalId].executionReservedAt = null; });
+  }
+
+  _setPaymentState(proposalId, next, { extra = {}, detail = {} } = {}) {
+    this.store.mutate((d) => {
+      const proposal = d.circleProposals[proposalId];
+      assertCirclePaymentTransition(proposal.lifecycle, next);
+      Object.assign(proposal, extra);
+      if (proposal.lifecycle === next) return;
+      proposal.lifecycle = next;
+      (proposal.trace ||= []).push({ state: next, at: new Date().toISOString(), detail });
+    });
+  }
+
+  _invalidatePayment(proposalId, reason) {
+    const proposal = this.store.read().circleProposals?.[proposalId];
+    if (!proposal || !CIRCLE_PAYMENT_PRE_BROADCAST.includes(proposal.lifecycle)) return;
+    this._setPaymentState(proposalId, CirclePaymentState.INVALIDATED, {
+      extra: { failureReason: reason }, detail: { reason }
+    });
+    this._event(proposal.circleId, 'circle.payment.invalidated', { proposalId, reason });
+    logger.warn('circle.payment.invalidated', { proposalId, reason });
+  }
+
+  _proposal(circleId, proposalId) {
+    const proposal = this.store.read().circleProposals?.[proposalId];
+    if (!proposal || proposal.circleId !== circleId) throw notFound('proposal not found');
+    return proposal;
+  }
+
+  /** An ACTIVE Circle the caller may move money in or out of, with the role check applied. */
+  async _spendableCircle(circleId, prismId, roles, verb) {
+    const circle = this._circle(circleId);
+    const member = this._assertMember(circleId, prismId);
+    if (!roles.includes(member.role)) throw forbidden(`your role in this Circle does not let you ${verb} it`);
+    if (circle.status !== CircleStatus.ACTIVE) throw conflict('this Circle is not active on-chain yet');
+    if (!circle.safeAddress) throw conflict('this Circle has no verified Safe address');
+    return circle;
+  }
+
+  _assertAmount(value) {
+    if (!/^\d+$/.test(String(value)) || BigInt(value) <= 0n) throw badRequest('amount must be positive');
+    if (BigInt(value) > this.config.limits.maxPaymentAtomic) throw badRequest('amount exceeds the Prism payment limit');
+    return String(BigInt(value));
   }
 
   // ===========================================================================
@@ -929,6 +1810,20 @@ export class CircleService {
 const memberKey = (circleId, prismId) => `${circleId}:${prismId}`;
 
 const unavailable = (reason) => ({ unavailable: true, reason, source: 'chain' });
+
+/**
+ * Turn a stored Safe transaction back into the exact 10 typed fields the digest was computed over.
+ * Round-tripping through `safeTransaction` rather than reading the JSON directly means a stored row
+ * with a delegatecall, a bad address, or a missing nonce throws here instead of being handed to the
+ * chain.
+ */
+function rehydrateTx(tx) {
+  return safeTransaction({
+    to: tx.to, value: BigInt(tx.value), data: tx.data, operation: Number(tx.operation),
+    safeTxGas: BigInt(tx.safeTxGas), baseGas: BigInt(tx.baseGas), gasPrice: BigInt(tx.gasPrice),
+    gasToken: tx.gasToken, refundReceiver: tx.refundReceiver, nonce: BigInt(tx.nonce)
+  });
+}
 
 function serializeTx(tx) {
   return {

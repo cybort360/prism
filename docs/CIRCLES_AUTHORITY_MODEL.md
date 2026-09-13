@@ -2,8 +2,9 @@
 
 Who can move a Circle's money, who decides that, and why Prism cannot forge any of it.
 
-Companion to `CIRCLES_ARCHITECTURE.md` (what was built) and `CIRCLES_ARCHITECTURE_PROOF.md` (why
-Safe). Every claim here names the test that establishes it.
+Companion to `CIRCLES_ARCHITECTURE.md` (what was built), `CIRCLES_ARCHITECTURE_PROOF.md` (why Safe)
+and `CIRCLE_PAYMENTS.md` (how money actually moves, and what "completed" costs). Every claim here
+names the test that establishes it.
 
 ---
 
@@ -252,8 +253,10 @@ derives the predecessor from the live owner list*.
    — all viable on Safe (`addOwnerWithThreshold` / `removeOwner` / `swapOwner` are ordinary
    threshold-approved transactions), all deferred. This must land before real money sits in Circles.
 4. **No spending limits**, per §3.
-5. **No live Circle Safe on Monad.** Everything is exercised against a faithful in-memory Safe and
+5. **No Circle send-before-signup.** Audited and DEFERRED — the ClaimVault's only funding path is an
+   ERC-3009 `ecrecover` authorization a Safe cannot produce. `CIRCLE_PAYMENTS.md` §7.
+6. **No live Circle Safe on Monad.** Everything is exercised against a faithful in-memory Safe and
    against digests taken from a real Safe on a testnet *fork*. The same funded-key constraint
    recorded throughout `proof/`.
-6. **Monad mainnet Safe contracts are unverified.** Safe lists the same addresses for chainId 143;
+7. **Monad mainnet Safe contracts are unverified.** Safe lists the same addresses for chainId 143;
    their codehashes have not been checked there.

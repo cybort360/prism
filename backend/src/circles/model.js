@@ -224,7 +224,8 @@ export const ProposalStatus = Object.freeze({
  */
 export function newCircleProposal({
   proposalId, circleId, kind, proposerPrismId, recipientPrismId, recipientAccount,
-  amount, asset, memo, safeTxHash, safeNonce, safeTransaction, requiredApprovals, expiresAt
+  amount, asset, memo, safeTxHash, safeNonce, safeTransaction, requiredApprovals, expiresAt,
+  safeAddress = null, chainId = null, token = null
 }) {
   if (!Object.values(ProposalKind).includes(kind)) throw badRequest(`unknown proposal kind: ${kind}`);
   return {
@@ -237,6 +238,12 @@ export function newCircleProposal({
     amount: amount ?? null,
     asset: asset ?? (amount ? CIRCLE_ASSET : null),
     memo: memo ?? null,
+    // The five things a signature is *about*, recorded next to the digest rather than only inside
+    // it. Re-deriving the digest from these is what turns "the fields were mutated" from an
+    // invisible database edit into a detectable contradiction — see APPROVAL_BOUND_FIELDS.
+    safeAddress: safeAddress ?? null,
+    chainId: chainId === null ? null : String(chainId),
+    token: token ?? null,
     safeTxHash: safeTxHash ?? null,
     safeNonce: safeNonce ?? null,
     safeTransaction: safeTransaction ?? null, // the exact 10 fields that were hashed
@@ -249,6 +256,115 @@ export function newCircleProposal({
     executionTxHash: null
   };
 }
+
+// --- the payment lifecycle ---------------------------------------------------
+
+/**
+ * The lifecycle of a threshold-governed Circle payment.
+ *
+ * Each state is a claim that has been established, in the same spirit as the creation flow:
+ *
+ *   CREATED           the request is well-formed and the proposer may spend from this Circle
+ *   RESOLVING         the recipient is being resolved through the Protected Alias Resolver
+ *   RESOLVED          a signed resolver attestation names a PrismIdentity and its account
+ *   PROPOSED          the exact Safe transaction exists and its digest is cross-checked with the Safe
+ *   APPROVAL_PENDING  fewer verified owner signatures than the Safe's LIVE threshold
+ *   APPROVED          enough verified signatures from CURRENT owners over this exact digest
+ *   SUBMITTED         `execTransaction` was simulated, then broadcast
+ *   CONFIRMING        awaiting a receipt
+ *   CONFIRMED         the receipt is a success and the Safe reports ExecutionSuccess for this digest
+ *   RECONCILED        a USDC Transfer log proves Safe -> reviewed recipient, for the exact amount
+ *   COMPLETED         terminal; the money moved and Prism has the evidence
+ *
+ * APPROVAL_PENDING and APPROVED are the only pair that moves in both directions, because approval
+ * is not a stored fact: it is recomputed from signatures against the live owner set on every read,
+ * so an admin removed on-chain drops an APPROVED payment back to APPROVAL_PENDING by itself.
+ */
+export const CirclePaymentState = Object.freeze({
+  CREATED: 'CREATED',
+  RESOLVING: 'RESOLVING',
+  RESOLVED: 'RESOLVED',
+  PROPOSED: 'PROPOSED',
+  APPROVAL_PENDING: 'APPROVAL_PENDING',
+  APPROVED: 'APPROVED',
+  SUBMITTED: 'SUBMITTED',
+  CONFIRMING: 'CONFIRMING',
+  CONFIRMED: 'CONFIRMED',
+  RECONCILED: 'RECONCILED',
+  COMPLETED: 'COMPLETED',
+  // --- off the happy path ---
+  INVALIDATED: 'INVALIDATED', // a field the signatures cover no longer matches; approvals are void
+  EXPIRED: 'EXPIRED',         // the Safe consumed this nonce elsewhere, or the proposal timed out
+  CANCELLED: 'CANCELLED',
+  FAILED: 'FAILED'            // broadcast, and the chain said no
+});
+
+/** The happy path in order. Used by tests and by the UI to render progress honestly. */
+export const CIRCLE_PAYMENT_FLOW = Object.freeze([
+  CirclePaymentState.CREATED,
+  CirclePaymentState.RESOLVING,
+  CirclePaymentState.RESOLVED,
+  CirclePaymentState.PROPOSED,
+  CirclePaymentState.APPROVAL_PENDING,
+  CirclePaymentState.APPROVED,
+  CirclePaymentState.SUBMITTED,
+  CirclePaymentState.CONFIRMING,
+  CirclePaymentState.CONFIRMED,
+  CirclePaymentState.RECONCILED,
+  CirclePaymentState.COMPLETED
+]);
+
+/**
+ * Guarded transitions. Note what is absent: there is no edge from anywhere into COMPLETED except
+ * RECONCILED, and no edge into RECONCILED except CONFIRMED. A backend that wants to call a payment
+ * done must first hold a receipt AND a matching USDC Transfer log, because those are the only two
+ * functions that take those edges.
+ */
+export const ALLOWED_CIRCLE_PAYMENT_TRANSITIONS = Object.freeze({
+  CREATED: ['RESOLVING', 'CANCELLED', 'FAILED'],
+  RESOLVING: ['RESOLVED', 'CANCELLED', 'FAILED'],
+  RESOLVED: ['PROPOSED', 'CANCELLED', 'FAILED'],
+  PROPOSED: ['APPROVAL_PENDING', 'INVALIDATED', 'EXPIRED', 'CANCELLED', 'FAILED'],
+  APPROVAL_PENDING: ['APPROVED', 'INVALIDATED', 'EXPIRED', 'CANCELLED', 'FAILED'],
+  // Back to APPROVAL_PENDING: approvals are re-counted from signatures, so losing an owner
+  // un-approves a payment that has not yet been broadcast.
+  APPROVED: ['SUBMITTED', 'APPROVAL_PENDING', 'INVALIDATED', 'EXPIRED', 'CANCELLED', 'FAILED'],
+  SUBMITTED: ['CONFIRMING', 'CONFIRMED', 'FAILED'],
+  CONFIRMING: ['CONFIRMED', 'FAILED'],
+  CONFIRMED: ['RECONCILED', 'FAILED'],
+  RECONCILED: ['COMPLETED'],
+  COMPLETED: [],
+  INVALIDATED: [],
+  EXPIRED: [],
+  CANCELLED: [],
+  FAILED: []
+});
+
+export function canCirclePaymentTransition(from, to) {
+  if (from === to) return true;
+  return (ALLOWED_CIRCLE_PAYMENT_TRANSITIONS[from] ?? []).includes(to);
+}
+
+export function assertCirclePaymentTransition(from, to) {
+  if (!canCirclePaymentTransition(from, to)) {
+    throw conflict(`illegal circle payment transition: ${from} -> ${to}`);
+  }
+}
+
+/**
+ * Everything an owner's signature is *about*. Changing any one of these produces a different Safe
+ * digest, so every collected signature stops verifying — which is the whole security property.
+ * Named here so `CircleService._assertPaymentBinding` and the tests describe the same list.
+ */
+export const APPROVAL_BOUND_FIELDS = Object.freeze([
+  'recipientAccount', 'amount', 'token', 'safeNonce', 'safeAddress', 'chainId'
+]);
+
+/** States in which a payment has not yet been broadcast, so a rebuild is still possible. */
+export const CIRCLE_PAYMENT_PRE_BROADCAST = Object.freeze([
+  CirclePaymentState.CREATED, CirclePaymentState.RESOLVING, CirclePaymentState.RESOLVED,
+  CirclePaymentState.PROPOSED, CirclePaymentState.APPROVAL_PENDING, CirclePaymentState.APPROVED
+]);
 
 // --- CircleApproval ----------------------------------------------------------
 
@@ -291,7 +407,7 @@ export const ContributionStatus = Object.freeze({
  * Circle's Safe, so it carries an `operationId` into the existing payment lifecycle rather than
  * inventing a second ledger. COMPLETED is only ever written from an on-chain receipt.
  */
-export function newCircleContribution({ contributionId, circleId, contributorPrismId, amount, asset, operationId }) {
+export function newCircleContribution({ contributionId, circleId, contributorPrismId, amount, asset, operationId, safeAddress = null, balanceBefore = null }) {
   return {
     contributionId,
     circleId,
@@ -299,10 +415,36 @@ export function newCircleContribution({ contributionId, circleId, contributorPri
     amount,
     asset: asset ?? CIRCLE_ASSET,
     operationId,
+    // The Safe the money was authorized to reach, pinned at prepare time. Reconciliation compares
+    // the settled payment's recipient against this, so a Circle record edited afterwards cannot
+    // make a payment to somewhere else look like a contribution to this Circle.
+    safeAddress: safeAddress ?? null,
+    // Read from the chain before the contribution is signed, so "the balance went up by exactly
+    // this much" is checkable rather than asserted.
+    balanceBefore: balanceBefore ?? null,
+    balanceAfter: null,
     transactionHash: null,
     status: ContributionStatus.PREPARED,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    completedAt: null
   };
+}
+
+/** Guarded contribution transitions. COMPLETED is reachable only from a confirmed on-chain receipt. */
+export const ALLOWED_CONTRIBUTION_TRANSITIONS = Object.freeze({
+  PREPARED: ['SUBMITTED', 'FAILED'],
+  SUBMITTED: ['CONFIRMING', 'COMPLETED', 'FAILED'],
+  CONFIRMING: ['COMPLETED', 'FAILED'],
+  COMPLETED: [],
+  FAILED: []
+});
+
+export function assertContributionTransition(from, to) {
+  if (from === to) return true;
+  if (!(ALLOWED_CONTRIBUTION_TRANSITIONS[from] ?? []).includes(to)) {
+    throw conflict(`illegal contribution transition: ${from} -> ${to}`);
+  }
+  return true;
 }
 
 // --- threshold rules ---------------------------------------------------------

@@ -225,8 +225,9 @@ Keychain write fail. CI is green on all four checks. See `proof/SECURITY_PROOF.m
 
 - Design: `docs/ARCHITECTURE.md`, `docs/IOS_ARCHITECTURE.md`, `docs/PRD_ADDENDUM_v1.1.md`,
   `docs/RESEARCH_NOTES.md`
-- Prism Circles (shared USDC accounts on a Safe Smart Account — domain model, persistence and
-  Circle creation; no Circle UI and no spending limits yet): `docs/CIRCLES_ARCHITECTURE.md`,
+- Prism Circles (shared USDC accounts on a Safe Smart Account — domain model, persistence, Circle
+  creation, contributions in and threshold-governed payments out; no Circle list/creation UI and no
+  spending limits yet): `docs/CIRCLES_ARCHITECTURE.md`, `docs/CIRCLE_PAYMENTS.md`,
   `docs/CIRCLES_AUTHORITY_MODEL.md`, `docs/CIRCLES_ARCHITECTURE_PROOF.md`,
   `docs/CIRCLES_DEPENDENCY_AUDIT.md`
 - Security: `docs/SECURITY.md`, `docs/THREAT_MODEL.md`, `docs/FORGE_PROOF_PLAN.md`

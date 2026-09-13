@@ -8,8 +8,10 @@ document, `CIRCLES_ARCHITECTURE_PROOF.md`; the version and address audit is
 `CIRCLES_DEPENDENCY_AUDIT.md`; who may do what, and why that cannot be forged, is
 `CIRCLES_AUTHORITY_MODEL.md`.
 
-**Scope of this phase: the domain model, persistence, and Circle creation.** There is no Circle UI,
-no Circle payment flow, and no spending limits.
+**Scope of this phase: the domain model, persistence, and Circle creation.** Money moving into and
+out of a Circle is a separate document — [`CIRCLE_PAYMENTS.md`](CIRCLE_PAYMENTS.md) — which covers
+contributions, threshold-governed payments, approval, execution and reconciliation. There are still
+no spending limits.
 
 ---
 
@@ -254,9 +256,11 @@ Safe has already consumed is reported as stale rather than left to look actionab
   v0.1.1. `CIRCLE_LIMITS_ENABLED=false`, and `config.js` refuses that address explicitly rather than
   letting it work by accident. A `SPENDER` therefore has proposal rights, not independent spending
   authority, and the API says so. See `CIRCLES_DEPENDENCY_AUDIT.md`.
-- **Circle payments.** The `PAYMENT` proposal kind and the USDC-transfer intent exist and are tested;
-  the approve-and-execute flow is the next phase.
-- **Circle UI.** None.
+- **Circle payments.** Built — see [`CIRCLE_PAYMENTS.md`](CIRCLE_PAYMENTS.md), not this document.
+- **Circle send-before-signup.** Audited and **DEFERRED**: the ClaimVault funds exclusively through an
+  ERC-3009 `v, r, s` authorization, which a Safe has no key to produce, and it has no allowance path
+  to pull from. Supporting it would mean adding a funding entry point to a deployed, audited vault.
+  `CIRCLE_PAYMENTS.md` §7, asserted by `contracts/test/PrismClaimVaultCircleCompat.t.sol`.
 - **ERC-4337.** Circles uses Safe's ordinary `execTransaction` path; the relayer is a courier and
   members need no MON.
 - **Recovery.** Social recovery, a Prism-held backup owner, and time-locked escape hatches are all
@@ -287,6 +291,8 @@ the existence of a Circle is itself private.
 | `POST /v1/circles/:id/threshold/prepare` | build the threshold-change transaction to be approved |
 | `GET /v1/circles/:id/pending` | proposals awaiting approval, with verified approval counts |
 
+The contribution and payment routes are documented in [`CIRCLE_PAYMENTS.md`](CIRCLE_PAYMENTS.md) §8.
+
 **No route accepts a Safe address.** The Safe always comes from the stored Circle record the caller
 belongs to. This is structural rather than validated: no method on `CircleService` takes a Safe
 address parameter at all, so there is no shape of request that can aim a Circle operation at a Safe
@@ -308,6 +314,7 @@ make test-backend                      # 237 tests, includes everything below
 | `circles-members.test.js` | invitation, replay, wrong redeemer, stale invite after removal, expiry, admin authority only from the owner set, on-chain removal demotes, invitation privacy |
 | `circles-governance.test.js` | prepare-add/remove/threshold calldata, gas-refund neutrality, removal leaving an invalid threshold, approval counting from signatures, stale nonce, authorization |
 | `circles-config.test.js` | the Allowance Module refusal |
+| `circles-payments.test.js` | contributions, threshold execution, mutation security, nonce replay, relayer redirection, chain evidence — see `CIRCLE_PAYMENTS.md` §9 |
 
 The chain is faked in `circles-harness.js`; the **adapter and service are real**. The fake decodes
 the setup initializer, stores the owner set and threshold it was actually given, and derives the

@@ -8,7 +8,7 @@
  * and now the backend. They are held to one another deliberately. The backend's copy is the one a
  * compromised server would have to lie with, so it is the one that must be checkable offline.
  */
-import { keccak256, encodeAbiParameters, encodeFunctionData, encodePacked, getAddress, isAddress, concatHex, padHex } from 'viem';
+import { keccak256, encodeAbiParameters, encodeFunctionData, encodePacked, getAddress, isAddress, concatHex, padHex, toEventSelector } from 'viem';
 import { badRequest } from './model.js';
 
 /** keccak256("EIP712Domain(uint256 chainId,address verifyingContract)") */
@@ -140,6 +140,97 @@ export function encodeUsdcTransfer({ recipient, amountAtomic }) {
   const amount = BigInt(amountAtomic);
   if (amount <= 0n) throw badRequest('amount must be positive');
   return encodeFunctionData({ abi: ERC20_ABI, functionName: 'transfer', args: [getAddress(recipient), amount] });
+}
+
+/**
+ * Decode calldata that claims to be `transfer(address,uint256)` — and refuse anything else.
+ *
+ * The length is pinned at 68 bytes rather than left to the ABI decoder. Trailing bytes are ignored
+ * when decoding but are part of `keccak256(data)` and therefore part of the digest, so calldata that
+ * decodes to a harmless transfer can still be a *different* transaction from the one reviewed. This
+ * is the backend twin of `CircleApprovalValidator.decodeUsdcTransfer` on the phone.
+ */
+export function decodeUsdcTransfer(data) {
+  const hex = String(data ?? '');
+  if (!/^0x[0-9a-fA-F]{136}$/.test(hex)) throw badRequest('calldata is not a plain USDC transfer');
+  if (hex.slice(0, 10).toLowerCase() !== ERC20_TRANSFER_SELECTOR) throw badRequest('calldata is not a plain USDC transfer');
+  const recipientWord = hex.slice(10, 74);
+  if (!/^0{24}/.test(recipientWord)) throw badRequest('calldata is not a plain USDC transfer');
+  const recipient = getAddress(`0x${recipientWord.slice(24)}`);
+  const amountAtomic = BigInt(`0x${hex.slice(74, 138)}`);
+  return { recipient, amountAtomic };
+}
+
+export const ERC20_TRANSFER_SELECTOR = '0xa9059cbb';
+
+// --- on-chain evidence -------------------------------------------------------
+// Computed from the signatures rather than transcribed, so a typo cannot quietly make an evidence
+// check match nothing and pass vacuously.
+
+/** `Transfer(address indexed from, address indexed to, uint256 value)` */
+export const ERC20_TRANSFER_TOPIC = toEventSelector('Transfer(address,address,uint256)');
+/** Safe v1.4.1 `ExecutionSuccess(bytes32 indexed txHash, uint256 payment)` */
+export const SAFE_EXECUTION_SUCCESS_TOPIC = toEventSelector('ExecutionSuccess(bytes32,uint256)');
+/** Safe v1.4.1 `ExecutionFailure(bytes32 indexed txHash, uint256 payment)` */
+export const SAFE_EXECUTION_FAILURE_TOPIC = toEventSelector('ExecutionFailure(bytes32,uint256)');
+
+const topicAddress = (topic) => getAddress(`0x${String(topic).slice(-40)}`);
+const sameAddress = (a, b) => Boolean(a) && Boolean(b) && getAddress(a) === getAddress(b);
+const sameHex = (a, b) => String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase();
+
+/**
+ * Every ERC-20 `Transfer` emitted by one specific token contract in a receipt.
+ *
+ * Filtering by `log.address` is the load-bearing part: any contract may emit a log with the Transfer
+ * topic, so "a Transfer happened" means nothing until it is "a Transfer emitted by the USDC we
+ * configured".
+ */
+export function usdcTransfersIn(receipt, usdcAddress) {
+  const logs = receipt?.logs ?? [];
+  const out = [];
+  for (const log of logs) {
+    if (!sameAddress(log.address, usdcAddress)) continue;
+    const topics = log.topics ?? [];
+    if (!sameHex(topics[0], ERC20_TRANSFER_TOPIC) || topics.length < 3) continue;
+    out.push({
+      from: topicAddress(topics[1]),
+      to: topicAddress(topics[2]),
+      amountAtomic: BigInt(log.data ?? '0x0'),
+      logIndex: log.logIndex ?? null
+    });
+  }
+  return out;
+}
+
+/**
+ * Find the transfer that proves a Circle payment happened: emitted by the configured USDC, sent
+ * BY the Circle's Safe, TO the recipient that was reviewed, for exactly the amount approved.
+ *
+ * All four conditions together, or nothing. A transfer of the right amount to the right person from
+ * the wrong account is not this payment; neither is the right pair for the wrong amount.
+ */
+export function findUsdcTransfer(receipt, { usdcAddress, from, to, amountAtomic }) {
+  const wanted = BigInt(amountAtomic);
+  return usdcTransfersIn(receipt, usdcAddress).find(
+    (t) => sameAddress(t.from, from) && sameAddress(t.to, to) && t.amountAtomic === wanted
+  ) ?? null;
+}
+
+/**
+ * What the Safe itself said about this exact transaction. Safe catches a failing inner call and
+ * emits `ExecutionFailure` while the outer transaction still succeeds — so a `status: success`
+ * receipt is NOT by itself evidence that the payment executed, and this is the check that separates
+ * the two.
+ */
+export function safeExecutionOutcome(receipt, { safeAddress, safeTxHash }) {
+  for (const log of receipt?.logs ?? []) {
+    if (!sameAddress(log.address, safeAddress)) continue;
+    const topics = log.topics ?? [];
+    if (!sameHex(topics[1], safeTxHash)) continue;
+    if (sameHex(topics[0], SAFE_EXECUTION_SUCCESS_TOPIC)) return 'success';
+    if (sameHex(topics[0], SAFE_EXECUTION_FAILURE_TOPIC)) return 'failure';
+  }
+  return 'unknown';
 }
 
 const OWNER_ABI = [
