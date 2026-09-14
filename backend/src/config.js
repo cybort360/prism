@@ -80,6 +80,27 @@ export const config = {
     // Public block explorer base for judge-inspectable transaction links.
     explorerUrl: env('MONAD_EXPLORER_URL', 'https://testnet.monadexplorer.com')
   },
+  // Prism Save (USDC → AUSD → earnAUSD). The substrate (AUSD + earnAUSD) is Agora/Upshift on Monad
+  // MAINNET (143); Prism's contracts are on testnet (10143), and the earnAUSD deposit ABI is NOT yet
+  // independently verified (see docs/SAVE_DEPENDENCY_AUDIT.md). So Save ships as an ANNOUNCED preview:
+  // the flow and quotes work, but no real deposit is produced and no yield/APY is invented.
+  // `substrateVerified` stays false until the real Teller/deposit ABI is verified; only then may a
+  // route provider return an executable plan.
+  save: {
+    enabled: env('SAVE_ENABLED', 'true') === 'true',
+    substrateVerified: env('SAVE_SUBSTRATE_VERIFIED') === 'true',
+    substrateChainId: Number(env('SAVE_SUBSTRATE_CHAIN_ID', '143')),
+    inputToken: usdc.address,                 // Save's input is the user's Prism USDC (unchanged asset)
+    inputDecimals: USDC_DECIMALS,
+    ausd: env('SAVE_AUSD_ADDRESS', '0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a'),   // verified Monad-143
+    ausdDecimals: 6,
+    earnAusdVault: env('SAVE_EARNAUSD_VAULT', '0x36eDbF0C834591BFdfCaC0Ef9605528c75c406aA'), // verified 143
+    // Swap router (USDC→AUSD) is undecided (no proven route yet); no target is allowlisted until one is.
+    swapRouter: env('SAVE_SWAP_ROUTER', ''),
+    // USDC on the substrate chain (143), distinct from Prism's testnet USDC mock.
+    substrateUsdc: env('SAVE_SUBSTRATE_USDC', '0x754704Bc059F8C67012fEd69BC8A327a5aafb603'),
+    maxSaveAtomic: bigintEnv('MAX_SAVE_ATOMIC', '10000000000')  // 10,000 USDC, mirrors payment cap
+  },
   // The developer/judge proof surface is enabled outside production, or explicitly via PROOF_ENABLED.
   proofEnabled: env('NODE_ENV', 'development') !== 'production' || env('PROOF_ENABLED') === 'true',
   envio: {

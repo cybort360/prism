@@ -21,6 +21,7 @@ final class AppModel: ObservableObject {
   @Published var sendAnywherePresented = false
   @Published var receivePresented = false
   @Published var scanPresented = false
+  @Published var savePresented = false
   @Published var toast: String?
   @Published var onboardingComplete = false
 
@@ -40,6 +41,7 @@ final class AppModel: ObservableObject {
       sendPickerPresented = arguments.contains("--uitest-send-picker")
       requestPickerPresented = arguments.contains("--uitest-request-picker")
       if arguments.contains("--uitest-advanced-account") { selectedTab = .profile }
+      if arguments.contains("--uitest-save") { savePresented = true }
     #endif
   }
 

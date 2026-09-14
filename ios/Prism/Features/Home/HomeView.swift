@@ -26,6 +26,7 @@ struct HomeView: View {
         actions.padding(.top, 32).padding(.bottom, 34)
         if let request = incomingRequest { requestCard(request).padding(.bottom, 12) }
         if !claims.isEmpty { claimsSection.padding(.bottom, 30) }
+        SaveHomeCard().padding(.bottom, 34)
         people.padding(.bottom, 34)
         recent
         if let error { ErrorBanner(message: error).padding(.top, 18) }

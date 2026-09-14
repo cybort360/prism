@@ -19,6 +19,7 @@ import { ActivityService } from './services/activityService.js';
 import { AuroraService } from './services/auroraService.js';
 import { ProofService } from './services/proofService.js';
 import { P256AccountService } from './services/p256AccountService.js';
+import { SaveService } from './services/saveService.js';
 import { p256ChainOps } from './chain/p256Account.js';
 import { runContinuityLab } from './lab/continuityLab.js';
 import { usdcBalanceOf, claimAuthorizerAddress, relayerAccount, verifyChainId, verifyUsdcDomain } from './chain/eth.js';
@@ -42,6 +43,7 @@ const activityService = new ActivityService({ store, identityService });
 const auroraService = new AuroraService({ store, config, identityService, paymentService });
 const proofService = new ProofService({ paymentService, identityService, config });
 const p256AccountService = new P256AccountService({ store, config, chainOps: p256ChainOps });
+const saveService = new SaveService({ store, config, identityService });
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -165,6 +167,15 @@ route('GET', '/v1/p256/ops/:id', async ({ user, params }) => p256AccountService.
 // PRISM alias→PrismIdentity→account) that makes the continuity invariant judge-visible. It runs the
 // real production verifiers over in-memory fixtures and creates NO payment state (see lab/continuityLab.js).
 route('GET', '/v1/lab/continuity', async () => runContinuityLab(), true);
+
+// Prism Save (USDC → AUSD → earnAUSD). Read-only quotes + state; writes no financial state. Ships as an
+// announced preview until the earnAUSD substrate is verified (see docs/SAVE_DEPENDENCY_AUDIT.md). The
+// quote carries a fully-constrained SaveExecutionPlan the CLIENT independently verifies.
+route('GET', '/v1/save/state', async ({ user }) => saveService.state(user.prismId), true);
+route('POST', '/v1/save/quote', async ({ user, body }) => {
+  rateLimit(`save-quote:${user.prismId}`, 60);
+  return saveService.quote({ prismId: user.prismId, amountAtomic: String(body.amountAtomic) });
+}, true);
 
 // Canonical Payment Proof: typed, evidence-backed inspectability for one operation the caller owns.
 // The paymentId must map to a Prism operation visible to the authenticated user (never a raw,
