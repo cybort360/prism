@@ -12,6 +12,10 @@ Continuity**: human identifiers are mutable reachability routes, not financial i
 2. **Continuity**: recipient rotates their phone (same identity) → paying them still works.
 3. **Discontinuity**: an alias now points at a different identity → PRISM blocks and asks to review.
 4. Payment Proof: open the payment → evidence-backed proof (privacy, no-MON, confirmed-on-Monad).
+5. **Prism Circles**: a shared USDC account for people who manage money together — contribute, a
+   payment that one approval cannot send and two can, the receipt naming who asked and who agreed,
+   and the proof reading the admins and the balance off the chain. Grading, including what is not
+   proven: [`CIRCLES_MATRIX.md`](CIRCLES_MATRIX.md).
 
 ## Submission artifacts
 

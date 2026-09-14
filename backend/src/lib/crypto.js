@@ -41,15 +41,29 @@ export function issueSession(payload, secret, ttlSeconds = 60 * 60 * 24 * 30) {
   return `${encoded}.${sig}`;
 }
 
+/**
+ * A session failure is 401, not 400.
+ *
+ * The distinction is not cosmetic: 400 tells a client its request was malformed, and a client that
+ * believes that will not re-authenticate. Found by the Circles route audit, which expected every
+ * authenticated route to answer an unauthenticated caller with 401 and found them all answering
+ * 400 — access was correctly denied throughout, but for the wrong stated reason.
+ */
+function unauthorized(message) {
+  const e = new Error(message);
+  e.statusCode = 401;
+  return e;
+}
+
 export function verifySession(token, secret) {
-  if (!token) throw new Error('missing session');
+  if (!token) throw unauthorized('missing session');
   const [encoded, sig] = token.split('.');
-  if (!encoded || !sig) throw new Error('invalid session');
+  if (!encoded || !sig) throw unauthorized('invalid session');
   const expected = hmac256(secret, encoded);
   const actual = fromB64url(sig);
-  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) throw new Error('invalid session');
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) throw unauthorized('invalid session');
   const body = JSON.parse(fromB64url(encoded).toString('utf8'));
-  if (body.exp < Math.floor(Date.now() / 1000)) throw new Error('session expired');
+  if (body.exp < Math.floor(Date.now() / 1000)) throw unauthorized('session expired');
   return body;
 }
 

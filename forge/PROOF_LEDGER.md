@@ -334,6 +334,106 @@ screen and `CircleReceiptTests.swift` were all written on Linux, where there is 
 Service is exercised only in its absent (local-only) configuration**, so "coordination, never
 evidence" is proven structurally and by the local path, not against a live service.
 
+## Hostile audit, Safe-integration proof and the final matrix (2026-09-14)
+
+The completion pass, run on the assumption that **Circle funds can be stolen until a test proves
+otherwise**. Attacks are pushed to the layer that decides: where the Safe decides they are submitted
+to the Safe with CircleService bypassed; where Prism decides, its own database row is edited first,
+to model a compromised backend rather than a polite one. The full grading is
+[`CIRCLES_MATRIX.md`](CIRCLES_MATRIX.md) — **17 GREEN · 4 YELLOW · 0 RED**.
+
+Commands run:
+
+```
+cd backend && node --test test/*.test.js                                     # 362 pass / 0 fail
+cd contracts && forge test --no-match-path 'test/circles/*'                  #  74 pass / 0 fail
+cd contracts && FOUNDRY_PROFILE=circles forge test --match-path 'test/circles/*' --network monad -vv
+                                                                             #  22 pass / 0 fail
+cd tools/circles && npm run verify                                           #  18/18 vector checks
+cd tools/circles && node verify-allowance-module.mjs --chain-id 10143        #  NO usable module
+SWIFT_HOME=<swift-6.0.3-ubuntu24.04> ./scripts/verify/swift-linux-check.sh   #  98 parsed · 144 tests pass
+cd backend && node --test test/privacy-leak.test.js test/mutation-audit.test.js test/phone-leak-audit.test.js
+                                                                             #  17 pass / 0 fail
+```
+
+### The first executed Swift evidence in this repository
+
+Previous passes recorded every iOS claim as `UNTESTED` because there is no Xcode here. A Linux Swift
+6.0.3 toolchain closes most of that gap: `scripts/verify/swift-linux-check.sh` parses **all 98** iOS
+sources, then typechecks and **runs** the XCTest suites that do not need SwiftUI/UIKit/Combine.
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| IOS-1 | Every iOS source parses | `VERIFIED` | `swiftc -parse` over 98 files, 0 diagnostics |
+| IOS-2 | The model/display layer typechecks | `VERIFIED` | 19 sources, `swift build`, 0 errors. Found and fixed a real defect: `CirclePendingInboxResponse` was declared `Codable` while `CirclePendingItem` is `Decodable`-only — an Encodable conformance that cannot exist |
+| IOS-3 | The iOS unit suites pass | `VERIFIED` | `swift test`: **144 tests, 0 failures** — `CircleReceiptTests` 11, `CircleApprovalWireTests` 16, `CircleSafeTxHashTests` 21, `PaymentDetailsModelTests` 15, `PaymentProofTests` 6, `PrismContinuityTests` 13, `AuroraDepositDisplayTests` 21, `AuroraRouteDisplayTests` 18, `ClaimDisplayTests` 11, `CrossChainPaymentDetailsTests` 6, `PrismCanonicalModelTests` 4, `MoneyTests` 2 |
+| IOS-4 | SwiftUI views, Combine coordinators, keychain and the Mera bridge | `UNTESTED` | Parse-only. They import SwiftUI/UIKit/Combine/Security/WebKit, which do not exist on Linux. `make test-ios` still needs macOS |
+
+### Hostile authority matrix — `backend/test/circles-hostile-audit.test.js` (25 tests, 25 pass)
+
+| ID | Attack | Status | Evidence |
+|---|---|---|---|
+| CIR-001 | A non-admin signs a threshold proposal | `VERIFIED` | Refused by Prism (non-member → `circle not found`, SPENDER → `only an admin`); a forged approval row still counts 0; the Safe answers GS020/GS026. Fork: `test_E_WrongP256Signer_Fails` |
+| CIR-002 | One signature on a 2-of-3 Circle | `VERIFIED` | `1 of 2 approvals`, zero executions, and GS020 straight from the Safe. Fork: `test_D_TwoOfTwo_RejectsASingleApproval` |
+| CIR-003 | Recipient modified after the first approval | `VERIFIED` | Second approval refused, payment INVALIDATED, and the altered transaction rejected by the Safe with both genuine signatures attached. Fork: `test_E_ModifiedRecipient_Fails` |
+| CIR-004 | Amount modified after the first approval | `VERIFIED` | Same, with the amount. Fork: `test_E_ModifiedAmount_Fails` |
+| CIR-005 | USDC target changed | `VERIFIED` | `not this deployment's USDC` at the binding check; Safe rejects. Fork: `test_E_ModifiedTokenTarget_Fails` |
+| CIR-006 | Completed Safe transaction replayed | `VERIFIED` | Re-execute reconciles (one execution ever); the same tx + the same two signatures submitted directly are rejected — the nonce is spent. Fork: `test_E_ReplayOfExecutedTransaction_Fails` |
+| CIR-007 | Stale Safe nonce | `VERIFIED` | EXPIRED, and the Safe refuses. Fork: `test_E_WrongSafeNonce_Fails` |
+| CIR-008 | A removed admin approves an old pending transaction | `VERIFIED` | The approval stops counting with nobody telling Prism; live authority is re-read before every send; GS026 at the Safe; the remaining admins can still complete the payment |
+| CIR-009 | Backend claims the threshold is met, the Safe disagrees | `VERIFIED` | Row rewritten to `collectedApprovals: 5, requiredApprovals: 1, lifecycle: APPROVED`, plus two forged approvals — one from a non-owner and one claiming a **real admin's** authority address with a signature he never produced. The view still reports 1 of 2 and lists only the genuine signature; execution refused; no money moved. Red-before-green: dropping the `verifyApproval` re-check in `_collectApprovals` → CIR-009 **failed** (1 fail); restored → 25/25 |
+| CIR-010 | Backend alters the safeTxHash after Face ID | `VERIFIED` | The payload is self-describing, so an altered digest contradicts its own fields; a signature over it is refused by Prism and by the Safe. iOS half **executed**: `CircleApprovalWireTests.testADigestThatDoesNotMatchTheFieldsIsRefused` |
+| CIR-011 | Old, vulnerable Allowance Module version | `VERIFIED` | Startup gate refuses v0.1.1 and names the 1.0.0 floor; the runtime gate identifies the module by code hash; the live gate reports `NO usable Allowance Module on chain 10143` |
+| CIR-012 | $101 spend with $100 available | `VERIFIED` | Refused with the limit named, cumulative within the window, and routed to `THRESHOLD` approval rather than dead-ended. Module: `testSpendingOverTheLimitFails` |
+| CIR-013 | Delegate authorization replay | `VERIFIED` | The module's per-delegate nonce is spent; paid exactly once. Module: `testTheSameTransferSignatureCannotBeReused` |
+| CIR-014 | Removed delegate spends (including an in-flight signature) | `VERIFIED` | Refused at prepare, at submit and by the module; the Circle keeps every cent. Module: `testARemovedDelegateCannotSpend` |
+| CIR-015 | Delegate tries another token | `VERIFIED` | No token parameter exists on the limit surface; a smuggled `token` is ignored and the stored spend keeps the configured USDC. Module: `testWrongTokenFails` |
+| CIR-016 | Delegate tries an owner-management call | `VERIFIED` | `unknown circle intent` — owner management is not expressible; the module cannot make a Safe call. Module: `testADelegateCannotChangeTheOwnerSet`, `testADelegateCannotEnableAnotherModule` |
+| CIR-017 | Delegate tries an arbitrary approval | `VERIFIED` | Same refusal; `submitAllowanceTransfer` has no calldata parameter. Module: `testADelegateCannotGrantAnUnlimitedTokenApproval` |
+
+### Membership, money, outages and zero-MON
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| CIR-M1 | Invitation replay and expiry | `VERIFIED` | Single-use; someone else's invitation refused; expiry enforced at redemption |
+| CIR-M2 | A reassigned phone alias gains no financial authority | `VERIFIED` | While the number still reaches Tobi nobody else can claim it; after a legitimate reassignment the owner set is unchanged, Mallory is not a member, and her approval is refused |
+| CIR-M3 | Changing your own phone preserves identity and authority | `VERIFIED` | Same PrismIdentity, same account, approval still counts, payment completes |
+| CIR-M4 | A removed member loses app membership; removing an admin needs the chain | `VERIFIED` | `404` and no contribution path for the removed member; admin removal refused in Prism, naming the governance act |
+| CIR-$1 | Contribution moves exactly the amount, both sides | `VERIFIED` | Person −$200, Circle +$200, delta read from the token contract |
+| CIR-$2 | Payment moves exactly the amount, both sides | `VERIFIED` | Circle −$120, recipient +$120, `Transfer` log matches recipient and amount |
+| CIR-$3 | The relayer cannot redirect a transaction | `VERIFIED` | Hostile relayer with two genuine approvals is answered GS026; fork: `test_RelayerCannotAlterAnySignedField`, `test_RelayerCannotInsertAGasRefundToItself` |
+| CIR-$4 | The backend cannot manufacture a settlement | `VERIFIED` | Row marked COMPLETED with an invented tx hash reads back INVALIDATED; the receipt reports no settlement time; no money moved |
+| CIR-$5 | Safe Transaction Service outage loses nothing, and recovery exists | `VERIFIED` | With propose/confirm/pending all throwing: the Circle is untouched, and the owners execute a Safe transaction directly |
+| CIR-$6 | Prism outage leaves funds with the Safe owners | `VERIFIED` | Two owners empty the Circle with no CircleService in the path at all |
+| CIR-Z1 | Zero-MON across the whole flow | `VERIFIED` | Contribute → propose → approve ×2 → execute → limited spend with every member's MON balance 0; exactly one wallet in the backend and it is the relayer's. Fork: `test_CircleSettlesWithEveryMemberHoldingZeroMon` |
+| CIR-P1 | Persistence across a restart | `VERIFIED` | A new process over the same store file recovers the Circle, its ACTIVE status, members, chain-read balance, completed payment with evidence and receipt with both approvers — then executes a further payment |
+
+### Route audit — `backend/test/circles-route-audit.test.js` (5 tests, 5 pass)
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| CIR-R1 | Every Circle route requires authentication | `VERIFIED` | 30 Circle routes parsed from `server.js`; all declared with auth; a **running server** answers 401 on every one of them |
+| CIR-R2 | No Circle route accepts a Safe address, target, calldata, operation or token | `VERIFIED` | Static audit of every Circle route declaration; the recipient arrives only as a signed resolver attestation |
+| CIR-R3 | Every money-moving Circle route is idempotency-guarded | `VERIFIED` | Creation, contribution submit, approve, execute, spend submit, governance approve/execute |
+| CIR-R4 | A Circle you are not in is `404`, not `403` | `VERIFIED` | Live, with a real session |
+| **FIX** | Unauthenticated requests answered **400**, not 401 | `FIXED` | Found by CIR-R1: `verifySession` threw a bare `Error`, so the dispatcher's `statusCode ?? 400` mislabelled every auth failure API-wide. Access was correctly denied throughout; the stated reason was wrong. Fixed in `lib/crypto.js`; full suite green after |
+
+### Live-chain reads (no broadcast)
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| CIR-L1 | The Safe deployment Circles uses on Monad is canonical v1.4.1 | `VERIFIED` | `test_A_SafeDeploymentOnMonadIsCanonicalV141`, Monad testnet fork |
+| CIR-L2 | Monad's P-256 precompile is live | `VERIFIED` | `test_A_MonadP256PrecompileIsLive` |
+| CIR-L3 | Prism's Safe digest matches the deployed contract | `VERIFIED` | `test_CommittedVectorsStillMatchTheChain` + Safe's own Protocol Kit, 18/18 |
+| CIR-L4 | No usable Allowance Module on Monad | `VERIFIED` (negative) | `verify-allowance-module.mjs --chain-id 10143`: release v1.0.0 exists, the deployments registry has no record for chain 10143, unpinned resolution would give the vulnerable v0.1.1 → limits stay OFF |
+
+**Not claimed:** (a) **No live Circle on Monad** — no Safe deployed, no Circle payment broadcast, no
+transaction hash to cite. The blocker is a funded testnet key (`RELAYER_PRIVATE_KEY` is empty here);
+the scenario is written and passes as a rehearsal. (b) **Spending limits are OFF** and the gate
+enforces it — the module is not on Monad. (c) **The iOS app has not been compiled on macOS**; the
+SwiftUI views and Combine coordinators are parse-verified only. (d) **The Safe Transaction Service is
+exercised only in its absent configuration.**
+
 ## How to add a row
 State the exact command, run it, paste the pass/fail counts (or tx hash), then set the status. If a
 prior claim's enforcement code changed, set it to `REGRESSED` until re-run.

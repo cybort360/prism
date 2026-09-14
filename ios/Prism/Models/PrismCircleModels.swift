@@ -719,7 +719,10 @@ extension CirclePendingItem: Decodable {
   }
 }
 
-struct CirclePendingInboxResponse: Codable {
+/// Decodable, not Codable: `CirclePendingItem` decodes a union of two different proposal shapes and
+/// has no encoded form to round-trip back to. (Found by `swiftc -typecheck`: declaring it Codable
+/// asked the compiler for an Encodable conformance that cannot exist.)
+struct CirclePendingInboxResponse: Decodable {
   let circleId: String
   let pending: [CirclePendingItem]
   let authority: CircleAuthority?

@@ -97,7 +97,14 @@ nothing navigates to them yet, and they have not been compiled.
 
 ## Prism Circles — remaining work
 
-- [ ] **Compile and run the iOS Circle code.** Now the whole Circles feature folder plus
+- [~] **Compile and run the iOS Circle code — PARTLY DONE (2026-09-14).** A Linux Swift 6.0.3
+      toolchain now parses all 98 iOS sources, typechecks the Foundation-only model/display layer and
+      **runs 144 XCTest cases, 0 failures** (`make test-ios-linux`, `scripts/verify/swift-linux-check.sh`)
+      — including `CircleReceiptTests`, `CircleApprovalWireTests` and `CircleSafeTxHashTests`. It found
+      one real defect (`CirclePendingInboxResponse` declared `Codable` with a `Decodable`-only member),
+      now fixed. What remains needs macOS: the SwiftUI views, the Combine coordinators, the keychain
+      and the Mera bridge are parse-verified only.
+- [ ] **Compile and run the iOS Circle code on macOS (the remainder).** Now the whole Circles feature folder plus
       `PrismCircleModels`, `SafeTypedData`, `CircleGovernancePayload`, `AllowanceTransferHash`,
       `PrismAPI+Circles`, `CircleCoordinator`, `CirclesHomeSection`, `CircleCreateView`/`CircleDraft`,
       `CircleDetailView`/`CircleDetailModel`, `CircleMemberView`, `CircleInviteView`,
@@ -113,6 +120,12 @@ nothing navigates to them yet, and they have not been compiled.
       `OWNER_ADD` / `OWNER_REMOVE` / `THRESHOLD_CHANGE` could be prepared but never approved or
       applied (no approve route, no readback), so Settings would have been a dead end. Backend
       306/306. **The iOS half is UNTESTED** — see the item above.
+- [ ] **A live Circle on Monad — the one remaining YELLOW that matters.** The full scenario
+      (Octane/Tobi/Jayson/Sarah, 2-of-3, $500 in, a $120 payment, closure) passes as a rehearsal in
+      `backend/test/circles-e2e-scenario.test.js`, and the Safe half is proven against real Safe
+      v1.4.1 bytecode on a Monad fork. Running it live needs a funded testnet key — `RELAYER_PRIVATE_KEY`
+      is empty in this checkout, and every Circle transaction is relayer-paid. See
+      `forge/CIRCLES_MATRIX.md` row 21.
 - [ ] **A live Circle receipt and proof on Monad.** The canonical Circle payment, receipt, activity
       feed and Payment Proof (`docs/CIRCLE_RECEIPTS.md`, `docs/CIRCLE_PROOF.md`) are proven against
       the in-memory Safe only. The ten evidence proofs each compare a number Prism shows against the

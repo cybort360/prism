@@ -105,3 +105,76 @@ assertions only from legitimate app instances. It is optional for the hackathon 
 - claim after refund: reject
 - refund before expiry: reject
 - silent identity change: reject
+
+---
+
+# Prism Circles — shared accounts
+
+A Circle is a shared USDC account. Its money lives in a Safe Smart Account on Monad; Prism holds the
+Circle's *name*, who was invited, and what a proposal was for. Everything below follows from that
+split, and the audit that checks it is `backend/test/circles-hostile-audit.test.js` (CIR-001…CIR-017),
+`contracts/test/circles/CircleSafeOwnerCompat.t.sol` (a Monad fork, real Safe v1.4.1) and
+`contracts/test/AllowanceModuleCompat.t.sol` (Safe's canonical Allowance Module runtime).
+
+## Trust boundaries
+
+| Question | Decided by | Prism's role |
+|---|---|---|
+| Who may move this money? | the Safe's owner set, on Monad | reads it; cannot change it |
+| How many must agree? | the Safe's threshold | reads it; cannot change it |
+| Did this payment happen? | the Monad receipt + the USDC `Transfer` log | observes it; cannot assert it |
+| How much is in the Circle? | `USDC.balanceOf(safe)` | reads it; keeps no balance |
+| May this member spend alone? | the Allowance Module, when deployed and enabled | reads it; cannot grant it |
+| Who is this recipient? | the Protected Alias Resolver | resolves, and blocks a changed identity |
+| What was this payment for? | Prism | owns it |
+
+## Security assumptions
+
+1. **The Safe is the authority, not Prism.** Prism can propose and relay. It cannot approve, cannot
+   change an owner set or a threshold, and cannot move a Circle's money. A compromised backend can
+   annoy a Circle; it cannot spend from one. Proven by CIR-009 (a backend that rewrites its own row
+   to claim the threshold is met still cannot execute) and by the hostile-relayer test.
+2. **Signatures are re-verified against the live owner set on every read.** An approval is never a
+   number Prism increments. An admin removed on-chain stops counting with nobody telling the backend
+   (CIR-008).
+3. **The device re-derives what it signs.** The approval payload carries the ten Safe transaction
+   fields plus the Safe and chain; the phone recomputes the digest and refuses to sign if it
+   disagrees with the one it was handed (CIR-010, `CircleApprovalWireTests`).
+4. **One asset, one call shape.** A Circle moves USDC and nothing else, and the only Safe calls Prism
+   will build are the eight Circle intents. No route accepts a target, calldata, an operation type or
+   a token (`circles-route-audit.test.js`).
+5. **Members hold no MON.** Every on-chain write is sent by the relayer wallet — there is exactly one
+   wallet in the backend and it is the relayer's. Members sign typed data; they never sign a
+   transaction.
+6. **Gas sponsorship is a liveness dependency, not a custody one.** If the relayer stops, nothing is
+   lost: the Circle's owners can build, sign and execute a Safe transaction with any Safe client.
+7. **The Safe Transaction Service is coordination, never evidence.** It carries proposals and
+   collects signatures. Prism re-verifies every confirmation it returns, and the Payment Proof lists
+   it with a `coordination` status so no reader mistakes it for proof that something happened.
+8. **A phone number is not authority.** Being reachable at a number that used to reach an admin
+   confers nothing: the owner set is unchanged, and the alias resolves to a different PrismIdentity,
+   which is visibly blocked rather than silently honoured.
+
+## Known limitations
+
+- **No live Circle on Monad.** Every Circle claim is proven against the in-memory Safe in
+  `circles-harness.js` (which enforces Safe's real `execTransaction` rules) and against real Safe
+  bytecode on a Monad fork. No Circle has been deployed and no Circle payment has been broadcast to a
+  public chain — that needs a funded key. See `forge/PROOF_LEDGER.md`.
+- **Spending limits are OFF.** Safe's Allowance Module v1.0.0 is not deployed on Monad; the runtime
+  gate refuses to enable limits and Circles falls back to threshold-only. The module's own security
+  properties are proven against its canonical bytecode, not against a Monad deployment.
+- **Safe Transaction Service runs local-only here.** The coordination path is exercised in its absent
+  configuration; a hosted service has not been integrated.
+- **A Circle's transfers are public.** Amounts, the Safe address and recipient accounts are on-chain
+  and linkable, exactly as any USDC transfer is. Prism claims identifier privacy — no phone number or
+  phone-derived value on-chain — not payment privacy.
+- **A threshold that cannot be met freezes the money.** If admins lose their devices past the point
+  where the threshold can be reached, Prism cannot help: that is the same property that stops Prism
+  from spending a Circle's money. The creation flow states this trade-off and requires the creator to
+  acknowledge it.
+- **Prism's own liveness.** With the backend down, a Circle's funds remain fully under its owners'
+  control, but the app's proposal, approval-collection and receipt surfaces are unavailable.
+- **The iOS app has not been compiled on macOS.** The model layer parses, typechecks and its XCTest
+  suites run on Linux (`make test-ios-linux`); the SwiftUI views and Combine coordinators are
+  syntax-checked only.

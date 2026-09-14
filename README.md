@@ -52,6 +52,26 @@ See `docs/PAYMENT_MODEL.md`, `docs/PAYMENT_LIFECYCLE.md`, `docs/RECEIPTS.md`, `d
 `docs/PAYMENT_PROOF.md`, and `docs/QR_AND_LINKS.md`. Money moving through a shared account is the
 same payment object with a Circle block on it — `docs/CIRCLE_RECEIPTS.md`, `docs/CIRCLE_PROOF.md`.
 
+## Prism Circles
+
+> **A Prism Circle is a shared USDC account for people who manage money together.**
+
+A trip everyone pays into, a household's shared costs, a small team with a float. Admins agree how
+money moves — "2 approvals" — and a member can be given a limit they spend inside on their own.
+Adding money and paying out are ordinary Prism payments, with the ordinary receipt and the ordinary
+proof; the extra block on them says which Circle the money came from, who asked, and who agreed.
+
+Prism cannot move a Circle's money and never holds its balance: authority lives with the people who
+hold it, on Monad, and survives Prism being offline entirely. A Circle ends as a lifecycle rather
+than a deletion — its history stays readable, and Prism never decides where a remaining balance
+goes. It is not a bank product and not a joint bank account.
+
+Product: `docs/CIRCLES_PRODUCT.md`. Architecture, authority mechanics and security assumptions:
+`docs/CIRCLES_ARCHITECTURE.md`, `docs/CIRCLES_AUTHORITY_MODEL.md`, `docs/CIRCLE_LIFECYCLE.md`,
+`docs/SECURITY.md` §Circles. The hostile audit (CIR-001…CIR-017) is
+`backend/test/circles-hostile-audit.test.js` and `docs/THREAT_MODEL.md`; what is proven and what is
+blocked, row by row, is `forge/CIRCLES_MATRIX.md`.
+
 ## Architecture
 
 ```text
@@ -226,9 +246,9 @@ Keychain write fail. CI is green on all four checks. See `proof/SECURITY_PROOF.m
 
 - Design: `docs/ARCHITECTURE.md`, `docs/IOS_ARCHITECTURE.md`, `docs/PRD_ADDENDUM_v1.1.md`,
   `docs/RESEARCH_NOTES.md`
-- Prism Circles (shared USDC accounts on a Safe Smart Account — domain model, persistence, Circle
-  creation, contributions in, threshold-governed payments out, member spending limits, and the
-  activity / receipt / proof / closing surfaces): `docs/CIRCLES_ARCHITECTURE.md`,
+- Prism Circles — *a shared USDC account for people who manage money together* (domain model,
+  persistence, Circle creation, contributions in, approval-governed payments out, member spending
+  limits, and the activity / receipt / proof / closing surfaces): `docs/CIRCLES_ARCHITECTURE.md`,
   `docs/CIRCLE_PAYMENTS.md`, `docs/CIRCLES_AUTHORITY_MODEL.md`, `docs/CIRCLES_ARCHITECTURE_PROOF.md`,
   `docs/CIRCLES_DEPENDENCY_AUDIT.md`, `docs/CIRCLES_PRODUCT.md`, `docs/CIRCLE_SPENDING_LIMITS.md`,
   `docs/CIRCLE_RECEIPTS.md`, `docs/CIRCLE_LIFECYCLE.md`, `docs/CIRCLE_PROOF.md`

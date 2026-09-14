@@ -715,10 +715,16 @@ export async function circleStack({ withPayments = false, withLimits = false } =
 }
 
 let keyCounter = 0;
-/** Create a real Prism identity bound to a fresh Mera-style account, as onboarding would. */
+/**
+ * Create a real Prism identity bound to a fresh Mera-style account, as onboarding would.
+ *
+ * The key is the counter written as a full 32-byte big-endian value, so a suite may create as many
+ * identities as it likes. (The earlier form repeated a 2-character string 32 times, which stopped
+ * producing a valid key at the hundredth identity — a limit a hostile suite reaches easily.)
+ */
 export async function makeIdentity(identityService, { name, handle } = {}) {
   keyCounter += 1;
-  const account = privateKeyToAccount(`0x${String(keyCounter).padStart(2, '0').repeat(32)}`);
+  const account = privateKeyToAccount(`0x${keyCounter.toString(16).padStart(64, '0')}`);
   const { nonce } = identityService.issueBindingChallenge();
   const bindingProof = await account.signMessage({
     message: canonicalJson({ action: 'bind_account', account: account.address.toLowerCase(), nonce })

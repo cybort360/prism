@@ -1,4 +1,4 @@
-.PHONY: test test-backend test-contracts test-ios test-circles audit zip gate-allowance build-allowance-module
+.PHONY: test test-backend test-contracts test-ios test-ios-linux test-circles audit zip gate-allowance build-allowance-module
 
 test: test-backend test-contracts test-ios
 
@@ -32,6 +32,13 @@ test-circles:
 	cd contracts && forge install foundry-rs/forge-std --no-git >/dev/null 2>&1 || true; \
 	FOUNDRY_PROFILE=circles forge test --match-path 'test/circles/*' --network monad -vv
 	cd tools/circles && npm install --silent && npm run verify
+
+# As far as Swift verification gets without macOS: parse every iOS source, then typecheck and RUN
+# the XCTest suites that do not need SwiftUI/UIKit/Combine. Not a substitute for `make test-ios` —
+# the views, coordinators, keychain and Mera bridge are out of its reach. Needs a Linux Swift
+# toolchain: SWIFT_HOME=/path/to/swift-6.x-RELEASE-ubuntu24.04 make test-ios-linux
+test-ios-linux:
+	./scripts/verify/swift-linux-check.sh
 
 # Requires macOS with Xcode. Override the simulator with IOS_DESTINATION=...
 test-ios:
