@@ -48,7 +48,7 @@ enum CircleState: Equatable {
       return .init(
         symbol: "person.2", tone: .neutral,
         title: "No Circles yet",
-        detail: "A Circle is money you look after with other people — a trip, a household, a group fund. Everyone can see it, and you decide together how it gets spent.",
+        detail: "A Circle is money you look after with other people, like a trip, a household or a group fund. Everyone can see it, and you decide together how it gets spent.",
         action: "New Circle")
 
     case .noMembers:
@@ -91,7 +91,7 @@ enum CircleState: Equatable {
       return .init(
         symbol: "arrow.counterclockwise", tone: .attention,
         title: "This needs to be suggested again",
-        detail: "Another Circle payment went through first, so this one can no longer be sent — even with every approval. Suggesting it again takes a moment.",
+        detail: "Another Circle payment went through first, so this one can no longer be sent, even with every approval. Suggesting it again takes a moment.",
         action: "Suggest it again")
 
     case .adminRemoved:
@@ -113,7 +113,7 @@ enum CircleState: Equatable {
       return .init(
         symbol: "hand.raised.fill", tone: .waiting,
         title: limitLine ?? "This is above your spending limit",
-        detail: "You can still make this payment — it just needs the Circle's admins to agree first, rather than only you.",
+        detail: "You can still make this payment. It just needs the Circle's admins to agree first, rather than only you.",
         action: "Request approval")
 
     case .networkUnavailable(let detail):
@@ -128,7 +128,7 @@ enum CircleState: Equatable {
       return .init(
         symbol: "checkmark.seal.fill", tone: .positive,
         title: "You've already approved this",
-        detail: "Your approval is counted. Approving a second time wouldn't move it any closer — it's waiting on the other admins now.",
+        detail: "Your approval is counted. Approving a second time wouldn't move it any closer. It's waiting on the other admins now.",
         action: "Done")
 
     case .alreadyExecuted:
@@ -152,7 +152,7 @@ enum CircleState: Equatable {
     case "DEPLOYING": return "The Circle is being created on Monad. This usually takes a few seconds."
     case "CONFIRMING": return "The Circle was created and Prism is waiting for Monad to confirm it."
     case "RECONCILING": return "Prism is checking the Circle on Monad matches exactly what you authorized. It becomes usable once it does."
-    default: return "The Circle is being set up. It becomes usable once Monad confirms it — you don't need to do anything."
+    default: return "The Circle is being set up. It becomes usable once Monad confirms it, and you don't need to do anything."
     }
   }
 }

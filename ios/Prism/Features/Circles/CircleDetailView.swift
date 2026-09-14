@@ -112,9 +112,7 @@ struct CircleDetailView: View {
       HStack(spacing: 12) {
         ZStack {
           Circle().fill(PrismTheme.mintSoft).frame(width: 46, height: 46)
-          Text(summary.icon ?? String(summary.name.prefix(1)).uppercased())
-            .font(PrismTheme.display(19))
-            .foregroundStyle(PrismTheme.mintDeep)
+          CircleGlyph(icon: summary.icon, name: summary.name, size: 19)
         }
         .accessibilityHidden(true)
         Text(circle.name(fallback: summary.name).uppercased())
@@ -252,7 +250,7 @@ struct CircleDetailView: View {
         }
         if circle.activityUnavailable {
           // Say what is missing rather than letting a money-only list imply nothing else happened.
-          Text("Showing money only — joins, removals and limit changes couldn't be loaded.")
+          Text("Showing money only. Joins, removals and limit changes couldn't be loaded.")
             .font(PrismTheme.body(11.5))
             .foregroundStyle(PrismTheme.muted)
             .padding(.top, 8)

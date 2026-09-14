@@ -171,7 +171,7 @@ struct CircleMemberView: View {
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(PrismTheme.pending)
             .accessibilityHidden(true)
-          Text("\(displayName) is an admin, so what they can do is decided by the Circle. Changing it starts a change the other admins approve together — it doesn't take effect straight away.")
+          Text("\(displayName) is an admin, so what they can do is decided by the Circle. Changing it starts a change the other admins approve together, so it doesn't take effect straight away.")
             .font(PrismTheme.body(12))
             .foregroundStyle(PrismTheme.muted)
             .lineSpacing(2)

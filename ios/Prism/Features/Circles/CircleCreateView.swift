@@ -141,9 +141,12 @@ private struct CircleCreateNameStep: View {
   @ObservedObject var draft: CircleDraft
   @FocusState private var focused: Bool
 
-  /// A small, fixed set rather than the system emoji keyboard: the icon is decoration, and a
-  /// picker with six recognizable options is faster than a keyboard with two thousand.
-  private let icons = ["🌴", "🏠", "🎁", "🍽️", "🚗", "🎓", "⚽️", "💐"]
+  /// A small, fixed set of SF Symbols rather than emoji: they match the rest of the app's iconography,
+  /// tint to the brand, and read cleanly at any size. The stored icon is the symbol name.
+  private let icons: [(name: String, label: String)] = [
+    ("airplane", "Trip"), ("house.fill", "Home"), ("gift.fill", "Gift"), ("fork.knife", "Dining"),
+    ("car.fill", "Car"), ("graduationcap.fill", "School"), ("soccerball", "Sports"), ("party.popper.fill", "Celebration")
+  ]
 
   var body: some View {
     VStack(alignment: .leading, spacing: 22) {
@@ -162,25 +165,27 @@ private struct CircleCreateNameStep: View {
       }
 
       VStack(alignment: .leading, spacing: 10) {
-        PrismSectionLabel(text: "Icon — optional")
+        PrismSectionLabel(text: "Icon (optional)")
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 4), spacing: 9) {
-          ForEach(icons, id: \.self) { icon in
+          ForEach(icons, id: \.name) { icon in
+            let selected = draft.icon == icon.name
             Button {
-              draft.icon = draft.icon == icon ? nil : icon
+              draft.icon = selected ? nil : icon.name
             } label: {
-              Text(icon)
-                .font(.system(size: 24))
+              Image(systemName: icon.name)
+                .font(.system(size: 22, weight: .medium))
+                .foregroundStyle(selected ? PrismTheme.mintDeep : PrismTheme.ink)
                 .frame(maxWidth: .infinity)
                 .frame(height: 54)
-                .background(draft.icon == icon ? PrismTheme.mintSoft : PrismTheme.paper)
+                .background(selected ? PrismTheme.mintSoft : PrismTheme.paper)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay(
                   RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(draft.icon == icon ? PrismTheme.mintDeep : PrismTheme.line, lineWidth: draft.icon == icon ? 1.4 : 0.7))
+                    .stroke(selected ? PrismTheme.mintDeep : PrismTheme.line, lineWidth: selected ? 1.4 : 0.7))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Icon \(icon)")
-            .accessibilityAddTraits(draft.icon == icon ? [.isButton, .isSelected] : .isButton)
+            .accessibilityLabel(icon.label)
+            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
           }
         }
       }
@@ -280,7 +285,7 @@ private struct CircleCreateAdminsStep: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
-      Text("Admins approve large payments and changes to how the Circle works — like adding someone, or changing how many approvals a payment needs.")
+      Text("Admins approve large payments and changes to how the Circle works, like adding someone or changing how many approvals a payment needs.")
         .font(PrismTheme.body(13.5))
         .foregroundStyle(PrismTheme.muted)
         .lineSpacing(2)
@@ -560,9 +565,7 @@ private struct CircleCreateReviewStep: View {
       HStack(spacing: 13) {
         ZStack {
           Circle().fill(PrismTheme.mintSoft).frame(width: 54, height: 54)
-          Text(draft.icon ?? String(draft.name.prefix(1)).uppercased())
-            .font(PrismTheme.display(22))
-            .foregroundStyle(PrismTheme.mintDeep)
+          CircleGlyph(icon: draft.icon, name: draft.name, size: 22)
         }
         .accessibilityHidden(true)
         VStack(alignment: .leading, spacing: 3) {
@@ -735,7 +738,7 @@ private struct CirclePersonSearchField: View {
       }
 
       if contactsBlocked && query.isEmpty {
-        Text("Contacts access is off. Type someone's @handle above to add them — you don't need your contacts.")
+        Text("Contacts access is off. Type someone's @handle above to add them. You don't need your contacts.")
           .font(PrismTheme.body(12))
           .foregroundStyle(PrismTheme.muted)
           .lineSpacing(2)

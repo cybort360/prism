@@ -165,7 +165,7 @@ struct CircleInviteView: View {
     }
 
     if contactsBlocked && !query.hasPrefix("@") {
-      Text("Contacts access is off. Type someone's @handle above to invite them — you don't need your contacts.")
+      Text("Contacts access is off. Type someone's @handle above to invite them. You don't need your contacts.")
         .font(PrismTheme.body(12))
         .foregroundStyle(PrismTheme.muted)
         .lineSpacing(2)
@@ -232,7 +232,7 @@ struct CircleInviteView: View {
       _ = try await PrismAPI.shared.inviteToCircle(
         circleId: circleId, prismId: prismId, handle: handle, role: role.rawValue)
       sent = role.needsCircleApproval
-        ? "\(name) was invited. They'll be a member as soon as they accept — becoming an admin also needs the Circle to approve it on Monad."
+        ? "\(name) was invited. They'll be a member as soon as they accept. Becoming an admin also needs the Circle to approve it on Monad."
         : "\(name) was invited to \(circleName)."
       query = ""
       PrismHaptics.success()

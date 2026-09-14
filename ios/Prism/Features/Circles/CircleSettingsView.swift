@@ -90,7 +90,7 @@ struct CircleSettingsView: View {
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(PrismTheme.amber)
             .accessibilityHidden(true)
-          Text("Every admin has to approve every payment. If any one of them loses access and can't recover it, this Circle's money can't be moved by anyone — including Prism. Adding a spare admin now is the only way to prevent that.")
+          Text("Every admin has to approve every payment. If any one of them loses access and can't recover it, this Circle's money can't be moved by anyone, including Prism. Adding a spare admin now is the only way to prevent that.")
             .font(PrismTheme.body(12))
             .foregroundStyle(PrismTheme.ink)
             .lineSpacing(2)
@@ -170,7 +170,7 @@ struct CircleSettingsView: View {
     VStack(alignment: .leading, spacing: 11) {
       PrismSectionLabel(text: "Spending limits")
       if limitsStatus?.enabled == true {
-        Text("People in this Circle can be given a limit they can spend within on their own. Set one from their member page — each limit is a change the Circle's admins approve together.")
+        Text("People in this Circle can be given a limit they can spend within on their own. Set one from their member page. Each limit is a change the Circle's admins approve together.")
           .font(PrismTheme.body(12.5))
           .foregroundStyle(PrismTheme.muted)
           .lineSpacing(2)
@@ -188,7 +188,7 @@ struct CircleSettingsView: View {
   private var changes: some View {
     VStack(alignment: .leading, spacing: 11) {
       PrismSectionLabel(text: "Change how it works")
-      Text("These are decided by the Circle. Choosing one starts a change the admins approve together — nothing takes effect when you tap.")
+      Text("These are decided by the Circle. Choosing one starts a change the admins approve together, so nothing takes effect when you tap.")
         .font(PrismTheme.body(12))
         .foregroundStyle(PrismTheme.muted)
         .lineSpacing(2)
@@ -259,7 +259,7 @@ struct CircleSettingsView: View {
   private var provenance: some View {
     VStack(alignment: .leading, spacing: 9) {
       PrismSectionLabel(text: "Where this comes from")
-      Text("The balance, the admins and the approval rule on this screen are read from Monad every time you open it. Prism stores the Circle's name and who was invited, and nothing else about it. A payment out of this Circle needs the approvals above — Prism cannot add one, and cannot move this money without them.")
+      Text("The balance, the admins and the approval rule on this screen are read from Monad every time you open it. Prism stores the Circle's name and who was invited, and nothing else about it. A payment out of this Circle needs the approvals above. Prism cannot add one, and cannot move this money without them.")
         .font(PrismTheme.body(12))
         .foregroundStyle(PrismTheme.muted)
         .lineSpacing(3)

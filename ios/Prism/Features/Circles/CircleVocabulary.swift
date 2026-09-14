@@ -50,7 +50,7 @@ enum CircleVocabulary {
     var consequence: String {
       switch self {
       case .admin:
-        return "An admin's approval counts toward every payment out of this Circle, and toward changes to how it works — including adding or removing other admins. Becoming an admin has to be approved by the Circle on Monad, so it is not immediate."
+        return "An admin's approval counts toward every payment out of this Circle, and toward changes to how it works, including adding or removing other admins. Becoming an admin has to be approved by the Circle on Monad, so it is not immediate."
       case .spender:
         return "A spender can move money out of the Circle on their own, up to the limit the Circle sets, without anyone approving each payment. Anything above their limit still needs the Circle's approval."
       case .contributor:

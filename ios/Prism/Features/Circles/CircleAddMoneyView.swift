@@ -28,7 +28,7 @@ struct CircleAddMoneyView: View {
 
         ZStack {
           Circle().fill(PrismTheme.mintSoft).frame(width: 64, height: 64)
-          Text(circle.icon ?? "◎").font(PrismTheme.display(26)).foregroundStyle(PrismTheme.mintDeep)
+          CircleGlyph(icon: circle.icon, name: circle.name, size: 26)
         }
         Text(circle.name)
           .font(PrismTheme.body(17, weight: .semibold))

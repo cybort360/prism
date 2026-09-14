@@ -62,7 +62,7 @@ struct CircleCloseView: View {
       Button("Cancel", role: .cancel) {}
       Button("Close it", role: .destructive) { Task { await finalize() } }
     } message: {
-      Text("The Circle stops being usable. Everything that happened in it — every payment, receipt and approval — stays readable afterwards.")
+      Text("The Circle stops being usable. Everything that happened in it stays readable afterwards: every payment, receipt and approval.")
     }
   }
 
@@ -92,7 +92,7 @@ struct CircleCloseView: View {
     if isClosed { return "Its history stays here. Nothing else can be added, paid or approved." }
     if state.canClose {
       return isClosing
-        ? "Everything is settled. Closing ends the Circle in Prism — the record stays."
+        ? "Everything is settled. Closing ends the Circle in Prism, but the record stays."
         : "Nothing is left open. Start closing when you're ready."
     }
     return "These have to be settled first. Prism won't close a Circle while something is still unresolved."
@@ -123,7 +123,7 @@ struct CircleCloseView: View {
         VStack(alignment: .leading, spacing: 8) {
           Text("Where does the \(funds.balanceDisplay ?? "money") go?")
             .font(PrismTheme.body(14, weight: .semibold))
-          Text("That's the Circle's decision, not Prism's. Send it out the way you send anything else — the admins approve it together — and then come back here.")
+          Text("That's the Circle's decision, not Prism's. Send it out the way you send anything else, with the admins approving together, then come back here.")
             .font(PrismTheme.body(12.5))
             .foregroundStyle(PrismTheme.muted)
             .lineSpacing(2)
@@ -176,7 +176,7 @@ struct CircleCloseView: View {
         PrismPrimaryButton(title: "Start closing", icon: "arrow.down.circle") { Task { await begin() } }
           .disabled(busy)
           .opacity(busy ? 0.5 : 1)
-        Text("Money can still be paid out while a Circle is closing — that's how the balance leaves. Nothing more can be added to it.")
+        Text("Money can still be paid out while a Circle is closing. That's how the balance leaves, and nothing more can be added to it.")
           .font(PrismTheme.body(11.5))
           .foregroundStyle(PrismTheme.muted)
           .multilineTextAlignment(.center)

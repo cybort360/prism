@@ -367,7 +367,7 @@ final class CircleDraft: ObservableObject {
         _ = try await PrismAPI.shared.inviteToCircle(
           circleId: circleId, prismId: person.id, handle: nil, role: role.rawValue)
       } catch {
-        problems.append("\(person.name) couldn't be invited — you can add them from the Circle.")
+        problems.append("\(person.name) couldn't be invited. You can add them from the Circle.")
       }
     }
 

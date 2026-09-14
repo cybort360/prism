@@ -124,7 +124,7 @@ final class CircleDetailModel: ObservableObject {
 
   var balanceAccessibilityLine: String {
     balanceUnavailable
-      ? "Balance unavailable — Prism could not read it from Monad"
+      ? "Balance unavailable. Prism couldn't read it from Monad."
       : "Balance \(balanceLine)"
   }
 
