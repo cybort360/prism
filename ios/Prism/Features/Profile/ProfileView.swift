@@ -761,7 +761,7 @@ struct ReachabilityEditorView: View {
       let i = try await PrismAPI.shared.setHandle(handle)
       model.updateIdentity(i)
       handle = ""
-      success = "@\(i.handle ?? "") is now your public handle."
+      success = "\(i.handle?.asPrismHandle ?? "your handle") is now your public handle."
       PrismHaptics.success()
     } catch {
       self.error = error.localizedDescription

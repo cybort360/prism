@@ -234,8 +234,8 @@ final class CircleDraft: ObservableObject {
     if let identity {
       me = CircleCandidate(
         id: identity.prismId,
-        name: identity.displayName ?? identity.handle.map { "@\($0)" } ?? "You",
-        handle: identity.handle.map { $0.hasPrefix("@") ? $0 : "@\($0)" },
+        name: identity.displayName ?? identity.handle?.asPrismHandle ?? "You",
+        handle: identity.handle?.asPrismHandle,
         initials: Self.initials(for: identity))
     }
     if let status = try? await PrismAPI.shared.circleLimitsStatus() {

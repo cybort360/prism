@@ -205,7 +205,7 @@ struct ClaimDetailView: View {
   }
 
   private var senderName: String {
-    model.identity?.displayName ?? model.identity?.handle.map { "@\($0)" } ?? "Someone"
+    model.identity?.displayName ?? model.identity?.handle?.asPrismHandle ?? "Someone"
   }
 
   private var expiryText: String {
