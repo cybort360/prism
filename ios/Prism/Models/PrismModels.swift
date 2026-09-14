@@ -3,12 +3,14 @@ import Foundation
 typealias RuntimeConfig = PrismNetworkConfig
 
 enum MainTab: String, CaseIterable, Identifiable {
-  case home, people, activity, profile
+  // Circles sits next to Home as a peer money surface; People/Activity stay paired as who/history.
+  case home, circles, people, activity, profile
   var id: String { rawValue }
   var title: String { rawValue.capitalized }
   var icon: String {
     switch self {
     case .home: "house"
+    case .circles: "circlebadge.2"   // overlapping rings — shared money, distinct from People's figures
     case .people: "person.2"
     case .activity: "chart.bar.xaxis"
     case .profile: "person.circle"
@@ -457,6 +459,20 @@ enum Money {
   }
 }
 
+extension String {
+  /// A handle shown to people always reads "@name", never "@@name". Backend/stored handles are
+  /// inconsistent about whether they already include the "@", so every display route through this:
+  /// strip any leading "@"s, then add exactly one.
+  var asPrismHandle: String { "@" + drop(while: { $0 == "@" }) }
+}
+
 extension Date {
-  static func prismParse(_ value: String) -> Date? { ISO8601DateFormatter().date(from: value) }
+  // The backend emits ISO-8601 with fractional seconds (`new Date().toISOString()` → "…​.000Z"), which a
+  // default ISO8601DateFormatter does NOT parse — it would return nil and silently drop every timestamp
+  // (breaking activity date grouping and Circle feed ordering). Try fractional seconds first, then plain.
+  static func prismParse(_ value: String) -> Date? {
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+  }
 }

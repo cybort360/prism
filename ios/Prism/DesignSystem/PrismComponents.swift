@@ -451,3 +451,27 @@ struct OperationStateOverlay: View {
     }
   }
 }
+
+extension PaymentCoordinator.State {
+  /// A Circle action's lifecycle mirrors a personal payment's, so `OperationStateOverlay` renders both
+  /// with the same vocabulary. This maps the sibling coordinator's state onto the one the overlay reads.
+  init(_ circle: CircleCoordinator.State) {
+    switch circle {
+    case .idle: self = .idle
+    case .preparing: self = .preparing
+    case .awaitingAuthorization: self = .awaitingAuthorization
+    case .sending: self = .sending
+    case .settling: self = .settling
+    case .sent(let tx): self = .sent(tx)
+    case .pendingReview(let message): self = .pendingReview(message)
+    case .failed(let message): self = .failed(message)
+    }
+  }
+}
+
+extension OperationStateOverlay {
+  /// Drive the overlay directly from a `CircleCoordinator.State` (Circle add-money / pay / approve).
+  init(state: CircleCoordinator.State, onDismiss: (() -> Void)? = nil, onViewActivity: (() -> Void)? = nil) {
+    self.init(state: PaymentCoordinator.State(state), onDismiss: onDismiss, onViewActivity: onViewActivity)
+  }
+}
