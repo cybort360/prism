@@ -43,6 +43,7 @@ struct MainShell: View {
       Group {
         switch model.selectedTab {
         case .home: HomeView()
+        case .circles: CirclesView()
         case .people: PeopleView()
         case .activity: ActivityView()
         case .profile: ProfileView()

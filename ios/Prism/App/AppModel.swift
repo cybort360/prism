@@ -49,6 +49,8 @@ final class AppModel: ObservableObject {
       sendPickerPresented = arguments.contains("--uitest-send-picker")
       requestPickerPresented = arguments.contains("--uitest-request-picker")
       if arguments.contains("--uitest-advanced-account") { selectedTab = .profile }
+      if arguments.contains("--uitest-circles-tab") { selectedTab = .circles }
+      if arguments.contains("--uitest-circle-create") { selectedTab = .circles; presentCircleCreate = true }
     #endif
   }
 

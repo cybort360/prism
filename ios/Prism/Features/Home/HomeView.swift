@@ -9,8 +9,8 @@ struct HomeView: View {
   @State private var localPeople: [ContactPerson] = []
   @State private var loading = false
   @State private var error: String?
-  /// Circles sit on Home rather than behind a tab of their own: a Circle is money, and it belongs
-  /// where the person's own money already is.
+  /// Circles has its own tab, but a compact summary stays on Home (`CirclesSummaryRow`) so shared
+  /// money remains visible next to the person's own balance. This model feeds that row.
   @StateObject private var circles = CirclesHomeModel()
 
   var body: some View {
@@ -29,7 +29,7 @@ struct HomeView: View {
         actions.padding(.top, 32).padding(.bottom, 34)
         if let request = incomingRequest { requestCard(request).padding(.bottom, 12) }
         if !claims.isEmpty { claimsSection.padding(.bottom, 30) }
-        CirclesHomeSection(circles: circles).padding(.bottom, 34)
+        CirclesSummaryRow(circles: circles).padding(.bottom, 34)
         people.padding(.bottom, 34)
         recent
         if let error { ErrorBanner(message: error).padding(.top, 18) }

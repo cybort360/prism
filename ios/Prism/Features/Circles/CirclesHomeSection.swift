@@ -1,4 +1,23 @@
 import SwiftUI
+import UIKit
+
+/// A Circle's icon. Renders the stored SF Symbol when it names a real symbol; otherwise the first
+/// letter of the Circle's name. (A legacy emoji value therefore falls back to the initial rather than
+/// rendering as a broken glyph.)
+struct CircleGlyph: View {
+  let icon: String?
+  let name: String
+  var size: CGFloat = 18
+  var color: Color = PrismTheme.mintDeep
+
+  var body: some View {
+    if let icon, !icon.isEmpty, UIImage(systemName: icon) != nil {
+      Image(systemName: icon).font(.system(size: size, weight: .medium)).foregroundStyle(color)
+    } else {
+      Text(String(name.prefix(1)).uppercased()).font(PrismTheme.body(size, weight: .semibold)).foregroundStyle(color)
+    }
+  }
+}
 
 /// Circles on Home.
 ///
@@ -12,14 +31,19 @@ import SwiftUI
 struct CirclesHomeSection: View {
   @EnvironmentObject private var model: AppModel
   @ObservedObject var circles: CirclesHomeModel
+  /// The Circles tab supplies its own screen title, so it hides this inline "Circles" label to avoid
+  /// showing the word twice.
+  var showsHeader = true
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
-      HStack {
-        PrismSectionLabel(text: "Circles")
-        Spacer()
-        if circles.loading && !circles.summaries.isEmpty {
-          ProgressView().controlSize(.small).tint(PrismTheme.mintDeep)
+      if showsHeader {
+        HStack {
+          PrismSectionLabel(text: "Circles")
+          Spacer()
+          if circles.loading && !circles.summaries.isEmpty {
+            ProgressView().controlSize(.small).tint(PrismTheme.mintDeep)
+          }
         }
       }
 
@@ -52,21 +76,25 @@ struct CirclesHomeSection: View {
         }
       }
 
-      Button {
-        model.presentCircleCreate = true
-      } label: {
-        HStack(spacing: 8) {
-          Image(systemName: "plus").font(.system(size: 13, weight: .semibold))
-          Text("New Circle").font(PrismTheme.body(14, weight: .semibold))
+      // The persistent "New Circle" button is the create affordance only when a list is shown; the
+      // empty state carries its own CTA, so showing both would be a duplicate call to action.
+      if !circles.summaries.isEmpty {
+        Button {
+          model.presentCircleCreate = true
+        } label: {
+          HStack(spacing: 8) {
+            Image(systemName: "plus").font(.system(size: 13, weight: .semibold))
+            Text("New Circle").font(PrismTheme.body(14, weight: .semibold))
+          }
+          .foregroundStyle(PrismTheme.mintDeep)
+          .frame(maxWidth: .infinity)
+          .frame(height: 48)
+          .background(PrismTheme.mintSoft)
+          .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .foregroundStyle(PrismTheme.mintDeep)
-        .frame(maxWidth: .infinity)
-        .frame(height: 48)
-        .background(PrismTheme.mintSoft)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .buttonStyle(.plain)
+        .accessibilityLabel("Create a new Circle")
       }
-      .buttonStyle(.plain)
-      .accessibilityLabel("Create a new Circle")
     }
   }
 }
@@ -82,9 +110,7 @@ private struct CircleRow: View {
       HStack(spacing: 13) {
         ZStack {
           Circle().fill(PrismTheme.mintSoft).frame(width: avatar, height: avatar)
-          Text(summary.icon ?? String(summary.name.prefix(1)).uppercased())
-            .font(PrismTheme.body(avatar * 0.38, weight: .semibold))
-            .foregroundStyle(PrismTheme.mintDeep)
+          CircleGlyph(icon: summary.icon, name: summary.name, size: avatar * 0.42)
         }
         .accessibilityHidden(true)
 
