@@ -93,7 +93,10 @@ Everything runs against a **Monad testnet fork**: the real Safe v1.4.1 singleton
 at their codehash-verified addresses, the real EIP-7951 P-256 precompile, and the real Circle USDC
 contract. Only member key material is synthetic. P-256 signatures come from
 `contracts/script/circles/p256-sign.mjs` over ffi, which signs with `sha256` digesting to reproduce
-CryptoKit's `signature(for: Data)` — the exact convention Prism iOS uses.
+CryptoKit's `signature(for: Data)` — the exact convention Prism iOS uses. Its two keys are derived
+from fixed seeds rather than stored: they are fixtures, they guard nothing (P-256 is not secp256k1,
+so they can never be an Ethereum account, and no deployed contract is bound to them), and deriving
+them keeps key-shaped material out of the repository.
 
 Positive:
 
