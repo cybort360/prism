@@ -20,6 +20,7 @@ import { AuroraService } from './services/auroraService.js';
 import { ProofService } from './services/proofService.js';
 import { P256AccountService } from './services/p256AccountService.js';
 import { SaveService } from './services/saveService.js';
+import { SavePositionService } from './services/savePositionService.js';
 import { p256ChainOps } from './chain/p256Account.js';
 import { runContinuityLab } from './lab/continuityLab.js';
 import { usdcBalanceOf, claimAuthorizerAddress, relayerAccount, verifyChainId, verifyUsdcDomain } from './chain/eth.js';
@@ -44,6 +45,7 @@ const auroraService = new AuroraService({ store, config, identityService, paymen
 const proofService = new ProofService({ paymentService, identityService, config });
 const p256AccountService = new P256AccountService({ store, config, chainOps: p256ChainOps });
 const saveService = new SaveService({ store, config, identityService });
+const savePositionService = new SavePositionService({ store, config, identityService });
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -172,6 +174,9 @@ route('GET', '/v1/lab/continuity', async () => runContinuityLab(), true);
 // announced preview until the earnAUSD substrate is verified (see docs/SAVE_DEPENDENCY_AUDIT.md). The
 // quote carries a fully-constrained SaveExecutionPlan the CLIENT independently verifies.
 route('GET', '/v1/save/state', async ({ user }) => saveService.state(user.prismId), true);
+// The user's Save position, reconstructed from chain (canonical shares + the vault's own value
+// conversion); the store is a projection only. Announces itself when the vault isn't readable.
+route('GET', '/v1/save/position', async ({ user }) => savePositionService.position(user.prismId), true);
 route('POST', '/v1/save/quote', async ({ user, body }) => {
   rateLimit(`save-quote:${user.prismId}`, 60);
   return saveService.quote({ prismId: user.prismId, amountAtomic: String(body.amountAtomic) });
