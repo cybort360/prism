@@ -29,6 +29,7 @@ struct PaymentDetailsView: View {
           VStack(spacing: 26) {
             summary(d)
             timeline(d)
+            sharedAccount(d)
             receipt(d)
             crossChain(d)
             proofRow(d)
@@ -107,6 +108,24 @@ struct PaymentDetailsView: View {
         ForEach(Array(d.receiptRows.enumerated()), id: \.offset) { idx, r in
           detailRow(r.label, r.value)
           if idx < d.receiptRows.count - 1 { Divider().overlay(PrismTheme.line) }
+        }
+      }
+    }
+  }
+
+  // MARK: SHARED ACCOUNT (Circles)
+  /// Only renders for a payment that came out of — or went into — a Circle. Its own section rather
+  /// than rows folded into the receipt, because "whose money was this, and who agreed to it" is a
+  /// different question from "what was paid", and a shared payment is unreadable without it.
+  @ViewBuilder
+  private func sharedAccount(_ d: PaymentDisplay) -> some View {
+    if let circle = d.circle, !d.circleRows.isEmpty {
+      section(circle.isIncoming ? "Added to a Circle" : "Paid from a Circle") {
+        VStack(spacing: 0) {
+          ForEach(Array(d.circleRows.enumerated()), id: \.offset) { idx, r in
+            detailRow(r.label, r.value)
+            if idx < d.circleRows.count - 1 { Divider().overlay(PrismTheme.line) }
+          }
         }
       }
     }

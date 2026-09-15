@@ -36,6 +36,13 @@ operation ──▶ canonicalPayment   (summary + lifecycle)
 | claim funding | claim | sent (funder) |
 | claim collection | claim | received (recipient) |
 | refund | internal | received (original sender) |
+| `circleContribution` | circle | sent (money into a shared account) |
+| `circlePayment` | circle | sent · received (money out, approved by the Circle) |
+| `circleSpend` | circle | sent · received (money out, inside a member's on-chain limit) |
+
+The three Circle kinds carry an optional `sourceType` / `circle` block and are otherwise ordinary
+payments — same projection, same receipt, same proof. See
+[CIRCLE_RECEIPTS.md](CIRCLE_RECEIPTS.md).
 
 ## Two layers of truth
 

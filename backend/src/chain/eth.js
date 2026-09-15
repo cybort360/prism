@@ -189,6 +189,30 @@ export function routeHash({ routeId, depositAddress, destinationChain, destinati
   ));
 }
 
+/**
+ * contributionHash: the Circles sibling of `resolutionHash` and `routeHash`, in the same opaque
+ * envelope slot.
+ *
+ * A contribution is an ordinary Prism payment whose recipient happens to be a Circle's Safe. On its
+ * own the envelope would bind only "send N USDC to 0xabc…" — true, but it says nothing about *why*,
+ * and a backend that later re-labels which Circle that address belongs to would be unfalsifiable.
+ * Folding the Circle id, its Safe, the contributor and the amount into the signed hash means the
+ * contributor's one signature covers the claim "this is my contribution to THIS Circle", and
+ * reconciliation can check the settled payment against it rather than against a mutable row.
+ */
+export function contributionHash({ contributionId, circleId, safeAddress, contributorPrismId, amountAtomic }) {
+  return keccak256(encodeAbiParameters(
+    parseAbiParameters('bytes32, bytes32, address, bytes32, uint256'),
+    [
+      keccak256(Buffer.from(String(contributionId))),
+      keccak256(Buffer.from(String(circleId))),
+      getAddress(safeAddress),
+      keccak256(Buffer.from(String(contributorPrismId))),
+      BigInt(amountAtomic)
+    ]
+  ));
+}
+
 // ---- signature splitting ---------------------------------------------------
 
 export function splitSignature(signature) {

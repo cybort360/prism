@@ -43,6 +43,7 @@ struct MainShell: View {
       Group {
         switch model.selectedTab {
         case .home: HomeView()
+        case .circles: CirclesView()
         case .people: PeopleView()
         case .activity: ActivityView()
         case .profile: ProfileView()
@@ -63,6 +64,11 @@ struct MainShell: View {
     }
     .sheet(item: $model.presentClaimDetail) { item in ClaimDetailView(claim: item.claim) }
     .sheet(item: $model.presentRequestDetail) { item in RequestDetailView(request: item.request) }
+    // Circles. The detail is a full-screen place rather than a sheet, and it presents its own money
+    // screens — adding money, paying, approving — because all three are about *that* Circle and
+    // presenting them from here would put a sheet on top of a sheet.
+    .fullScreenCover(item: $model.presentCircleDetail) { summary in CircleDetailView(summary: summary) }
+    .sheet(isPresented: $model.presentCircleCreate) { CircleCreateView() }
     .sheet(isPresented: $model.sendPickerPresented) { PersonPickerView(mode: .send) }
     .sheet(isPresented: $model.sendAnywherePresented) { SendToAnywhereView() }
     .sheet(isPresented: $model.requestPickerPresented) { PersonPickerView(mode: .request) }

@@ -21,6 +21,9 @@ import { ProofService } from './services/proofService.js';
 import { P256AccountService } from './services/p256AccountService.js';
 import { SaveService } from './services/saveService.js';
 import { SavePositionService } from './services/savePositionService.js';
+import { CircleService } from './services/circleService.js';
+import { CircleActivityService } from './services/circleActivityService.js';
+import { safeCircleAdapter, allowanceModuleGate } from './chain/safeCircle.js';
 import { p256ChainOps } from './chain/p256Account.js';
 import { runContinuityLab } from './lab/continuityLab.js';
 import { usdcBalanceOf, claimAuthorizerAddress, relayerAccount, verifyChainId, verifyUsdcDomain } from './chain/eth.js';
@@ -42,10 +45,14 @@ const claimService = new ClaimService({ store, config, identityService });
 const paymentService = new PaymentService({ store, config, identityService, claimService, resolverService, requestService });
 const activityService = new ActivityService({ store, identityService });
 const auroraService = new AuroraService({ store, config, identityService, paymentService });
-const proofService = new ProofService({ paymentService, identityService, config });
 const p256AccountService = new P256AccountService({ store, config, chainOps: p256ChainOps });
 const saveService = new SaveService({ store, config, identityService });
 const savePositionService = new SavePositionService({ store, config, identityService });
+const circleService = new CircleService({ store, config, identityService, safeAdapter: safeCircleAdapter(), paymentService, limitGate: allowanceModuleGate() });
+// One proof surface for every Prism payment, personal or shared: ProofService assembles a Circle
+// payment's evidence through CircleService rather than a second endpoint existing for it.
+const proofService = new ProofService({ paymentService, identityService, circleService, config });
+const circleActivityService = new CircleActivityService({ store, config, circleService, identityService });
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -83,7 +90,12 @@ route('GET', '/v1/config', async () => ({
   claimVault: config.chain.claimVault || null,
   resolverPublicKey: resolverService.publicKey(),
   claimAuthorizerAddress: safe(() => claimAuthorizerAddress()),
-  relayerAddress: safe(() => relayerAccount().address)
+  relayerAddress: safe(() => relayerAccount().address),
+  // Circle member spending limits. `allowanceModule` is null unless a verified Safe Allowance
+  // Module v1.0.0 is configured — the client uses it to re-derive a spend's transfer hash for
+  // itself, and its absence is simply "this deployment spends by threshold".
+  circleLimitsEnabled: config.circles.limitsEnabled,
+  allowanceModule: config.circles.allowanceModule || null
 }));
 
 // --- onboarding --------------------------------------------------------------
@@ -146,7 +158,11 @@ route('POST', '/v1/payments/submit', async ({ user, body, idempotencyKey }) => {
 route('GET', '/v1/payments/:id', async ({ user, params }) => paymentService.reconcile(params.id, user.prismId), true);
 // Canonical projection of any operation: { payment, events, receipt }. Reconciles first so the
 // canonical view reflects live chain state, then returns the durable projection.
+// A Circle payment is one of these too — its id addresses a Safe proposal, a limit spend or a
+// contribution rather than an operation, and CircleService projects it into the same
+// { payment, events, receipt }. The app opens one detail screen for both.
 route('GET', '/v1/payments/:id/canonical', async ({ user, params }) => {
+  if (CircleService.isCirclePaymentId(params.id)) return circleService.canonicalFor(params.id, user.prismId);
   await paymentService.reconcile(params.id, user.prismId).catch(() => {});
   return paymentService.canonicalFor(params.id, user.prismId);
 }, true);
@@ -264,6 +280,225 @@ route('GET', '/v1/aurora/routes', async ({ user }) => auroraService.listRoutes(u
 route('GET', '/v1/aurora/routes/:id', async ({ user, params }) =>
   auroraService.reconcileRoute({ prismId: user.prismId, routeId: params.id }), true);
 
+// --- Prism Circles: shared USDC accounts on a Safe Smart Account ---------------
+// Prism holds the Circle's name and who was invited. Monad holds the money, the admin set and the
+// threshold — those are read live on every request and never served from a stored mirror. No route
+// below accepts a Safe address: the Safe always comes from the Circle record the caller belongs to,
+// so there is no request that can aim a Circle operation at someone else's Safe.
+
+// Threshold guidance for the creation sheet. A template is a UX default only: it recommends a
+// threshold for the admins already chosen, invents no admin, and never exceeds the admins selected.
+route('GET', '/v1/circles/templates', async ({ url }) => {
+  const adminCount = Number(url.searchParams.get('admins') ?? '0');
+  const template = url.searchParams.get('template') ?? 'CUSTOM';
+  return circleService.templateGuidance({ template, adminCount });
+}, true);
+
+route('POST', '/v1/circles', async ({ user, body, idempotencyKey }) => {
+  rateLimit(`circle-create:${user.prismId}`, 20);
+  // Creation is idempotent on the Circle's own shape (creator + name + admins + threshold), so a
+  // retry resumes the same Circle rather than deploying a second Safe even without a key.
+  const run = () => circleService.createCircle({
+    creatorPrismId: user.prismId, name: body.name, icon: body.icon ?? null,
+    template: body.template ?? 'CUSTOM', admins: body.admins ?? [], threshold: Number(body.threshold),
+    policyAcknowledgement: body.policyAcknowledgement ?? null
+  });
+  if (!idempotencyKey) return run();
+  return withIdempotency(store, {
+    scope: 'circle-create', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint(String(body.name), String(body.threshold), JSON.stringify(body.admins ?? []))
+  }, run);
+}, true);
+
+route('GET', '/v1/circles', async ({ user }) => ({ circles: circleService.listCircles(user.prismId) }), true);
+route('GET', '/v1/circles/:id', async ({ user, params }) => circleService.getCircle(params.id, user.prismId), true);
+route('GET', '/v1/circles/:id/members', async ({ user, params }) => ({ members: circleService.listMembers(params.id, user.prismId) }), true);
+
+// Invitations go through Prism's existing human identity layer (@handle or Prism id). Accepting one
+// makes someone a member; it never grants admin authority, which only the Safe can confer.
+route('POST', '/v1/circles/:id/invitations', async ({ user, params, body }) => {
+  rateLimit(`circle-invite:${user.prismId}`, 60);
+  return circleService.invite({ circleId: params.id, actorPrismId: user.prismId, prismId: body.prismId ?? null, handle: body.handle ?? null, role: body.role ?? 'VIEWER' });
+}, true);
+route('POST', '/v1/circles/:id/invitations/:inviteId/accept', async ({ user, params }) =>
+  circleService.acceptInvitation({ circleId: params.id, inviteId: params.inviteId, prismId: user.prismId }), true);
+route('POST', '/v1/circles/:id/invitations/:inviteId/decline', async ({ user, params }) =>
+  circleService.declineInvitation({ circleId: params.id, inviteId: params.inviteId, prismId: user.prismId }), true);
+
+// Invitations addressed to the caller, across every Circle. Without this an invitation is
+// unreachable: accepting one needs an id only the invited person's own device can supply.
+route('GET', '/v1/circles/invitations', async ({ user }) => ({ invitations: circleService.listMyInvitations(user.prismId) }), true);
+
+// Prism-side membership only. Neither route can grant or revoke ADMIN — that is the Safe's owner
+// set, and it moves only through `/admins/prepare-add` / `/admins/prepare-remove` plus a threshold
+// of signatures. Both refuse while the member still holds a live spending allowance on Monad,
+// because taking away the label while leaving the money access is worse than refusing.
+route('POST', '/v1/circles/:id/members/:prismId/role', async ({ user, params, body }) =>
+  circleService.setMemberRole({ circleId: params.id, actorPrismId: user.prismId, prismId: params.prismId, role: body.role }), true);
+route('POST', '/v1/circles/:id/members/:prismId/remove', async ({ user, params }) =>
+  circleService.removeMember({ circleId: params.id, actorPrismId: user.prismId, prismId: params.prismId }), true);
+
+// Governance. These PREPARE a Safe transaction and change nothing on-chain: they return the digest
+// the Circle's admins must approve. Authority moves only when enough owners have signed it.
+route('POST', '/v1/circles/:id/admins/prepare-add', async ({ user, params, body }) =>
+  circleService.prepareAddAdmin({ circleId: params.id, actorPrismId: user.prismId, prismId: body.prismId ?? null, handle: body.handle ?? null, threshold: body.threshold === undefined ? null : Number(body.threshold) }), true);
+route('POST', '/v1/circles/:id/admins/prepare-remove', async ({ user, params, body }) =>
+  circleService.prepareRemoveAdmin({ circleId: params.id, actorPrismId: user.prismId, prismId: body.prismId, threshold: body.threshold === undefined ? null : Number(body.threshold) }), true);
+route('POST', '/v1/circles/:id/threshold/prepare', async ({ user, params, body }) =>
+  circleService.prepareThresholdChange({ circleId: params.id, actorPrismId: user.prismId, threshold: Number(body.threshold) }), true);
+
+route('GET', '/v1/circles/:id/pending', async ({ user, params }) => circleService.listPending(params.id, user.prismId), true);
+
+// The Circle's own activity: money and governance in one feed, each row a projection of a record
+// that was already reconciled against the chain. There is no Circle ledger behind this — a payment
+// row IS the Safe execution plus its USDC Transfer, and a governance row IS an executed change that
+// was read back from the chain. `class` keeps the two distinguishable.
+route('GET', '/v1/circles/:id/activity', async ({ user, params, url }) => {
+  const limit = Number(url.searchParams.get('limit') ?? '100');
+  return circleActivityService.list(params.id, user.prismId, { limit: Number.isFinite(limit) ? Math.min(limit, 250) : 100 });
+}, true);
+
+// Cancel a Circle transaction that has not been broadcast. Pre-broadcast only: once a transaction is
+// away, what happened to it is the chain's answer.
+route('POST', '/v1/circles/:id/proposals/:proposalId/cancel', async ({ user, params }) =>
+  circleService.cancelProposal({ circleId: params.id, proposalId: params.proposalId, actorPrismId: user.prismId }), true);
+
+// --- closing a Circle ---------------------------------------------------------
+// ACTIVE -> CLOSING -> CLOSED, and nothing is ever deleted. The preflight is a live read, not a
+// checklist the caller fills in: open decisions from Prism, spending delegates from the module, the
+// balance from the token contract, the owner set from the Safe. A Circle still holding money cannot
+// be closed — Prism will not decide where a shared balance goes, so the members must send it out
+// first, by the same approvals they have always used.
+route('GET', '/v1/circles/:id/close', async ({ user, params }) => circleService.closePreflight(params.id, user.prismId), true);
+route('POST', '/v1/circles/:id/close/begin', async ({ user, params, body }) =>
+  circleService.beginClose({ circleId: params.id, actorPrismId: user.prismId, reason: body?.reason ?? null }), true);
+route('POST', '/v1/circles/:id/close/cancel', async ({ user, params }) =>
+  circleService.cancelClose({ circleId: params.id, actorPrismId: user.prismId }), true);
+// Finalize carries the balance the closer was shown; a mismatch with what Monad reports right now is
+// refused, exactly as a creation policy acknowledgement that does not match the Circle is refused.
+route('POST', '/v1/circles/:id/close/finalize', async ({ user, params, body }) =>
+  circleService.finalizeClose({ circleId: params.id, actorPrismId: user.prismId, acknowledgement: body?.acknowledgement ?? null }), true);
+
+// --- contributions: money INTO a Circle --------------------------------------
+// A contribution is an ordinary Prism payment whose recipient is the Circle's Safe: same envelope,
+// same ERC-3009 receive-authorization to the audited router, same relayer, same reconciliation.
+// There is no contribution vault, and the Circle's balance is never incremented by Prism — it rises
+// because a transfer landed, and is read back from the token contract.
+route('POST', '/v1/circles/:id/contributions/prepare', async ({ user, params, body }) => {
+  rateLimit(`circle-contribute:${user.prismId}`, 60);
+  return circleService.prepareContribution({ circleId: params.id, prismId: user.prismId, amountAtomic: body.amountAtomic });
+}, true);
+route('POST', '/v1/circles/:id/contributions/:contributionId/submit', async ({ user, params, body, idempotencyKey }) => {
+  requireSig(body.prismSignature, 'prismSignature'); requireSig(body.tokenSignature, 'tokenSignature');
+  return withIdempotency(store, {
+    scope: 'circle-contribute-submit', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint(params.contributionId, body.prismSignature, body.tokenSignature)
+  }, () => circleService.submitContribution({
+    circleId: params.id, contributionId: params.contributionId, prismId: user.prismId,
+    prismSignature: body.prismSignature, tokenSignature: body.tokenSignature
+  }));
+}, true);
+route('GET', '/v1/circles/:id/contributions', async ({ user, params }) => circleService.listContributions(params.id, user.prismId), true);
+route('GET', '/v1/circles/:id/contributions/:contributionId', async ({ user, params }) =>
+  circleService.reconcileContribution({ circleId: params.id, contributionId: params.contributionId, prismId: user.prismId }), true);
+
+// --- Circle payments: money OUT of a Circle, under the threshold --------------
+// The recipient comes from the SAME Protected Alias Resolver as a personal payment, so a Circle
+// payment inherits Prism Continuity whole. No route accepts a target address or calldata: the Safe
+// transaction is always `USDC.transfer(resolvedRecipient, amount)` against the configured token,
+// built by CircleService and by nothing else.
+route('POST', '/v1/circles/:id/payments/propose', async ({ user, params, body }) => {
+  rateLimit(`circle-pay:${user.prismId}`, 60);
+  return circleService.proposePayment({
+    circleId: params.id, actorPrismId: user.prismId, resolution: body.resolution,
+    amountAtomic: body.amountAtomic, memo: body.memo ?? ''
+  });
+}, true);
+route('GET', '/v1/circles/:id/payments', async ({ user, params }) => circleService.listPayments(params.id, user.prismId), true);
+route('GET', '/v1/circles/:id/payments/:proposalId', async ({ user, params }) =>
+  circleService.getPayment({ circleId: params.id, proposalId: params.proposalId, prismId: user.prismId }), true);
+// Approve: the signature is verified against the digest and the LIVE owner set, and the payment's
+// bound fields are re-checked first, so an approval can never attach to a mutated payment.
+route('POST', '/v1/circles/:id/payments/:proposalId/approve', async ({ user, params, body, idempotencyKey }) => {
+  requireSig(body.signature, 'signature');
+  return withIdempotency(store, {
+    scope: 'circle-approve', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint(params.proposalId, body.signature)
+  }, () => circleService.approvePayment({
+    circleId: params.id, proposalId: params.proposalId, prismId: user.prismId, signature: body.signature
+  }));
+}, true);
+// Execute: reads the Safe's live owners/threshold/nonce, re-verifies every signature, SIMULATES
+// execTransaction, and broadcasts only if the simulation succeeds.
+// --- member spending limits (Safe Allowance Module v1.0.0) --------------------
+// A limit is a fact on Monad and changing it is a threshold-approved Circle transaction. There is
+// no route below that writes an allowance: `prepare` builds the Safe transaction the Circle's
+// admins must approve, and `execute` applies it and then READS THE MODULE BACK before calling it
+// active. Every figure reported is read from the module, never summed from Prism's activity.
+route('GET', '/v1/circles/limits/status', async () => circleService.limitsStatus(), true);
+route('GET', '/v1/circles/:id/limits', async ({ user, params }) => circleService.listSpendingLimits(params.id, user.prismId), true);
+route('GET', '/v1/circles/:id/limits/me', async ({ user, params }) => circleService.spendingLimitFor(params.id, user.prismId), true);
+route('POST', '/v1/circles/:id/limits/prepare', async ({ user, params, body }) => {
+  rateLimit(`circle-limit:${user.prismId}`, 60);
+  return circleService.prepareSpendingLimit({
+    circleId: params.id, actorPrismId: user.prismId, prismId: body.prismId,
+    amountAtomic: body.amountAtomic, period: body.period
+  });
+}, true);
+route('POST', '/v1/circles/:id/limits/revoke/prepare', async ({ user, params, body }) =>
+  circleService.prepareSpendingLimitRevoke({ circleId: params.id, actorPrismId: user.prismId, prismId: body.prismId }), true);
+// Approve a governance change. Same machinery as approving a payment, with a different binding
+// check: a change binds a TARGET and CALLDATA, and the only targets a Circle ever signs are its own
+// Safe and the verified Allowance Module.
+route('POST', '/v1/circles/:id/governance/:proposalId/approve', async ({ user, params, body, idempotencyKey }) => {
+  requireSig(body.signature, 'signature');
+  return withIdempotency(store, {
+    scope: 'circle-approve', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint(params.proposalId, body.signature)
+  }, () => circleService.approveGovernance({
+    circleId: params.id, proposalId: params.proposalId, prismId: user.prismId, signature: body.signature
+  }));
+}, true);
+// Governance execution: same live-authority / re-verified-signatures / simulate discipline as a
+// payment, with a chain readback of the change in place of a USDC Transfer.
+route('POST', '/v1/circles/:id/governance/:proposalId/execute', async ({ user, params, idempotencyKey }) =>
+  withIdempotency(store, {
+    scope: 'circle-governance-execute', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint('governance', params.proposalId)
+  }, () => circleService.executeGovernance({ circleId: params.id, proposalId: params.proposalId, actorPrismId: user.prismId })), true);
+route('GET', '/v1/circles/:id/governance/:proposalId', async ({ user, params }) =>
+  circleService.reconcileGovernance({ circleId: params.id, proposalId: params.proposalId, prismId: user.prismId }), true);
+
+// --- spending within a limit -------------------------------------------------
+// `preview` decides the route from live chain state: within the limit the member authorizes alone,
+// over it the payment becomes an ordinary threshold proposal. The over-limit answer is a fork, not
+// a dead end — it names the limit and offers the Circle.
+route('POST', '/v1/circles/:id/payments/preview', async ({ user, params, body }) =>
+  circleService.previewPayment({ circleId: params.id, actorPrismId: user.prismId, amountAtomic: body.amountAtomic }), true);
+route('POST', '/v1/circles/:id/spend/prepare', async ({ user, params, body }) => {
+  rateLimit(`circle-spend:${user.prismId}`, 60);
+  return circleService.prepareSpend({
+    circleId: params.id, actorPrismId: user.prismId, resolution: body.resolution,
+    amountAtomic: body.amountAtomic, memo: body.memo ?? ''
+  });
+}, true);
+route('POST', '/v1/circles/:id/spend/:spendId/submit', async ({ user, params, body, idempotencyKey }) => {
+  requireSig(body.signature, 'signature');
+  return withIdempotency(store, {
+    scope: 'circle-spend-submit', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint(params.spendId, body.signature)
+  }, () => circleService.submitSpend({ circleId: params.id, spendId: params.spendId, prismId: user.prismId, signature: body.signature }));
+}, true);
+route('GET', '/v1/circles/:id/spend', async ({ user, params }) => circleService.listSpends(params.id, user.prismId), true);
+route('GET', '/v1/circles/:id/spend/:spendId', async ({ user, params }) =>
+  circleService.reconcileSpend({ circleId: params.id, spendId: params.spendId, prismId: user.prismId }), true);
+
+route('POST', '/v1/circles/:id/payments/:proposalId/execute', async ({ user, params, idempotencyKey }) =>
+  withIdempotency(store, {
+    scope: 'circle-execute', key: idempotencyKey, actor: user.prismId,
+    fingerprint: fingerprint('execute', params.proposalId)
+  }, () => circleService.executePayment({ circleId: params.id, proposalId: params.proposalId, actorPrismId: user.prismId })), true);
+
 // --- infrastructure: Alchemy webhook, dev proof surface, observability -------
 
 // Alchemy webhook (fast live confirmation). Verified by HMAC; deduped; only ever triggers a chain
@@ -349,6 +584,18 @@ async function startupIntegrityChecks() {
     const domain = await verifyUsdcDomain();
     logger.info('integrity.usdcDomain', { ok: domain.ok });
     if (!domain.ok) throw new Error('USDC EIP-712 domain does not match on-chain DOMAIN_SEPARATOR');
+
+    // Circle spending limits: verify the Allowance Module against THIS chain, at boot, so the
+    // answer is known before anybody tries to spend. A failure is not fatal — Circles simply runs
+    // threshold-only, which is the shipped default — but it is always logged with its reason.
+    const limits = await circleService.limitsStatus();
+    logger.info('integrity.circleLimits', limits.enabled
+      ? { enabled: true, module: limits.module.address, version: limits.module.version }
+      : { enabled: false, reason: limits.reason });
+    if (config.circles.limitsEnabled && !limits.enabled) {
+      logger.error('circles.limits.refused', { reason: limits.reason });
+      if (config.nodeEnv === 'production') throw new Error(`CIRCLE_LIMITS_ENABLED is true but the module failed verification: ${limits.reason}`);
+    }
   } catch (e) {
     logger.error('integrity.failed', { error: e.message });
     if (config.nodeEnv === 'production') { console.error('fatal: integrity check failed'); process.exit(1); }

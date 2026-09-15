@@ -10,7 +10,17 @@ const EMPTY = {
   operations: {},
   trustedRecipients: {},
   rateLimits: {},
-  serviceKeys: {}
+  serviceKeys: {},
+  // Prism Circles. `circles` holds the human layer only — authority and balance are read from Monad
+  // (see src/circles/model.js CANONICAL_SOURCES). `circleSalts` maps a Circle's deterministic salt
+  // to its id, which is what makes a repeated creation request idempotent rather than a second Safe.
+  circles: {},
+  circleSalts: {},
+  circleMembers: {},
+  circleInvitations: {},
+  circleProposals: {},
+  circleApprovals: {},
+  circleContributions: {}
 };
 
 export class JsonStore {

@@ -14,6 +14,15 @@ final class AppModel: ObservableObject {
   @Published var presentPaymentDetails: PaymentDetailsPresentation?
   @Published var presentIdentityChange: IdentityChangeCandidate?
   @Published var presentClaimDetail: ClaimDetailPresentation?
+  /// Circles. Adding money and proposing a payment are separate sheets because they are separate
+  /// authorities: one needs only the contributor's own consent, the other needs the Circle's.
+  @Published var presentCircleAddMoney: CircleSummary?
+  @Published var presentCirclePay: CirclePayTarget?
+  @Published var presentCircleApproval: CircleApprovalPresentation?
+  /// The Circle being looked at. A full-screen place rather than a sheet, because a Circle is
+  /// somewhere a person stays — with its own members, settings and history to move between.
+  @Published var presentCircleDetail: CircleSummary?
+  @Published var presentCircleCreate = false
   @Published var presentRequestDetail: RequestDetailPresentation?
   @Published var sendPickerPresented = false
   @Published var requestPickerPresented = false
@@ -46,6 +55,8 @@ final class AppModel: ObservableObject {
       if arguments.contains("--uitest-save") { savePresented = true }
       if arguments.contains("--uitest-withdraw") { withdrawPresented = true }
       if arguments.contains("--uitest-save-details") { saveDetailsPresented = true }
+      if arguments.contains("--uitest-circles-tab") { selectedTab = .circles }
+      if arguments.contains("--uitest-circle-create") { selectedTab = .circles; presentCircleCreate = true }
       // Review-only: render the main shell without a real backend session (for screenshots of a
       // logged-in surface). Never used in a shipping build.
       if arguments.contains("--uitest-preview-home") {

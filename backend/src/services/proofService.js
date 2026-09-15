@@ -4,11 +4,17 @@ import { getReceipt } from '../chain/relay.js';
 import { chainProvider } from '../providers/index.js';
 import { envioIndexer } from '../indexers/index.js';
 import { decryptString, normalizeE164 } from '../lib/crypto.js';
+import { isCirclePaymentId, approvalPolicyLabel } from '../circles/circlePayment.js';
 
 const ZERO32 = `0x${'00'.repeat(32)}`;
 
 // Evidence statuses (iOS renders consumer labels from these).
 const PASS = 'pass', FAIL = 'fail', PENDING = 'pending', UNAVAILABLE = 'unavailable', NOT_CONFIGURED = 'not_configured', UNKNOWN = 'unknown';
+// Two statuses that exist so a reader is never misled about what a source can establish.
+// `not_applicable`: this evidence pipeline does not cover this kind of transaction at all (a Safe
+// transfer is not a router `PaymentSettled` event, so Envio has no row to be missing).
+// `coordination`: this source helped the transaction happen and proves nothing about whether it did.
+const NOT_APPLICABLE = 'not_applicable', COORDINATION = 'coordination';
 
 /**
  * The canonical Payment Proof surface. Its purpose is to make Prism's invisible architecture
@@ -22,9 +28,11 @@ const PASS = 'pass', FAIL = 'fail', PENDING = 'pending', UNAVAILABLE = 'unavaila
  * check has actually proven it, and "Unknown" otherwise.
  */
 export class ProofService {
-  constructor({ paymentService, identityService, config: cfg = config }) {
+  constructor({ paymentService, identityService, circleService = null, config: cfg = config }) {
     this.paymentService = paymentService;
     this.identityService = identityService;
+    // Optional: a deployment without Circles simply has no shared-account proofs to build.
+    this.circles = circleService;
     this.config = cfg;
   }
 
@@ -57,6 +65,10 @@ export class ProofService {
   // ---- canonical proof (/v1/payments/:id/proof) ----------------------------
 
   async canonical(operationId, actorPrismId) {
+    // One proof endpoint for every Prism payment. A Circle payment's id addresses a record Circles
+    // owns rather than an operation, so it is assembled from Circle evidence — but it comes back in
+    // the same shape, because a person inspecting a payment should not have to know which kind it is.
+    if (this.circles && isCirclePaymentId(operationId)) return this._canonicalCircle(operationId, actorPrismId);
     const op = await this.paymentService.proofOperation(operationId, actorPrismId);
     const ctx = this._context(op);
 
@@ -187,6 +199,8 @@ export class ProofService {
 
   // The exact argument values that go into the allowlisted contract call for this operation.
   _calldataFields(op, ctx) {
+    // A Circle payment's fields are the Safe transaction's, handed over by CircleService.
+    if (ctx.calldataFields) return ctx.calldataFields;
     if (op.kind === 'payment' && op.env) {
       const e = op.env;
       return [
@@ -399,7 +413,248 @@ export class ProofService {
     }
     return items.map(it => ({ ...it, level }));
   }
+
+  // ---- shared-account (Circle) proof ---------------------------------------
+  //
+  // Same surface, same vocabulary, one extra section. What changes for a Circle is not the standard
+  // of evidence but *where the evidence comes from*, and the split is deliberate:
+  //
+  //   proposal / signature coordination   Safe Transaction Service   — coordination, NEVER execution
+  //   owners / threshold                  the Safe contract
+  //   USDC balance                        the USDC contract on Monad
+  //   the payment itself                  the Monad receipt + the USDC Transfer log inside it
+  //   the human recipient                 Prism resolution
+  //   indexing                            the existing Prism evidence pipeline
+  //
+  // Nothing below reports the Transaction Service as proof that anything happened. It is listed as
+  // an evidence item with an explicit `coordination` status so a reader can see that the distinction
+  // was made rather than having to trust that it was.
+
+  async _canonicalCircle(paymentId, actorPrismId) {
+    const bundle = await this.circles.evidenceFor(paymentId, actorPrismId);
+    if (!bundle) throw notFoundError('payment not found');
+
+    // A contribution settles through the ordinary Prism router, so its proof IS the ordinary payment
+    // proof — assembled from the same operation, with the Circle section added. Building a second
+    // one would be exactly the duplicate evidence path this design refuses.
+    if (bundle.underlyingOperationId) {
+      const base = await this.canonical(bundle.underlyingOperationId, null);
+      return { ...base, paymentId, kind: 'circle-contribution', circle: this._circleSection(bundle), demo: false };
+    }
+
+    const op = bundle.operation;
+    const ctx = this._circleContext(bundle);
+    const receipt = bundle.receipt;
+    const evidence = bundle.evidence ?? null;
+
+    const privacy = this._privacy(op, ctx, receipt);
+    const verification = this._circleVerification(bundle, receipt, evidence);
+    const gas = this._gas(op, receipt, null);
+    const settlement = this._settlement(op, receipt, op.transactionHash ?? null);
+    const circle = this._circleSection(bundle);
+
+    const receiptOk = verification.monadReceipt === PASS;
+    const clean = privacy.calldataCheck === PASS && privacy.sensitiveOnchain === 'no';
+    const independent = [verification.safeExecution, verification.usdcTransfer, verification.balanceReadback].includes(PASS);
+    const proofStatus = op.state === 'failed' ? 'unknown'
+      : op.state !== 'completed' ? 'pending'
+      : (receiptOk && clean && independent) ? 'verified'
+      : (receiptOk || clean) ? 'partially_verified' : 'unknown';
+    const level = op.state === 'completed' && op.transactionHash && receiptOk ? (independent ? 'E3' : 'E2') : 'E0';
+
+    return {
+      paymentId,
+      kind: op.kind,
+      direction: 'sent',
+      amountAtomic: ctx.amountAtomic,
+      tokenSymbol: 'USDC',
+      proofStatus,
+      evidenceLevel: level,
+      demo: false,
+      recipient: this._recipient(op, ctx),
+      // The block that makes a shared payment inspectable: which Circle, which shared account, what
+      // authority, which policy, who proposed, who approved, and the Safe digest they signed.
+      circle,
+      privacy,
+      authorization: {
+        method: bundle.policy === 'SPENDING_LIMIT' ? 'Mera passkey (within an on-chain spending limit)' : 'Mera passkey (Safe owner signature)',
+        localApproval: null,
+        otpForSpending: 'no'
+      },
+      gas,
+      settlement,
+      verification,
+      request: null,
+      claim: null,
+      evidence: this._circleEvidenceItems({ bundle, privacy, verification, gas, settlement, level, circle }),
+      generatedAt: new Date().toISOString()
+    };
+  }
+
+  /** The proof context for a Circle payment: the Circle is the payer, a Prism identity is the payee. */
+  _circleContext(bundle) {
+    const recipientIdentity = bundle.recipientPrismId ? this.paymentService.identity(bundle.recipientPrismId) : null;
+    const proposerIdentity = bundle.proposerPrismId ? this.paymentService.identity(bundle.proposerPrismId) : null;
+    return {
+      intent: bundle.operation.intent ?? {},
+      // Both people whose identifiers must never appear on-chain: the person being paid, and the
+      // member who moved the money. The detector searches for both.
+      senderIdentity: proposerIdentity,
+      recipientIdentity,
+      claim: null,
+      senderAddress: bundle.circle.safeAddress ?? null,
+      recipientAddress: bundle.operation.intent?.circle?.restricted
+        ? (recipientIdentity?.accountAddress ?? null)
+        : (bundle.view?.recipientAccount ?? recipientIdentity?.accountAddress ?? null),
+      direction: 'sent',
+      amountAtomic: bundle.operation.intent?.amountAtomic ?? null,
+      // The exact values inside the Safe transaction, handed over by CircleService — this service
+      // does not know Safe encoding and must not learn it.
+      calldataFields: bundle.calldataFields ?? []
+    };
+  }
+
+  /** The Circle section of the proof. Every figure is a read, and an unread figure stays null. */
+  _circleSection(bundle) {
+    const context = bundle.operation.intent?.circle ?? {};
+    const authority = bundle.authority;
+    const view = bundle.view ?? {};
+    const address = bundle.circle.safeAddress ?? null;
+    return {
+      circleId: bundle.circle.circleId,
+      name: bundle.circle.name,
+      sharedAccount: address ? { address, abbreviated: abbreviate(address) } : null,
+      asset: 'USDC',
+      token: this.config.chain.usdc,
+      // "Shared" for a threshold payment, "Delegated" for a limit spend, "Personal" for money in.
+      authority: context.authority ?? null,
+      // Read from the Safe, not from Prism's mirror: "2 of 3 admins" is only claimed when the owner
+      // set and threshold were actually read at proof time.
+      policy: authority ? approvalPolicyLabel({ requiredApprovals: authority.threshold, adminCount: authority.adminCount }) : (context.policy ?? null),
+      policySource: authority ? 'safe contract' : 'unavailable',
+      owners: authority?.owners ?? null,
+      threshold: authority?.threshold ?? null,
+      proposer: context.proposer ?? null,
+      approvals: context.approvers ?? [],
+      approvalsSource: view.approvalsSource ?? null,
+      requiredApprovals: context.requiredApprovals ?? null,
+      safeTxHash: context.safeTxHash ?? null,
+      safeNonce: context.safeNonce ?? null,
+      binding: bundle.binding ?? null,
+      spendingLimit: context.spendingLimitReference ?? null,
+      allowance: bundle.allowance ? {
+        limitAtomic: bundle.allowance.amountAtomic,
+        spentAtomic: bundle.allowance.spentAtomic,
+        availableAtomic: bundle.allowance.availableAtomic,
+        period: bundle.allowance.period,
+        source: 'allowance module'
+      } : null,
+      balance: {
+        before: bundle.balanceBefore ?? null,
+        after: bundle.balanceAfter ?? null,
+        current: bundle.balance ?? null,
+        // Every one of these came from `USDC.balanceOf(safe)`; none is derived from Prism's activity.
+        source: 'usdc contract'
+      },
+      transfer: bundle.evidence?.transfer ?? null,
+      restricted: Boolean(context.restricted)
+    };
+  }
+
+  /** What was independently established for a Circle payment, and by whom. */
+  _circleVerification(bundle, receipt, evidence) {
+    const txHash = bundle.operation.transactionHash ?? null;
+    const monadReceipt = receipt ? (receiptSucceeded(receipt) ? PASS : FAIL) : (txHash ? PENDING : UNKNOWN);
+    const blockConfirmation = evidence?.blockNumber || receipt?.blockNumber ? PASS : (txHash ? PENDING : UNKNOWN);
+
+    // The Safe's own ExecutionSuccess for THIS digest. A successful receipt is not this claim: Safe
+    // swallows a failing inner call and still returns a successful transaction.
+    const safeExecution = bundle.policy === 'SPENDING_LIMIT'
+      ? (evidence?.transfer ? PASS : (txHash ? PENDING : UNKNOWN))
+      : (evidence?.safeExecutionSuccess ? PASS : (txHash ? PENDING : UNKNOWN));
+
+    // The USDC Transfer from this Circle to the reviewed recipient, for the exact amount.
+    const usdcTransfer = evidence?.transfer ? PASS : (txHash ? PENDING : UNKNOWN);
+
+    const ownersReadback = bundle.authority ? PASS : UNAVAILABLE;
+    const thresholdReadback = bundle.authority ? PASS : UNAVAILABLE;
+    const balanceReadback = bundle.balance != null ? PASS : UNAVAILABLE;
+    const allowanceReadback = bundle.policy === 'SPENDING_LIMIT' ? (bundle.allowance ? PASS : UNAVAILABLE) : UNKNOWN;
+
+    return {
+      monadReceipt,
+      blockConfirmation,
+      safeExecution,
+      usdcTransfer,
+      ownersReadback,
+      thresholdReadback,
+      balanceReadback,
+      allowanceReadback,
+      alchemyReadback: balanceReadback,
+      alchemyProvider: chainProvider().name,
+      // A Safe transfer is not a `PaymentSettled` event, so Prism's Envio index does not carry it.
+      // Saying "not indexed" would imply a missing row; the honest answer is that this evidence
+      // pipeline does not cover this transaction.
+      envioIndex: NOT_APPLICABLE,
+      balanceDelta: bundle.balanceBefore != null && bundle.balanceAfter != null ? PASS : UNAVAILABLE
+    };
+  }
+
+  _circleEvidenceItems({ bundle, privacy, verification, gas, settlement, level, circle }) {
+    const now = new Date().toISOString();
+    const items = [];
+    const add = (type, status, source, reference, detail) =>
+      items.push({ id: `${type}:${bundle.operation.operationId}`, type, status, source, observedAt: now, reference, detail, level });
+
+    add('transactionReceipt', verification.monadReceipt, 'monad', settlement.txHash, 'the execution transaction on Monad');
+    add('blockConfirmation', verification.blockConfirmation, 'monad', settlement.blockNumber, 'mined block');
+    if (bundle.policy === 'THRESHOLD') {
+      add('safeExecutionSuccess', verification.safeExecution, 'safe contract', circle.safeTxHash,
+        'the Safe emitted ExecutionSuccess for this exact transaction digest');
+      add('ownerSignatures', circle.approvals.length >= (circle.requiredApprovals ?? Infinity) ? PASS : PENDING,
+        'signatures', circle.safeTxHash,
+        `${circle.approvals.length} of ${circle.requiredApprovals ?? '?'} verified against the live owner set`);
+      // Named so the distinction is visible in the evidence list itself, not only in a document.
+      add('proposalCoordination', COORDINATION, 'safe transaction service', circle.safeTxHash,
+        'used to share the proposal and collect signatures; never treated as evidence of execution');
+    } else {
+      add('allowanceTransfer', verification.safeExecution, 'allowance module', settlement.txHash,
+        'the module executed a transfer inside this member\'s approved limit');
+      add('allowanceReadback', verification.allowanceReadback, 'allowance module', circle.spendingLimit?.delegate ?? null,
+        'the limit and the amount spent, read back from the module');
+    }
+    add('usdcTransfer', verification.usdcTransfer, 'usdc contract', settlement.txHash,
+      bundle.evidence?.transfer
+        ? `Transfer ${bundle.evidence.transfer.amountAtomic} atomic from the Circle to the reviewed recipient`
+        : 'no matching USDC Transfer observed yet');
+    add('ownersReadback', verification.ownersReadback, 'safe contract', circle.sharedAccount?.address ?? null,
+      circle.owners ? `${circle.owners.length} admin${circle.owners.length === 1 ? '' : 's'} on-chain` : 'the Safe could not be read');
+    add('thresholdReadback', verification.thresholdReadback, 'safe contract', circle.sharedAccount?.address ?? null,
+      circle.threshold != null ? `${circle.threshold} approvals required on-chain` : 'the Safe could not be read');
+    add('balanceReadback', verification.balanceReadback, 'usdc contract', circle.sharedAccount?.address ?? null,
+      'the Circle balance, read from the token contract');
+    add('resolutionAttestation', bundle.operation.intent?.resolutionRequestId ? PASS : UNKNOWN, 'resolver',
+      bundle.operation.intent?.resolutionRequestId ?? null,
+      `alias version ${bundle.operation.intent?.aliasVersion ?? '?'} · resolved privately, no phone in the attestation`);
+    add('privacyCalldataCheck', privacy.calldataCheck, 'prism', null,
+      `${privacy.detail.calldataFieldsScanned} Safe transaction fields vs ${privacy.detail.prohibitedValueCount} prohibited values`);
+    add('privacyEventCheck', privacy.eventCheck, bundle.receipt ? 'chain-logs' : 'unavailable', null,
+      privacy.eventCheck === UNKNOWN ? 'no on-chain logs available to scan' : `${privacy.detail.eventFieldsScanned} event fields scanned`);
+    add('approvalBinding', bundle.binding?.ok ? PASS : FAIL, 'prism', circle.safeTxHash,
+      bundle.binding?.ok
+        ? 'the recorded digest is the digest of these exact fields'
+        : (bundle.binding?.reasons ?? []).join('; '));
+    add('gasSponsorship', gas.sponsored, 'monad', gas.sponsoredBy, 'the relayer paid the MON for this transaction');
+    return items;
+  }
 }
+
+function abbreviate(address) {
+  const a = String(address ?? '');
+  return a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
+}
+
+function notFoundError(message) { const e = new Error(message); e.statusCode = 404; return e; }
 
 function field(pairs) { return pairs.map(([name, value]) => ({ name, value })); }
 function str(v) { return v == null ? null : v.toString(); }

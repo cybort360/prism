@@ -44,3 +44,10 @@ Consumer fintech, not a blockchain explorer:
 
 The technical evidence lives one tap deeper in **Payment Proof** — see
 [PAYMENT_PROOF.md](PAYMENT_PROOF.md).
+
+## Shared accounts
+
+A payment out of a Circle is not a different object and does not get a different screen. It is the
+same `PrismPayment` carrying a `circle` block, and it opens this same `PaymentDetailsView` with one
+extra section — paid from which Circle, requested by whom, approved by whom, under which rule. See
+[CIRCLE_RECEIPTS.md](CIRCLE_RECEIPTS.md).

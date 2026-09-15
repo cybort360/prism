@@ -37,6 +37,54 @@ Blocked on external keys/funds; nothing here is a code defect.
 - [ ] Point the proof surface (`GET /v1/proof/:id`, `GET /v1/metrics`) at the live deployment for the
       judge demo.
 
+## Prism Circles — open decisions (domain, persistence, creation and money movement built)
+
+Phases 0-3 of the architecture proof are complete and green (`docs/CIRCLES_ARCHITECTURE_PROOF.md`,
+`docs/CIRCLES_DEPENDENCY_AUDIT.md`). The canonical domain model, persistence, Safe integration layer,
+Circle creation and now the money movement are built on top of it — `docs/CIRCLES_ARCHITECTURE.md`,
+`docs/CIRCLES_AUTHORITY_MODEL.md` and `docs/CIRCLE_PAYMENTS.md`. What is still missing is the
+**Circle list/detail/creation UI**: the three money screens exist (`ios/Prism/Features/Circles/`) but
+nothing navigates to them yet, and they have not been compiled.
+
+- [x] **Circle payments — DONE (2026-09-13).** Contributions in (reusing the existing
+      PaymentEnvelope + ERC-3009 + router + relayer path, no contribution vault) and
+      threshold-governed payments out (propose → approve → simulate → execute → reconcile), with
+      recipient identity from the Protected Alias Resolver and mutation security on the six fields a
+      Safe signature covers. `docs/CIRCLE_PAYMENTS.md`; backend 269/269, contracts 51/51.
+      **iOS is written but uncompiled** — see "Prism Circles — remaining work" below.
+
+- [x] **Admin identity — DECIDED (2026-09-13).** A Circle admin's Safe owner is their existing Mera
+      passkey-derived secp256k1 address. No new credential, no per-admin contract, no EIP-1271.
+      `PrismP256SafeOwner` stays as proof the P-256 path is available but is not on the shipping path.
+- [ ] **Threshold / "spare" guardrail — FOUNDER DECISION, needed before Circle creation ships.**
+      Spare = `admins - threshold` = how many admins a Circle can lose and still move money. At
+      spare = 0 (2-of-2, 3-of-3) one lost phone freezes the funds **permanently**: adding, removing
+      or re-thresholding an owner each need the signature that was lost, so there is no repair path
+      and no support override. Cheap to prevent at creation, impossible to fix afterwards. Open
+      question for the founders: forbid spare = 0 outright, warn loudly, or allow it behind an
+      explicit acknowledgement. Also decide how to handle admins who are not independent (two
+      devices owned by one person, or by one household) — spare > 0 does not by itself mean the
+      approvals are independent.
+- [ ] **Full recovery strategy — BACKLOG.** Social recovery, a Prism-held backup owner, time-locked
+      escape hatches. Safe already supplies the mechanism (`addOwnerWithThreshold`, `removeOwner`,
+      `swapOwner` as ordinary threshold-approved Circle transactions), so this is product design,
+      not contract work. Must land before real money sits in Circles.
+- [~] **Circle spending limits — BUILT, gated OFF (2026-09-13).** The whole feature exists and is
+      tested: governance-approved limits, on-chain allowance truth, fresh-read authorization,
+      over-limit routing to a threshold proposal, revoke. It is **off** because no Allowance Module
+      >= v1.0.0 is deployed on Monad (v1.0.0 lives on Optimism/Gnosis; only the vulnerable v0.1.1 is
+      on Monad, and the official package hands it out by default). `CIRCLE_LIMITS_ENABLED=false`.
+      `docs/CIRCLE_SPENDING_LIMITS.md`, `docs/CIRCLE_MODULE_SECURITY.md`.
+      To turn on: `make gate-allowance`, then either wait for Safe to deploy v1.0.0 to Monad or run
+      `contracts/script/DeployAllowanceModuleV1.s.sol` (deploys Safe's exact canonical runtime —
+      **needs a funded key; not broadcast**), then re-run the gate and set the two env vars.
+      Note for whoever does: a `SPENDER` with a limit CAN move money alone up to it, which is a
+      change from today's "proposal rights only". Founders should confirm that before it ships.
+- [ ] **Live Circle Safe on Monad testnet.** All Circles proofs run against a testnet *fork*; no
+      Circle Safe has been broadcast to live Monad (same funded-key constraint as the rest of P2).
+- [ ] **Verify Safe v1.4.1 on Monad mainnet (chainId 143).** Safe lists the same addresses; their
+      codehashes have not been checked on mainnet yet.
+
 ## Deferred (do when going to real deployment, not for the demo)
 - [ ] **F-06 — transactional persistence.** Replace `JsonStore` with a transactional store
       (SQLite/Postgres) for operations, idempotency, claims, sessions/challenges, webhook dedupe,
@@ -46,6 +94,63 @@ Blocked on external keys/funds; nothing here is a code defect.
       demo-visible effect and high regression cost. Pair this with the P2 deployment.
 - [ ] **F-09 — Alchemy Gas Manager** sponsorship (currently MON-funded relayer only). Optional; the
       relayer path already gives users MON = 0.
+
+## Prism Circles — remaining work
+
+- [~] **Compile and run the iOS Circle code — PARTLY DONE (2026-09-14).** A Linux Swift 6.0.3
+      toolchain now parses all 98 iOS sources, typechecks the Foundation-only model/display layer and
+      **runs 144 XCTest cases, 0 failures** (`make test-ios-linux`, `scripts/verify/swift-linux-check.sh`)
+      — including `CircleReceiptTests`, `CircleApprovalWireTests` and `CircleSafeTxHashTests`. It found
+      one real defect (`CirclePendingInboxResponse` declared `Codable` with a `Decodable`-only member),
+      now fixed. What remains needs macOS: the SwiftUI views, the Combine coordinators, the keychain
+      and the Mera bridge are parse-verified only.
+- [ ] **Compile and run the iOS Circle code on macOS (the remainder).** Now the whole Circles feature folder plus
+      `PrismCircleModels`, `SafeTypedData`, `CircleGovernancePayload`, `AllowanceTransferHash`,
+      `PrismAPI+Circles`, `CircleCoordinator`, `CirclesHomeSection`, `CircleCreateView`/`CircleDraft`,
+      `CircleDetailView`/`CircleDetailModel`, `CircleMemberView`, `CircleInviteView`,
+      `CircleSettingsView`, `CircleGovernanceApprovalView`, `CircleStates`, `CircleVocabulary`, and
+      the tests `CircleApprovalWireTests` + `CircleProductTests`. All written on Linux, where there
+      is no Swift toolchain. `make test-ios` needs macOS and has not been run against any of it.
+      Expect the first pass to be ordinary compile fixes; the logic is covered by
+      `CircleProductTests` once it can run.
+- [x] **Circle list / detail / creation UI — BUILT (2026-09-13), uncompiled.** Circles live on Home
+      (no fifth tab); creation is a six-step flow ending in a plain "who can move this money"
+      statement; the detail is a full-screen place with approvals, a merged activity feed, members,
+      invites and settings. `docs/CIRCLES_PRODUCT.md`. Closing it also closed a real backend gap —
+      `OWNER_ADD` / `OWNER_REMOVE` / `THRESHOLD_CHANGE` could be prepared but never approved or
+      applied (no approve route, no readback), so Settings would have been a dead end. Backend
+      306/306. **The iOS half is UNTESTED** — see the item above.
+- [ ] **A live Circle on Monad — the one remaining YELLOW that matters.** The full scenario
+      (Octane/Tobi/Jayson/Sarah, 2-of-3, $500 in, a $120 payment, closure) passes as a rehearsal in
+      `backend/test/circles-e2e-scenario.test.js`, and the Safe half is proven against real Safe
+      v1.4.1 bytecode on a Monad fork. Running it live needs a funded testnet key — `RELAYER_PRIVATE_KEY`
+      is empty in this checkout, and every Circle transaction is relayer-paid. See
+      `forge/CIRCLES_MATRIX.md` row 21.
+- [ ] **A live Circle receipt and proof on Monad.** The canonical Circle payment, receipt, activity
+      feed and Payment Proof (`docs/CIRCLE_RECEIPTS.md`, `docs/CIRCLE_PROOF.md`) are proven against
+      the in-memory Safe only. The ten evidence proofs each compare a number Prism shows against the
+      chain's own state, but that chain is the harness.
+- [ ] **A live Circle payment on Monad testnet.** The payment suite runs against an in-memory Safe
+      that enforces Safe's real `execTransaction` rules; no Circle payment has been broadcast to live
+      Monad (same funded-key constraint as the rest of P2).
+- [ ] **Deploy Allowance Module v1.0.0 to Monad, or wait for Safe to.** Blocked on a funded key, the
+      same constraint as the rest of P2. `DeployAllowanceModuleV1.s.sol` is written and verified in
+      simulation; it deploys the canonical runtime verbatim so the result is byte-identical to
+      Safe's own deployment. Until then Circles is threshold-only and the gate enforces it.
+- [ ] **Circle send-before-signup — DEFERRED, revisit only with a vault change.** Audited in
+      `contracts/test/PrismClaimVaultCircleCompat.t.sol` and recorded in `docs/CIRCLE_PAYMENTS.md`
+      §7: the ClaimVault funds exclusively through an ERC-3009 `ecrecover` authorization a Safe
+      cannot produce, and has no allowance path to pull from. Supporting it means a new funding
+      entry point on a deployed, audited vault — a decision, not a task.
+
+- [x] **Closing a Circle, and withdrawing what's left — BUILT (2026-09-13), backend verified.**
+      `ACTIVE → CLOSING → CLOSED`, with the consent question answered by refusing to answer it:
+      Prism proposes no distribution at all. A Circle holding money cannot be closed — it can only be
+      emptied first, by the threshold-approved payments it already has, to recipients its members
+      choose. The other requirements (no unresolved proposals, no live spending delegates, the Safe
+      readable) are live reads, and a read that fails is itself a blocker. Nothing is deleted:
+      `closing.evidence` records what the Circle was at the moment it ended. `docs/CIRCLE_LIFECYCLE.md`
+      §6; `circles-closing.test.js` 8/8. The iOS half (`CircleCloseView`) is UNTESTED — see above.
 
 ## Nice-to-have / polish
 - [ ] UI test for claim sibling visibility (audit Test F): eligible = [C1,C2,C3], claim C1, assert

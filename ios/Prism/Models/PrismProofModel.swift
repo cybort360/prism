@@ -18,6 +18,8 @@ struct PrismPaymentProof: Codable {
   var evidenceLevel: String = "E0"
   var demo: Bool = false
   var recipient: Recipient = .init()
+  /// Present only when the money came out of (or went into) a shared account.
+  var circle: CircleProof? = nil
   var privacy: Privacy = .init()
   var authorization: Authorization = .init()
   var gas: Gas = .init()
@@ -35,6 +37,58 @@ struct PrismPaymentProof: Codable {
     var resolutionReference: String? = nil
     var resolutionVersion: Int? = nil
   }
+  /// The shared-account section: which Circle, which Safe, what authority, which policy, who
+  /// proposed, who approved, and the digest they signed.
+  ///
+  /// Every field is optional for the same reason the rest of this surface is honest about absence:
+  /// an owner set that could not be read yields a nil `policy`, never a plausible one.
+  struct CircleProof: Codable {
+    var circleId: String? = nil
+    var name: String? = nil
+    var sharedAccount: SharedAccount? = nil
+    var asset: String? = "USDC"
+    /// "Shared" (approved together) · "Delegated" (inside one member's limit) · "Personal".
+    var authority: String? = nil
+    /// "2 of 3 admins", read from the Safe at proof time.
+    var policy: String? = nil
+    var policySource: String? = nil
+    var owners: [String]? = nil
+    var threshold: Int? = nil
+    var proposer: PrismCircleParty? = nil
+    var approvals: [PrismCircleApprover] = []
+    var approvalsSource: String? = nil
+    var requiredApprovals: Int? = nil
+    var safeTxHash: String? = nil
+    var safeNonce: String? = nil
+    var spendingLimit: PrismSpendingLimitReference? = nil
+    var allowance: Allowance? = nil
+    var balance: Balance = .init()
+    var transfer: Transfer? = nil
+    var restricted: Bool? = nil
+
+    struct SharedAccount: Codable { var address: String? = nil; var abbreviated: String? = nil }
+    struct Allowance: Codable {
+      var limitAtomic: String? = nil
+      var spentAtomic: String? = nil
+      var availableAtomic: String? = nil
+      var period: String? = nil
+      var source: String? = nil
+    }
+    struct Balance: Codable {
+      var before: String? = nil
+      var after: String? = nil
+      var current: String? = nil
+      /// Always the token contract — a Circle balance is never a number Prism kept.
+      var source: String? = nil
+    }
+    struct Transfer: Codable {
+      var from: String? = nil
+      var to: String? = nil
+      var amountAtomic: String? = nil
+      var token: String? = nil
+    }
+  }
+
   struct Privacy: Codable {
     var calldataCheck: String = "unknown"
     var eventCheck: String = "unknown"
@@ -74,6 +128,16 @@ struct PrismPaymentProof: Codable {
     var alchemyProvider: String? = nil
     var envioIndex: String = "unknown"
     var balanceDelta: String = "unknown"
+    // --- shared accounts. Each is a separate claim with a separate source, and none of them is the
+    // Safe Transaction Service: that service coordinates signatures and proves nothing happened.
+    /// The Safe's own ExecutionSuccess for this digest (a successful transaction is not this claim).
+    var safeExecution: String? = nil
+    /// A USDC Transfer from the Circle to the reviewed recipient, for the exact amount.
+    var usdcTransfer: String? = nil
+    var ownersReadback: String? = nil
+    var thresholdReadback: String? = nil
+    var balanceReadback: String? = nil
+    var allowanceReadback: String? = nil
   }
   struct RequestBinding: Codable {
     var requestId: String? = nil
@@ -107,6 +171,7 @@ extension PrismPaymentProof {
       evidenceLevel: try c.decodeIfPresent(String.self, forKey: .evidenceLevel) ?? "E0",
       demo: try c.decodeIfPresent(Bool.self, forKey: .demo) ?? false,
       recipient: try c.decodeIfPresent(Recipient.self, forKey: .recipient) ?? .init(),
+      circle: try c.decodeIfPresent(CircleProof.self, forKey: .circle),
       privacy: try c.decodeIfPresent(Privacy.self, forKey: .privacy) ?? .init(),
       authorization: try c.decodeIfPresent(Authorization.self, forKey: .authorization) ?? .init(),
       gas: try c.decodeIfPresent(Gas.self, forKey: .gas) ?? .init(),
@@ -183,7 +248,15 @@ extension PrismPaymentProof.Verification {
       monadReceipt: try s(.monadReceipt), blockConfirmation: try s(.blockConfirmation),
       alchemyReadback: try s(.alchemyReadback),
       alchemyProvider: try c.decodeIfPresent(String.self, forKey: .alchemyProvider),
-      envioIndex: try s(.envioIndex), balanceDelta: try s(.balanceDelta))
+      envioIndex: try s(.envioIndex), balanceDelta: try s(.balanceDelta),
+      // Absent on a personal payment, and absent stays nil: a shared-account check that was never
+      // run must not render as "unknown" next to one that was.
+      safeExecution: try c.decodeIfPresent(String.self, forKey: .safeExecution),
+      usdcTransfer: try c.decodeIfPresent(String.self, forKey: .usdcTransfer),
+      ownersReadback: try c.decodeIfPresent(String.self, forKey: .ownersReadback),
+      thresholdReadback: try c.decodeIfPresent(String.self, forKey: .thresholdReadback),
+      balanceReadback: try c.decodeIfPresent(String.self, forKey: .balanceReadback),
+      allowanceReadback: try c.decodeIfPresent(String.self, forKey: .allowanceReadback))
   }
 }
 extension PrismPaymentProof.RequestBinding {

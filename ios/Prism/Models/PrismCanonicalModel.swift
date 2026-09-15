@@ -9,6 +9,10 @@ enum PrismPaymentKind: String, Codable {
   /// USDC on Monad routed out to another chain and asset. The Monad leg is an ordinary settlement;
   /// what makes it a different kind is that delivery happens off this chain.
   case crossChainSend
+  /// Money out of a shared account under its approval threshold, money out inside one member's
+  /// on-chain spending limit, and money into a shared account. All three are ordinary PrismPayments
+  /// — the kind says which authority released the money, and `circle` says which account it was.
+  case circlePayment, circleSpend, circleContribution
 
   init(from decoder: Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
@@ -19,6 +23,9 @@ enum PrismPaymentKind: String, Codable {
 enum PrismEntryMethod: String, Codable {
   case contact, phone, handle, qr, paymentLink, request, claim, internalRecovery
   case anyChain
+  /// Reached through a Circle: the recipient still came from the Protected Alias Resolver, but the
+  /// account the money left was a shared one.
+  case circle
 
   init(from decoder: Decoder) throws {
     let raw = try decoder.singleValueContainer().decode(String.self)
@@ -87,6 +94,79 @@ struct PrismRouteSummary: Codable, Equatable {
   let destinationDecimals: Int?
 }
 
+/// Which Circle a payment came out of (or went into), and what authority released it.
+///
+/// Present only on a Circle payment; nil means an ordinary personal one. Every field is optional
+/// because the surfaces that read it must never imply a fact they were not given: an unreadable
+/// owner set yields a nil `policy`, not a plausible one, and a payee who is not a member of the
+/// Circle gets `restricted == true` with the governance fields stripped.
+struct PrismCircleContext: Codable, Equatable {
+  let circleId: String
+  let circleName: String
+  var circleIcon: String? = nil
+  var circleSafeAddress: String? = nil
+  var chainId: String? = nil
+  /// "in" when money entered the Circle, "out" when it left.
+  var flow: String? = nil
+  /// The Circle payment lifecycle in full, alongside — never instead of — `lifecycleState`.
+  var state: String? = nil
+  /// THRESHOLD · SPENDING_LIMIT · CONTRIBUTION
+  var approvalPolicy: String? = nil
+  /// "Shared" · "Delegated" · "Personal"
+  var authority: String? = nil
+  /// "2 approvals" — the rule as a receipt states it.
+  var approvalRule: String? = nil
+  /// "2 of 3 admins" — the rule as the proof states it, read from the Safe.
+  var policy: String? = nil
+  var requiredApprovals: Int? = nil
+  var approvers: [PrismCircleApprover] = []
+  var proposer: PrismCircleParty? = nil
+  var proposalId: String? = nil
+  var contributionId: String? = nil
+  var safeTxHash: String? = nil
+  var safeNonce: String? = nil
+  var spendingLimitReference: PrismSpendingLimitReference? = nil
+  /// True when the viewer is the payee rather than a member: they see which Circle paid them and
+  /// nothing about how it governs itself.
+  var restricted: Bool? = nil
+
+  var isIncoming: Bool { flow == "in" }
+  var isThreshold: Bool { approvalPolicy == "THRESHOLD" }
+  var isWithinLimit: Bool { approvalPolicy == "SPENDING_LIMIT" }
+}
+
+struct PrismCircleParty: Codable, Equatable {
+  let prismId: String?
+  let displayName: String
+  var handle: String? = nil
+  var authorityAddress: String? = nil
+}
+
+struct PrismCircleApprover: Codable, Equatable, Identifiable {
+  var id: String { authorityAddress ?? prismId ?? displayName }
+  var prismId: String? = nil
+  let displayName: String
+  var handle: String? = nil
+  var authorityAddress: String? = nil
+  var signatureType: String? = nil
+  /// Only ever "verified": an approval reaches this list because a signature verified against the
+  /// Safe digest and a current owner, or because the Safe itself accepted it at execution.
+  var status: String? = nil
+}
+
+/// The on-chain allowance a within-limit spend was authorized against, as it stood at signing.
+struct PrismSpendingLimitReference: Codable, Equatable {
+  var module: String? = nil
+  var delegate: String? = nil
+  var period: String? = nil
+  var periodLabel: String? = nil
+  var limitAtomic: String? = nil
+  var availableAtSigningAtomic: String? = nil
+  var allowanceNonce: Int? = nil
+  var summary: String? = nil
+  var source: String? = nil
+}
+
 struct PrismPayment: Codable, Identifiable, Equatable {
   var id: String { paymentId }
   let paymentId: String
@@ -118,6 +198,13 @@ struct PrismPayment: Codable, Identifiable, Equatable {
   let failureMessage: String?
   /// Present only on a cross-chain send. Optional, so an older backend simply yields nil.
   let route: PrismRouteSummary?
+  /// "personal" or "circle". Absent context means personal, always.
+  var sourceType: String? = nil
+  /// Present only on a Circle payment. `var` with a default so the memberwise initializer keeps
+  /// working for every personal-payment call site.
+  var circle: PrismCircleContext? = nil
+
+  var isCircle: Bool { circle != nil }
 
   /// A receipt must never claim settled merely because it was submitted.
   var isSettled: Bool { lifecycleState.isSettled && completedAt != nil }
@@ -146,6 +233,9 @@ struct PrismReceipt: Codable, Identifiable, Equatable {
   let settledAt: String?
   let requestId: String?
   let claimId: String?
+  var sourceType: String? = nil
+  /// Paid from which Circle, requested by whom, approved by whom, under which rule.
+  var circle: PrismCircleContext? = nil
 
   var isSettled: Bool { finalStatus.isSettled && settledAt != nil }
   var dollars: String { amountAtomic.map { Money.dollars(fromAtomic: $0) } ?? "$0.00" }
@@ -238,6 +328,37 @@ extension PrismRouteSummary {
   }
 }
 
+extension PrismCircleContext {
+  /// A Circle payment's context, as the backend sends it. Test/preview only.
+  static func fx(
+    name: String = "Lagos Trip",
+    flow: String = "out",
+    policy: String = "THRESHOLD",
+    state: String = "COMPLETED",
+    requiredApprovals: Int? = 2,
+    approvers: [PrismCircleApprover] = [
+      .init(displayName: "Octane", authorityAddress: "0xaa", signatureType: "ECDSA", status: "verified"),
+      .init(displayName: "Tobi", authorityAddress: "0xbb", signatureType: "ECDSA", status: "verified")
+    ],
+    proposer: PrismCircleParty? = .init(prismId: "id_octane", displayName: "Octane", handle: "@octane"),
+    limit: PrismSpendingLimitReference? = nil,
+    restricted: Bool? = nil
+  ) -> PrismCircleContext {
+    PrismCircleContext(
+      circleId: "cir_fx", circleName: name, circleIcon: nil,
+      circleSafeAddress: "0x1BEc8c030A37939aB9C41a17c0fE64e92FAE623D", chainId: "10143",
+      flow: flow, state: state, approvalPolicy: policy,
+      authority: policy == "THRESHOLD" ? "Shared" : (policy == "SPENDING_LIMIT" ? "Delegated" : "Personal"),
+      approvalRule: policy == "THRESHOLD" ? requiredApprovals.map { "\($0) approval\($0 == 1 ? "" : "s")" } : nil,
+      policy: policy == "THRESHOLD" ? requiredApprovals.map { "\($0) of 3 admins" } : limit?.summary,
+      requiredApprovals: policy == "THRESHOLD" ? requiredApprovals : nil,
+      approvers: policy == "THRESHOLD" ? approvers : [],
+      proposer: proposer, proposalId: "prp_fx", contributionId: nil,
+      safeTxHash: "0xdigest", safeNonce: "3",
+      spendingLimitReference: limit, restricted: restricted)
+  }
+}
+
 extension PrismPayment {
   static func fixture(
     kind: PrismPaymentKind = .direct, direction: PrismPaymentDirection = .sent,
@@ -246,7 +367,7 @@ extension PrismPayment {
     sender: PrismParty = .fx("You"), recipient: PrismParty = .fx("Tobi Bakare", handle: "@tobi"),
     requestId: String? = nil, claimId: String? = nil, transactionHash: String? = "0x72f5a9b3c1d4e6f70123456789abcdef0123456789abcdef0123456789ab91a",
     blockNumber: String? = "38420119", completedAt: String? = "2026-09-05T02:31:00.000Z", failureCode: String? = nil,
-    route: PrismRouteSummary? = nil
+    route: PrismRouteSummary? = nil, circle: PrismCircleContext? = nil
   ) -> PrismPayment {
     PrismPayment(
       paymentId: "0xpay", operationId: "0xpay", kind: kind, direction: direction, entryMethod: entryMethod,
@@ -255,7 +376,8 @@ extension PrismPayment {
       lifecycleState: lifecycleState, createdAt: "2026-09-05T02:30:00.000Z", authorizedAt: "2026-09-05T02:30:20.000Z",
       submittedAt: "2026-09-05T02:30:30.000Z", confirmedAt: completedAt, indexedAt: nil, reconciledAt: completedAt,
       completedAt: lifecycleState == .completed ? completedAt : nil, transactionHash: transactionHash,
-      blockNumber: blockNumber, gasSponsored: true, failureCode: failureCode, failureMessage: nil, route: route)
+      blockNumber: blockNumber, gasSponsored: true, failureCode: failureCode, failureMessage: nil, route: route,
+      sourceType: circle == nil ? "personal" : "circle", circle: circle)
   }
   static var fixtureEvents: [PrismLifecycleEvent] {
     [.fx(.created, .app, "Payment created", "2026-09-05T02:30:00.000Z"),
@@ -278,6 +400,7 @@ extension PrismReceipt {
       resolutionId: p.resolutionId, resolutionVersion: p.resolutionVersion,
       finalStatus: p.lifecycleState, transactionHash: p.transactionHash, blockNumber: p.blockNumber,
       gasSponsored: p.gasSponsored, createdAt: p.createdAt,
-      settledAt: p.isSettled ? p.completedAt : nil, requestId: p.requestId, claimId: p.claimId)
+      settledAt: p.isSettled ? p.completedAt : nil, requestId: p.requestId, claimId: p.claimId,
+      sourceType: p.sourceType, circle: p.circle)
   }
 }

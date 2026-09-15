@@ -10,13 +10,26 @@ Read [`PRODUCT.md`](PRODUCT.md) and [`INVARIANTS.md`](INVARIANTS.md). The one cl
 ## 1. Run the suites (evidence, not screenshots)
 ```bash
 make test          # or individually:
-cd backend && node --test test/*.test.js        # expect 133 pass
-cd contracts && forge test                       # expect 43 pass (invariants take ~70s)
+cd backend && node --test test/*.test.js        # expect 362 pass
+cd contracts && forge test --no-match-path 'test/circles/*'   # expect 74 pass (invariants ~230s)
 cd ios && xcodegen generate && \
   xcodebuild -scheme Prism -destination 'platform=iOS Simulator,name=iPhone 17' \
-  -only-testing:PrismTests test                  # expect 89 pass
+  -only-testing:PrismTests test                  # needs macOS
 ```
-Update [`PROOF_LEDGER.md`](PROOF_LEDGER.md) if any count differs.
+Without a Mac, get as far as Swift honestly goes — parse every iOS source, then typecheck and RUN the
+suites that do not need SwiftUI/UIKit/Combine:
+```bash
+SWIFT_HOME=/path/to/swift-6.x-ubuntu24.04 make test-ios-linux   # 98 parsed · 144 tests pass
+```
+Circles against the real Safe deployment, and the hostile audit:
+```bash
+cd contracts && FOUNDRY_PROFILE=circles forge test --match-path 'test/circles/*' --network monad
+                                                 # 22 pass, on a Monad testnet fork
+cd backend && node --test test/circles-hostile-audit.test.js   # CIR-001…CIR-017, 25 pass
+cd backend && node --test test/circles-route-audit.test.js     # the HTTP surface, 5 pass
+```
+Update [`PROOF_LEDGER.md`](PROOF_LEDGER.md) if any count differs. The Circles grading —
+what is proven, what is blocked and by exactly what — is [`CIRCLES_MATRIX.md`](CIRCLES_MATRIX.md).
 
 ## 2. Continuity — the load-bearing check
 ```bash

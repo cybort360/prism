@@ -1,7 +1,31 @@
 import SwiftUI
 import UIKit
 
-enum PersonPickerMode { case send, request }
+enum PersonPickerMode: Equatable {
+  case send, request
+  /// Paying *from* a Circle. The recipient is resolved through the same Protected Alias Resolver as
+  /// a personal payment — that is the whole point, and it is what gives a Circle payment the same
+  /// continuity guarantees. Only the destination screen differs.
+  case circlePay(circleId: String, circleName: String)
+
+  var isPaying: Bool { if case .request = self { return false }; return true }
+
+  var title: String {
+    switch self {
+    case .send: return "Send money"
+    case .request: return "Request money"
+    case .circlePay(_, let name): return "Pay from \(name)"
+    }
+  }
+
+  var subtitle: String {
+    switch self {
+    case .send: return "Choose who you want to pay"
+    case .request: return "Choose who to request from"
+    case .circlePay: return "Choose who the Circle is paying"
+    }
+  }
+}
 
 struct PersonPickerView: View {
   @EnvironmentObject private var model: AppModel
@@ -16,11 +40,7 @@ struct PersonPickerView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      PrismSheetHeader(
-        title: mode == .send ? "Send money" : "Request money",
-        subtitle: mode == .send ? "Choose who you want to pay" : "Choose who to request from",
-        close: { dismiss() }
-      )
+      PrismSheetHeader(title: mode.title, subtitle: mode.subtitle, close: { dismiss() })
 
       HStack(spacing: 11) {
         Image(systemName: "magnifyingglass")
@@ -214,7 +234,7 @@ struct PersonPickerView: View {
     do {
       let resolution = try await PrismAPI.shared.resolve(phone: phone)
       if resolution.found {
-        if let candidate = IdentityTrustStore.shared.reviewCandidate(for: contact, newResolution: resolution, action: mode == .send ? .send : .request) {
+        if let candidate = IdentityTrustStore.shared.reviewCandidate(for: contact, newResolution: resolution, action: mode.isPaying ? .send : .request) {
           dismiss()
           model.presentIdentityChange = candidate
           return
@@ -222,11 +242,12 @@ struct PersonPickerView: View {
 
         IdentityTrustStore.shared.remember(contact: contact, resolution: resolution)
         dismiss()
-        if mode == .send {
-          model.presentSend = SendTarget(contact: contact, resolution: resolution)
-        } else {
-          model.presentRequest = SendTarget(contact: contact, resolution: resolution)
-        }
+        deliver(contact: contact, resolution: resolution)
+      } else if case .circlePay = mode {
+        // A Circle cannot send before signup: the ClaimVault funds exclusively through an ERC-3009
+        // signature, which a Safe has no key to produce. Audited and recorded as DEFERRED in
+        // docs/CIRCLE_PAYMENTS.md §7 — so this is a clear refusal, not a silent omission.
+        throw PickerError.circleCannotSendBeforeSignup
       } else if mode == .send {
         dismiss()
         model.presentUnregistered = contact
@@ -254,20 +275,29 @@ struct PersonPickerView: View {
         handle: "@\(name)",
         prismState: .onPrism(resolution)
       )
-      if let candidate = IdentityTrustStore.shared.reviewCandidate(for: contact, newResolution: resolution, action: mode == .send ? .send : .request) {
+      if let candidate = IdentityTrustStore.shared.reviewCandidate(for: contact, newResolution: resolution, action: mode.isPaying ? .send : .request) {
         dismiss()
         model.presentIdentityChange = candidate
         return
       }
       IdentityTrustStore.shared.remember(contact: contact, resolution: resolution)
       dismiss()
-      if mode == .send {
-        model.presentSend = SendTarget(contact: contact, resolution: resolution)
-      } else {
-        model.presentRequest = SendTarget(contact: contact, resolution: resolution)
-      }
+      deliver(contact: contact, resolution: resolution)
     } catch {
       self.error = error.localizedDescription
+    }
+  }
+
+  /// One place that decides where a resolved recipient goes, so the three modes cannot drift apart.
+  private func deliver(contact: ContactPerson, resolution: ResolutionResponse) {
+    switch mode {
+    case .send:
+      model.presentSend = SendTarget(contact: contact, resolution: resolution)
+    case .request:
+      model.presentRequest = SendTarget(contact: contact, resolution: resolution)
+    case .circlePay(let circleId, let circleName):
+      model.presentCirclePay = CirclePayTarget(
+        circleId: circleId, circleName: circleName, contact: contact, resolution: resolution)
     }
   }
 
@@ -280,12 +310,14 @@ struct PersonPickerView: View {
 }
 
 enum PickerError: LocalizedError {
-  case recipientNotOnPrism, handleNotFound
+  case recipientNotOnPrism, handleNotFound, circleCannotSendBeforeSignup
   var errorDescription: String? {
     switch self {
     case .recipientNotOnPrism:
       "This person is not on Prism yet. Payment requests can only be sent to an active Prism account."
     case .handleNotFound: "That Prism handle could not be found."
+    case .circleCannotSendBeforeSignup:
+      "This person hasn't joined Prism yet. A Circle can only pay an active Prism account — you can still send to them from your own balance."
     }
   }
 }

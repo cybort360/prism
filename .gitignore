@@ -8,6 +8,9 @@ backend/data/*.json
 contracts/lib/
 contracts/cache/
 contracts/out/
+# Build output for the vendored Safe Allowance Module (built with upstream's solc 0.7.6 settings).
+contracts/out-allowances/
+contracts/foundry-pp/
 ios/*.xcodeproj/project.xcworkspace/xcuserdata/
 ios/*.xcworkspace/xcuserdata/
 ios/Prism.xcodeproj/
