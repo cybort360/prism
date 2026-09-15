@@ -8,6 +8,7 @@ const { JsonStore } = await import('../src/lib/jsonStore.js');
 const { saveIntentTypedData, verifySaveIntentSignature, validateSaveIntent, consumeSaveNonce } = await import('../src/lib/saveIntent.js');
 const { validateExecutionQuote, reconcileSaveEvidence, SaveExecOutcome, isRetryable, PreviewSaveExecutor } = await import('../src/lib/saveExecution.js');
 const { verifySaveExecutionPlan, SaveCallKind } = await import('../src/lib/saveRoute.js');
+const { assembleSaveProof } = await import('../src/lib/saveProof.js');
 
 const OWNER = privateKeyToAccount(`0x${'a1'.repeat(32)}`);
 const VC = config.save.executor;
@@ -113,4 +114,23 @@ test('client plan guard: malicious route/approve targets are rejected', () => {
 
 test('executor: the preview executor announces itself and refuses (never a fake save)', async () => {
   await assert.rejects(() => new PreviewSaveExecutor(config).execute(), /not enabled|unverified/i);
+});
+
+test('proof: assembled only from observed evidence; complete only when the tx actually proves a Save', () => {
+  const op = { owner: OWNER.address, inputUSDC: '500000000', routeProvider: '0x', quotedAUSD: '497000000', vaultSharePriceBefore: '1010000', transactionHash: '0xabc' };
+  // No evidence yet ⇒ not complete; unobserved fields stay null (never fabricated).
+  const pending = assembleSaveProof({ operation: op, usdcBefore: '900000000', evidence: null });
+  assert.equal(pending.complete, false);
+  assert.equal(pending.sharesReceived, null);
+  assert.equal(pending.quotedAUSD, '497000000');
+  assert.equal(pending.actualAUSD, null); // quoted is NOT actual — never claimed until observed
+  assert.equal(pending.usdcBefore, '900000000');
+  // Canonical success evidence ⇒ complete, and actual AUSD / shares come from the evidence.
+  const done = assembleSaveProof({ operation: op, usdcBefore: '900000000', evidence: { txStatus: 'success', ausdConvertedAtomic: '498000000', sharesMintedAtomic: '492000000', blockNumber: '123' } });
+  assert.equal(done.complete, true);
+  assert.equal(done.actualAUSD, '498000000');
+  assert.equal(done.sharesReceived, '492000000');
+  assert.equal(done.blockNumber, '123');
+  // Unknown/failed broadcast is never "complete", even with amounts present.
+  assert.equal(assembleSaveProof({ operation: op, evidence: { txStatus: 'unknown', ausdConvertedAtomic: '498000000', sharesMintedAtomic: '492000000' } }).complete, false);
 });

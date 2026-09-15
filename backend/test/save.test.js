@@ -55,6 +55,20 @@ test('save: quote is money-safe and announces itself as a preview (no invented A
   assert.equal(typeof q.inputAmount, 'string');
 });
 
+test('save: the quote carries a money-safe consumer review block', () => {
+  const q = svc(tmpStore()).quote({ prismId: 'alice', amountAtomic: '500000000' });
+  const r = q.review;
+  assert.equal(r.youSaveAtomic, '500000000');
+  assert.equal(r.estimatedInvestedAtomic, '500000000');
+  assert.equal(r.estimatedInvestedIllustrative, true);
+  assert.equal(r.conversionCostAtomic, '0');   // 1:1 preview, no invented cost
+  assert.equal(r.conversionCostBps, 0);
+  assert.equal(r.minimumInvestedAtomic, null);  // preview cannot guarantee a minimum
+  assert.equal(r.apy.available, false);
+  assert.equal(r.expiresInSeconds, 300);
+  for (const v of [r.youSaveAtomic, r.estimatedInvestedAtomic, r.conversionCostAtomic]) assert.match(String(v), /^[0-9]+$/);
+});
+
 test('save: state is honest — not live, zero position, no rate', () => {
   const st = svc(tmpStore()).state('alice');
   assert.equal(st.live, false);

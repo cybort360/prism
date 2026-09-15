@@ -24,7 +24,9 @@ deadline — the backend twin of the client guard.
 ## Quote validation before Face ID / PIN
 
 The quote is refreshed and shown as: **You save $500.00 · Estimated invested $499.xx · Conversion cost
-$x.xx / x bps · Current APY x.xx% · Minimum invested $xxx.xx · Quote expires xx s**. `validateExecutionQuote`
+$x.xx / x bps · Current APY x.xx% · Minimum invested $xxx.xx · Quote expires xx s** (the `review` block on
+the quote, money-safe integer base units; in preview the invested amount is an illustrative 1:1 and the
+conversion cost is 0, both flagged, never invented). `validateExecutionQuote`
 BLOCKS execution (never silently attempts) on any of: `route_unavailable`, `quote_expired`, `vault_paused`,
 `vault_deposit_capped`, `slippage_too_high`, `price_impact_too_high`, missing minimums.
 
@@ -64,8 +66,10 @@ retryable** (`isRetryable`) until the UserOp / tx / USDC-delta / AUSD-delta / sh
 ## Save proof (persisted evidence)
 
 USDC before · USDC input · route provider · quoted AUSD · actual AUSD · earnAUSD share price before ·
-shares received · transaction · block · owner. No fabricated proof — the fields are only filled from
-observed on-chain evidence.
+shares received · transaction · block · owner (`assembleSaveProof`, `backend/src/lib/saveProof.js`). No
+fabricated proof: each field is filled only from the operation record or canonical evidence — `quotedAUSD`
+is never presented as `actualAUSD`, and `complete` is true only when the tx succeeded and every
+load-bearing field is observed. Acceptance (quote/RPC/bundler) is never "complete".
 
 ## Architecture decision (executeBatch vs PrismSaveRouter)
 

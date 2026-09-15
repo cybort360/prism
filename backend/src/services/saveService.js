@@ -48,6 +48,20 @@ export class DevSaveRouteProvider {
       vaultFee: null,
       networkFeeSponsored: true,
       rate: { available: false, apyBps: null, reason: 'Rate is set when Save connects to earnAUSD' },
+      // The consumer review surface. Money-safe integer base units + the fields the user sees before
+      // Face ID/PIN. In preview the invested amount is an illustrative 1:1 (both are $1 stables), the
+      // conversion cost is 0, minimums/APY are unavailable — all explicitly flagged, never invented.
+      review: {
+        youSaveAtomic: String(amountAtomic),
+        estimatedInvestedAtomic: String(amountAtomic),
+        estimatedInvestedIllustrative: true,
+        conversionCostAtomic: String(BigInt(amountAtomic) - BigInt(amountAtomic)),  // 0 in the 1:1 preview
+        conversionCostBps: 0,
+        minimumInvestedAtomic: null,
+        apy: { available: false, apyBps: null },
+        expiresInSeconds: 300,
+        live: false
+      },
       transactionPlan: plan
     };
   }
