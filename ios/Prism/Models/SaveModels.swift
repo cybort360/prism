@@ -130,6 +130,88 @@ enum SaveIntentGuard {
   }
 }
 
+/// The reconstructed Save position (from GET /v1/save/position). Fields are optional because the shape
+/// varies by status (UNAVAILABLE / NONE / ACTIVE) and earned is null without a cost basis.
+struct SavePositionResponse: Codable, Equatable {
+  let status: String
+  var earnAUSDShares: String? = nil
+  var currentAUSDValue: String? = nil
+  var earnedAUSD: String? = nil
+  var principalAUSD: String? = nil
+  var estimatedMonthlyEarningsAUSD: String? = nil
+  var notLiveReason: String? = nil
+  var apy: SaveRate? = nil
+}
+
+// MARK: - Withdrawal
+
+struct WithdrawModeInstant: Codable, Equatable {
+  let available: Bool
+  var estimatedUSDCAtomic: String? = nil
+  var vaultFeeAtomic: String? = nil
+  var conversionCostAtomic: String? = nil
+  var note: String? = nil
+  var reason: String? = nil
+}
+struct WithdrawModeStandard: Codable, Equatable {
+  let available: Bool
+  var estimatedUSDCAtomic: String? = nil
+  var processingWindow: String? = nil
+  var reason: String? = nil
+}
+struct WithdrawModes: Codable, Equatable {
+  let live: Bool
+  let sharesAtomic: String
+  let instant: WithdrawModeInstant
+  let standard: WithdrawModeStandard
+}
+struct WithdrawQuote: Codable, Equatable {
+  let quoteId: String
+  let live: Bool
+  let notLiveReason: String?
+  let returnsTo: String   // "USDC" — a withdrawal returns to spendable USDC, not AUSD
+  let modes: WithdrawModes
+}
+struct WithdrawQuoteBody: Encodable { let sharesAtomic: String }
+
+/// The explicit withdrawal the user authorizes: redeem up to N earnAUSD shares back to USDC in the user's
+/// own account, subject to minimum outputs and a deadline.
+struct WithdrawIntent: Codable, Equatable {
+  let owner: String
+  let mode: String            // INSTANT | STANDARD
+  let vault: String
+  let shareToken: String
+  let maxShares: String
+  let minAUSDOut: String
+  let minUSDCOut: String
+  let receiver: String
+  let quoteId: String
+  let deadline: Int
+  let nonce: String
+  let chainId: Int
+}
+
+enum WithdrawIntentGuard {
+  /// Independent client validation before authorizing a withdrawal. Empty ⇒ safe. Refuses on an unknown
+  /// vault, a non-owner receiver, over-redeeming, a wrong chain, a past deadline, or missing floors.
+  static func verify(_ intent: WithdrawIntent, expectedOwner: String, approvedMaxShares: String) -> [String] {
+    var v: [String] = []
+    let owner = expectedOwner.lowercased()
+    if intent.chainId != SaveSubstrate.chainId { v.append("wrong_chain") }
+    if intent.owner.lowercased() != owner { v.append("owner_mismatch") }
+    if intent.receiver.lowercased() != owner { v.append("receiver_not_owner") }  // money returns to the user
+    if intent.mode != "INSTANT" && intent.mode != "STANDARD" { v.append("bad_mode") }
+    if intent.vault.lowercased() != SaveSubstrate.earnAusdVault.lowercased() { v.append("vault_mismatch") }
+    if !positive(intent.maxShares) || exceeds(intent.maxShares, approvedMaxShares) { v.append("shares_out_of_bounds") }
+    if !positive(intent.minAUSDOut) { v.append("missing_min_ausd") }
+    if !positive(intent.minUSDCOut) { v.append("missing_min_usdc") }
+    if intent.deadline <= Int(Date().timeIntervalSince1970) { v.append("expired_intent") }
+    return v
+  }
+  private static func positive(_ a: String) -> Bool { !a.isEmpty && a.allSatisfy(\.isNumber) && a.contains { $0 != "0" } }
+  private static func exceeds(_ a: String, _ b: String) -> Bool { guard let x = UInt64(a), let y = UInt64(b) else { return true }; return x > y }
+}
+
 enum SavePlan {
   /// Independent client verification. Returns the violations found; empty ⇒ safe to execute.
   static func verify(_ plan: SaveExecutionPlan, expectedInputAmount: String, account: String) -> [String] {

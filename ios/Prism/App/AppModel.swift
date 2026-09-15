@@ -22,6 +22,7 @@ final class AppModel: ObservableObject {
   @Published var receivePresented = false
   @Published var scanPresented = false
   @Published var savePresented = false
+  @Published var withdrawPresented = false
   @Published var toast: String?
   @Published var onboardingComplete = false
 

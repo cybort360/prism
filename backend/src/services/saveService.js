@@ -1,5 +1,6 @@
 import { randomHex } from '../lib/crypto.js';
 import { buildPreviewPlan, verifySaveExecutionPlan } from '../lib/saveRoute.js';
+import { withdrawModes } from '../lib/saveWithdraw.js';
 import { logger } from '../lib/logger.js';
 
 // Prism Save — put USDC already held in a Prism account to work in AUSD's earnAUSD vault. The consumer
@@ -112,5 +113,23 @@ export class SaveService {
     });
     logger.info('save.quote', { prismId, provider: quote.provider, live: quote.live, executable: verification.ok });
     return { ...quote, planExecutable: verification.ok };
+  }
+
+  /** Withdraw-mode quote: earnAUSD → AUSD → USDC, back to the user's spendable balance. In preview neither
+   *  mode's economics are observable, so both are unavailable (fees are never invented as "free"). */
+  withdrawQuote({ prismId, sharesAtomic }) {
+    if (!this.config.save.enabled) throw httpError(404, 'Save is not enabled on this deployment');
+    if (!/^[0-9]+$/.test(String(sharesAtomic ?? ''))) throw httpError(400, 'shares must be an integer base-unit string');
+    const identity = this.identityService.get(prismId);
+    if (!identity?.accountAddress) throw httpError(409, 'no Prism account for this user');
+    const live = this.config.save.substrateVerified === true;
+    return {
+      quoteId: `wd_${randomHex(16).slice(2)}`,
+      live,
+      notLiveReason: live ? null : 'earnAUSD is not connected on this deployment (mainnet-only substrate, deposit ABI unverified)',
+      // Normal Prism money is USDC — a withdrawal returns to USDC, not AUSD.
+      returnsTo: 'USDC',
+      modes: withdrawModes({ sharesAtomic: String(sharesAtomic), live })
+    };
   }
 }

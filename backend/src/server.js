@@ -181,6 +181,10 @@ route('POST', '/v1/save/quote', async ({ user, body }) => {
   rateLimit(`save-quote:${user.prismId}`, 60);
   return saveService.quote({ prismId: user.prismId, amountAtomic: String(body.amountAtomic) });
 }, true);
+route('POST', '/v1/save/withdraw/quote', async ({ user, body }) => {
+  rateLimit(`save-wd-quote:${user.prismId}`, 60);
+  return saveService.withdrawQuote({ prismId: user.prismId, sharesAtomic: String(body.sharesAtomic) });
+}, true);
 
 // Canonical Payment Proof: typed, evidence-backed inspectability for one operation the caller owns.
 // The paymentId must map to a Prism operation visible to the authenticated user (never a raw,

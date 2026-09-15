@@ -38,11 +38,20 @@ struct SaveView: View {
         MoneyKeypad(value: $amount).padding(.horizontal, 30).padding(.top, 18)
         Spacer()
 
-        PrismPrimaryButton(
-          title: quoting ? "Checking…" : "Review & Save",
-          enabled: atomic != nil && !quoting && overBalance == false,
-          icon: "lock.fill"
-        ) { Task { await review() } }
+        VStack(spacing: 4) {
+          PrismPrimaryButton(
+            title: quoting ? "Checking…" : "Review & Save",
+            enabled: atomic != nil && !quoting && overBalance == false,
+            icon: "lock.fill"
+          ) { Task { await review() } }
+          // Withdraw returns saved money to spendable USDC. Presented from the shell so it isn't nested.
+          Button("Withdraw from Save") {
+            dismiss()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { model.withdrawPresented = true }
+          }
+          .font(PrismTheme.body(13.5, weight: .semibold)).foregroundStyle(PrismTheme.mintDeep)
+          .padding(.vertical, 10)
+        }
         .padding(24)
       }
       .prismScreen()
