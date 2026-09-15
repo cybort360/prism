@@ -13,6 +13,7 @@ struct WithdrawView: View {
 
   @State private var amount = ""
   @State private var quote: WithdrawQuote?
+  @State private var savingsAtomic: String?
   @State private var loading = true
   @State private var error: String?
   @State private var terminal: WithdrawTerminal?
@@ -24,6 +25,19 @@ struct WithdrawView: View {
         ScrollView(showsIndicators: false) {
           VStack(alignment: .leading, spacing: 0) {
             Spacer().frame(height: 14)
+            if let savingsAtomic {
+              PrismCard(padding: 14) {
+                HStack {
+                  VStack(alignment: .leading, spacing: 2) {
+                    Text("Current savings").font(PrismTheme.body(11)).foregroundStyle(PrismTheme.muted)
+                    Text(Money.dollars(fromAtomic: savingsAtomic)).font(PrismTheme.body(18, weight: .semibold)).monospacedDigit()
+                  }
+                  Spacer()
+                }
+              }
+              .accessibilityElement(children: .combine)
+              .padding(.bottom, 18)
+            }
             PrismSectionLabel(text: "Amount to withdraw")
             AmountText(dollars: displayAmount, size: 60).padding(.top, 6)
             Text("Returns to your USDC balance").font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted).padding(.top, 8)
@@ -108,10 +122,24 @@ struct WithdrawView: View {
   private func usd(_ atomic: String) -> String { Money.dollars(fromAtomic: atomic) }
 
   private func load() async {
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("--uitest-save-demo") {
+      savingsAtomic = "1508420000"
+      quote = WithdrawQuote(quoteId: "demo", live: false, notLiveReason: nil, returnsTo: "USDC",
+        modes: WithdrawModes(live: false, sharesAtomic: "0",
+          instant: WithdrawModeInstant(available: true, estimatedUSDCAtomic: "199000000", vaultFeeAtomic: "500000", conversionCostAtomic: "500000", note: "Available now"),
+          standard: WithdrawModeStandard(available: true, estimatedUSDCAtomic: "199500000", processingWindow: "Up to 72 hours")))
+      loading = false
+      return
+    }
+    #endif
     // The share amount to quote would come from the position; in preview the vault is unreadable, so we
     // quote with the entered amount's atomic (illustrative) and both modes return unavailable.
-    do { quote = try await PrismAPI.shared.withdrawQuote(sharesAtomic: atomic ?? "0"); error = nil }
-    catch { self.error = error.localizedDescription }
+    async let q = try? await PrismAPI.shared.withdrawQuote(sharesAtomic: atomic ?? "0")
+    async let pos = try? await PrismAPI.shared.savePosition()
+    quote = await q
+    if savingsAtomic == nil { savingsAtomic = (await pos)?.currentAUSDValue }
+    if quote == nil { error = "Couldn't load withdrawal options." }
     loading = false
   }
 
@@ -127,6 +155,7 @@ struct WithdrawView: View {
 }
 
 enum WithdrawTerminal: Equatable {
+  case available(amount: String)                  // USDC back in the user's balance (instant success)
   case preview(reason: String)
   case requested(amount: String)                  // queued
   case recovery(ausd: String)                     // AUSD safe with the user, USDC conversion pending
@@ -159,6 +188,7 @@ private struct WithdrawTerminalView: View {
   private var icon: some View {
     let (symbol, tint): (String, Color) = {
       switch terminal {
+      case .available: return ("checkmark", PrismTheme.mintDeep)
       case .recovery: return ("shield.fill", PrismTheme.amber)
       case .requested: return ("clock.badge.checkmark", PrismTheme.amber)
       case .preview: return ("clock.badge.checkmark", PrismTheme.amber)
@@ -168,6 +198,7 @@ private struct WithdrawTerminalView: View {
   }
   private var title: String {
     switch terminal {
+    case .available(let amount): return "\(amount) available"
     case .preview: return "Withdrawals are almost ready"
     case .requested: return "Withdrawal requested"
     case .recovery: return "Your savings were withdrawn"
@@ -175,6 +206,7 @@ private struct WithdrawTerminalView: View {
   }
   private var message: String {
     switch terminal {
+    case .available: return "Your withdrawal is back in your Prism balance."
     case .preview(let reason): return "This is a preview — \(reason)"
     case .requested(let amount): return "\(amount) is on the way to your USDC balance. Processing can take up to 72 hours; we'll tell you when it's ready."
     case .recovery(let ausd): return "\(ausd) AUSD is safe in your Prism account. We're having trouble converting it to your available USDC balance."

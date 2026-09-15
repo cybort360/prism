@@ -156,8 +156,9 @@ struct SaveView: View {
     async let pos = try? await PrismAPI.shared.savePosition()
     async let st = try? await PrismAPI.shared.saveState()
     async let bal = try? await PrismAPI.shared.balance()
+    async let wd = try? await PrismAPI.shared.saveWithdrawals()
     let position = await pos
-    display = SaveDisplay(position: position, stateRate: (await st)?.rate)
+    display = SaveDisplay(position: position, stateRate: (await st)?.rate, pending: (await wd)?.pending ?? [])
     balanceAtomic = await bal?.amountAtomic
     loading = false
   }
@@ -271,6 +272,8 @@ private struct SaveHomeContent: View {
           PrismSecondaryButton(title: "Withdraw", icon: "arrow.down") { onWithdraw() }
         }.padding(.top, 22)
 
+        if display.hasPending { pendingSection.padding(.top, 26) }
+
         earningsCard.padding(.top, 26)
 
         Button { model.savePresented = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { model.saveDetailsPresented = true } } label: {
@@ -316,6 +319,36 @@ private struct SaveHomeContent: View {
         stat("All time", display.allTimeEarnedText ?? "—", PrismTheme.ink)
       }
     }
+  }
+
+  // Pending withdrawals stay visible — never removed from view until the money lands.
+  private var pendingSection: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      PrismSectionLabel(text: display.pending.count > 1 ? "Withdrawals" : "Withdrawal")
+      ForEach(display.pending) { w in
+        PrismCard(padding: 15) {
+          HStack(spacing: 13) {
+            ZStack { Circle().fill(PrismTheme.amber.opacity(0.12)).frame(width: 40, height: 40); Image(systemName: "clock.arrow.circlepath").foregroundStyle(PrismTheme.amber) }
+              .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+              Text(display.pendingAmountText(w) ?? "Withdrawal").font(PrismTheme.body(16, weight: .semibold)).monospacedDigit()
+              Text(pendingLine(w)).font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted).lineSpacing(1.5)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 6)
+            Text(w.status).font(PrismTheme.body(10.5, weight: .semibold)).foregroundStyle(PrismTheme.amber)
+          }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Withdrawal \(display.pendingAmountText(w) ?? ""), \(w.status)")
+      }
+    }
+  }
+  private func pendingLine(_ w: SavePendingWithdrawal) -> String {
+    var parts: [String] = []
+    if let r = w.requestedAt, let d = Date.prismParse(r) { parts.append("Requested \(d.formatted(.dateTime.month(.abbreviated).day()))") }
+    if let win = w.expectedWindow { parts.append("Expected within \(win.lowercased())") }
+    return parts.joined(separator: " · ")
   }
 }
 
@@ -439,6 +472,12 @@ struct SaveHomeCard: View {
           if let earned = d.earnedText { Text("\(earned) earned").font(PrismTheme.body(11.5, weight: .semibold)).foregroundStyle(d.earnedIsPositive == true ? PrismTheme.positive : PrismTheme.muted) }
           if let rate = d.rateText { Text("Current rate  \(rate)").font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted) }
         }
+        if d.hasPending {
+          HStack(spacing: 6) {
+            Image(systemName: "clock.arrow.circlepath").font(.system(size: 10, weight: .semibold)).foregroundStyle(PrismTheme.amber)
+            Text("\(d.pending.count) withdrawal\(d.pending.count == 1 ? "" : "s") processing").font(PrismTheme.body(11, weight: .semibold)).foregroundStyle(PrismTheme.amber)
+          }
+        }
       }
     } else {
       HStack(spacing: 13) {
@@ -463,6 +502,7 @@ struct SaveHomeCard: View {
     #endif
     async let pos = try? await PrismAPI.shared.savePosition()
     async let st = try? await PrismAPI.shared.saveState()
-    display = SaveDisplay(position: await pos, stateRate: (await st)?.rate)
+    async let wd = try? await PrismAPI.shared.saveWithdrawals()
+    display = SaveDisplay(position: await pos, stateRate: (await st)?.rate, pending: (await wd)?.pending ?? [])
   }
 }

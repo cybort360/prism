@@ -9,6 +9,7 @@ const { consumeSaveNonce } = await import('../src/lib/saveIntent.js');
 const { isRetryable } = await import('../src/lib/saveExecution.js');
 const { reduceCostBasis } = await import('../src/lib/saveAccounting.js');
 const { reconstructPosition } = await import('../src/domain/savePosition.js');
+const { SavePositionService } = await import('../src/services/savePositionService.js');
 const {
   WithdrawMode, WithdrawOutcome, WithdrawFailure, withdrawModes, withdrawFailureAction,
   withdrawIntentTypedData, verifyWithdrawIntentSignature, validateWithdrawIntent, reconcileWithdrawEvidence, classifyClaimable
@@ -102,6 +103,27 @@ test('withdraw modes: preview offers no invented fee/"free"; observed instant ca
   assert.equal(observed.instant.available, true);
   assert.equal(observed.instant.vaultFeeAtomic, '500000');
   assert.equal(observed.standard.processingWindow, 'Up to 72 hours');
+});
+
+test('withdraw pending: in-flight requests stay visible and project to consumer status', () => {
+  const account = OWNER.address;
+  const store = new JsonStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prism-wd-pending-')), 'store.json'));
+  const identity = { get: () => ({ prismId: 'alice', accountAddress: account }) };
+  const svc = new SavePositionService({ store, config, identityService: identity });
+  assert.deepEqual(svc.pendingWithdrawals('alice'), [], 'no pending in preview');
+
+  const positionId = `save_${account.toLowerCase()}`;
+  store.mutate((d) => {
+    d.saveOperations = {
+      q: { operationId: 'q', positionId, kind: 'WITHDRAW_STANDARD', state: 'QUEUED', outputUSDC: '200000000', submittedAt: '2026-09-10T00:00:00Z' },
+      done: { operationId: 'done', positionId, kind: 'WITHDRAW_INSTANT', state: 'AVAILABLE', outputUSDC: '199000000' } // terminal ⇒ not pending
+    };
+  });
+  const pending = svc.pendingWithdrawals('alice');
+  assert.equal(pending.length, 1, 'terminal withdrawals are not pending');
+  assert.equal(pending[0].amountAtomic, '200000000');
+  assert.equal(pending[0].status, 'Withdrawal requested');
+  assert.equal(pending[0].expectedWindow, 'Up to 72 hours');
 });
 
 test('withdraw accounting: partial + full withdrawal, then position reconstructs after restart', () => {

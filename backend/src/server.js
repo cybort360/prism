@@ -177,6 +177,7 @@ route('GET', '/v1/save/state', async ({ user }) => saveService.state(user.prismI
 // The user's Save position, reconstructed from chain (canonical shares + the vault's own value
 // conversion); the store is a projection only. Announces itself when the vault isn't readable.
 route('GET', '/v1/save/position', async ({ user }) => savePositionService.position(user.prismId), true);
+route('GET', '/v1/save/withdrawals', async ({ user }) => ({ pending: savePositionService.pendingWithdrawals(user.prismId) }), true);
 route('POST', '/v1/save/quote', async ({ user, body }) => {
   rateLimit(`save-quote:${user.prismId}`, 60);
   return saveService.quote({ prismId: user.prismId, amountAtomic: String(body.amountAtomic) });

@@ -7,8 +7,14 @@ import Foundation
 struct SaveDisplay: Equatable {
   let position: SavePositionResponse?
   let stateRate: SaveRate?
+  /// In-flight withdrawals — kept visible until USDC lands.
+  var pending: [SavePendingWithdrawal] = []
   /// A clearly-labeled example used only to review the native experience; never real, live savings.
   var isExample: Bool = false
+
+  var hasPending: Bool { !pending.isEmpty }
+  /// A withdrawal's amount as "$200.00", or nil.
+  func pendingAmountText(_ w: SavePendingWithdrawal) -> String? { w.amountAtomic.map { Money.dollars(fromAtomic: $0) } }
 
   // MARK: which surface
 
@@ -62,6 +68,8 @@ struct SaveDisplay: Equatable {
       earnedAUSD: "8420000", principalAUSD: "1500000000", estimatedMonthlyEarningsAUSD: "4120000",
       notLiveReason: nil,
       apy: SaveRate(available: true, apy: 0.0708, apySource: "upshift", apyWindow: "30d", observedAt: ISO8601DateFormatter().string(from: Date()))),
-    stateRate: nil, isExample: true)
+    stateRate: nil,
+    pending: [SavePendingWithdrawal(operationId: "demo", amountAtomic: "200000000", status: "Processing", phase: "processing", requestedAt: "2026-09-10T00:00:00Z", expectedWindow: "Up to 72 hours")],
+    isExample: true)
   #endif
 }

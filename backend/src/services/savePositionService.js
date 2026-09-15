@@ -1,5 +1,5 @@
 import { reconstructPosition } from '../domain/savePosition.js';
-import { isTerminal } from '../lib/saveLifecycle.js';
+import { isTerminal, consumerPhase } from '../lib/saveLifecycle.js';
 
 // SavePositionService — reads a user's Save position. The vault is the source of truth for shares + value
 // (via an injected SaveVaultReader), and the backend store is a projection of operations only. The
@@ -55,5 +55,29 @@ export class SavePositionService {
       chain: { available, shares, currentAUSDValue: value },
       operations, apyRecord
     });
+  }
+
+  /** In-flight withdrawals (queued requests + the instant/convert legs). Pending assets stay VISIBLE —
+   *  never removed from view — until USDC reaches the user. Projected from the operation store; empty in
+   *  preview since execution is gated. */
+  pendingWithdrawals(prismId) {
+    const identity = this.identityService.get(prismId);
+    if (!identity?.accountAddress) return [];
+    const positionId = `save_${identity.accountAddress.toLowerCase()}`;
+    const withdrawKinds = new Set(['WITHDRAW_INSTANT', 'WITHDRAW_STANDARD', 'CLAIM_WITHDRAWAL']);
+    return Object.values(this.store.read().saveOperations ?? {})
+      .filter((o) => o.positionId === positionId && withdrawKinds.has(o.kind) && !isTerminal(o.kind, o.state) && o.state !== 'FAILED')
+      .map((o) => {
+        const phase = consumerPhase(o.kind, o.state);
+        return {
+          operationId: o.operationId,
+          amountAtomic: o.outputUSDC ?? o.quotedUSDC ?? null,   // consumer sees the USDC they'll receive
+          status: phase.label,                                   // Withdrawal requested / Processing / Ready
+          phase: phase.phase,
+          claimable: o.state === 'CLAIMABLE',
+          requestedAt: o.submittedAt ?? o.createdAt ?? null,
+          expectedWindow: 'Up to 72 hours'                       // documented vault window; never an exact time
+        };
+      });
   }
 }

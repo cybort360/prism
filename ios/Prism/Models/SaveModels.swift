@@ -163,6 +163,19 @@ struct SavePositionResponse: Codable, Equatable {
   var apy: SaveRate? = nil
 }
 
+/// An in-flight withdrawal. Pending assets stay visible until USDC reaches the user.
+struct SavePendingWithdrawal: Codable, Equatable, Identifiable {
+  let operationId: String
+  var amountAtomic: String? = nil
+  let status: String            // "Withdrawal requested" / "Processing" / "Ready"
+  var phase: String? = nil
+  var claimable: Bool = false
+  var requestedAt: String? = nil
+  var expectedWindow: String? = nil
+  var id: String { operationId }
+}
+struct SaveWithdrawalsResponse: Codable, Equatable { let pending: [SavePendingWithdrawal] }
+
 // MARK: - Withdrawal
 
 struct WithdrawModeInstant: Codable, Equatable {
