@@ -23,6 +23,7 @@ final class AppModel: ObservableObject {
   @Published var scanPresented = false
   @Published var savePresented = false
   @Published var withdrawPresented = false
+  @Published var saveDetailsPresented = false
   @Published var toast: String?
   @Published var onboardingComplete = false
 
@@ -43,6 +44,14 @@ final class AppModel: ObservableObject {
       requestPickerPresented = arguments.contains("--uitest-request-picker")
       if arguments.contains("--uitest-advanced-account") { selectedTab = .profile }
       if arguments.contains("--uitest-save") { savePresented = true }
+      if arguments.contains("--uitest-withdraw") { withdrawPresented = true }
+      if arguments.contains("--uitest-save-details") { saveDetailsPresented = true }
+      // Review-only: render the main shell without a real backend session (for screenshots of a
+      // logged-in surface). Never used in a shipping build.
+      if arguments.contains("--uitest-preview-home") {
+        onboardingComplete = true
+        identity = PrismIdentity(prismId: "preview", displayName: "James", handle: "james", accountAddress: "0x0000000000000000000000000000000000000001", aliasVersion: 1)
+      }
     #endif
   }
 

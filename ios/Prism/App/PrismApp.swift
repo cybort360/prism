@@ -70,6 +70,7 @@ struct MainShell: View {
     .sheet(isPresented: $model.receivePresented) { ReceiveView() }
     .sheet(isPresented: $model.savePresented) { SaveView() }
     .sheet(isPresented: $model.withdrawPresented) { WithdrawView() }
+    .sheet(isPresented: $model.saveDetailsPresented) { SaveDetailsView() }
     .fullScreenCover(isPresented: $model.scanPresented) { ScanToPayView() }
     .onOpenURL { url in Task { await routeDeepLink(url) } }
     .overlay(alignment: .top) {

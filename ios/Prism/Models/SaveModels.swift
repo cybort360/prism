@@ -24,8 +24,28 @@ struct SaveQuoteBody: Encodable { let amountAtomic: String }
 
 struct SaveRate: Codable, Equatable {
   let available: Bool
-  let apyBps: Int?
-  let reason: String?
+  var apy: Double? = nil        // decimal, e.g. 0.0708 (position.apy from the resolver)
+  var apyBps: Int? = nil        // basis points (state.rate)
+  var apySource: String? = nil
+  var apyWindow: String? = nil  // e.g. "30d" / "7d"
+  var observedAt: String? = nil
+  var reason: String? = nil
+
+  /// APY as a percentage number when fresh (prefers the decimal, falls back to bps). Nil when unavailable.
+  var percent: Double? {
+    guard available else { return nil }
+    if let apy { return apy * 100 }
+    if let apyBps { return Double(apyBps) / 100 }
+    return nil
+  }
+  /// A human window label: "30-day trailing" / "7-day". Nil when unknown.
+  var windowText: String? {
+    switch apyWindow {
+    case "30d", "30-day", "30day": return "30-day trailing"
+    case "7d", "7-day", "7day": return "7-day"
+    default: return apyWindow
+    }
+  }
 }
 
 struct SavePosition: Codable, Equatable {
