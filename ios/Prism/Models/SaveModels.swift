@@ -85,6 +85,51 @@ struct SaveQuote: Codable, Equatable {
   let planExecutable: Bool
 }
 
+/// The explicit thing the user authorizes — not "arbitrary DeFi calls". Every protected field is bound
+/// into the signature server-side; the client re-checks them here before Face ID/PIN and REFUSES to sign
+/// on any mismatch with what the user reviewed.
+struct SaveIntent: Codable, Equatable {
+  let owner: String
+  let inputToken: String
+  let maxInputUSDC: String
+  let intermediateToken: String
+  let vault: String
+  let shareToken: String
+  let minAUSDOut: String
+  let minSharesOut: String
+  let receiver: String
+  let quoteId: String
+  let deadline: Int
+  let nonce: String
+  let chainId: Int
+}
+
+enum SaveIntentGuard {
+  /// Independent client validation of a SaveIntent. Empty ⇒ safe to authorize. Refuses on an unknown
+  /// vault/token, a non-owner receiver, a raised amount, a wrong chain, a past deadline, or missing floors.
+  static func verify(_ intent: SaveIntent, expectedOwner: String, approvedMaxUSDC: String) -> [String] {
+    var v: [String] = []
+    let owner = expectedOwner.lowercased()
+    if intent.chainId != SaveSubstrate.chainId { v.append("wrong_chain") }
+    if intent.owner.lowercased() != owner { v.append("owner_mismatch") }
+    if intent.receiver.lowercased() != owner { v.append("receiver_not_owner") }
+    if intent.inputToken.lowercased() != SaveSubstrate.usdc.lowercased() { v.append("input_not_usdc") }
+    if intent.intermediateToken.lowercased() != SaveSubstrate.ausd.lowercased() { v.append("intermediate_not_ausd") }
+    if intent.vault.lowercased() != SaveSubstrate.earnAusdVault.lowercased() { v.append("vault_mismatch") }
+    if !positive(intent.maxInputUSDC) || exceeds(intent.maxInputUSDC, approvedMaxUSDC) { v.append("amount_out_of_bounds") }
+    if !positive(intent.minAUSDOut) { v.append("missing_min_ausd") }
+    if !positive(intent.minSharesOut) { v.append("missing_min_shares") }
+    if intent.deadline <= Int(Date().timeIntervalSince1970) { v.append("expired_intent") }
+    return v
+  }
+
+  private static func positive(_ a: String) -> Bool { !a.isEmpty && a.allSatisfy(\.isNumber) && a.contains { $0 != "0" } }
+  private static func exceeds(_ a: String, _ b: String) -> Bool {
+    guard let x = UInt64(a), let y = UInt64(b) else { return true } // unparseable ⇒ refuse
+    return x > y
+  }
+}
+
 enum SavePlan {
   /// Independent client verification. Returns the violations found; empty ⇒ safe to execute.
   static func verify(_ plan: SaveExecutionPlan, expectedInputAmount: String, account: String) -> [String] {

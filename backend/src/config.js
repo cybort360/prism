@@ -97,6 +97,12 @@ export const config = {
     earnAusdVault: env('SAVE_EARNAUSD_VAULT', '0x36eDbF0C834591BFdfCaC0Ef9605528c75c406aA'), // verified 143
     // Swap router (USDC→AUSD) is undecided (no proven route yet); no target is allowlisted until one is.
     swapRouter: env('SAVE_SWAP_ROUTER', ''),
+    // The contract a SaveIntent is bound to (EIP-712 verifyingContract) — the batch-capable Prism account
+    // or a PrismSaveExecutor once one is deployed. Zero address until then; execution stays gated.
+    executor: env('SAVE_EXECUTOR', '0x0000000000000000000000000000000000000000'),
+    // Execution policy caps. Economics beyond these must NOT execute.
+    maxSlippageBps: Number(env('SAVE_MAX_SLIPPAGE_BPS', '50')),      // 0.50%
+    maxPriceImpactBps: Number(env('SAVE_MAX_PRICE_IMPACT_BPS', '100')), // 1.00%
     // USDC on the substrate chain (143), distinct from Prism's testnet USDC mock.
     substrateUsdc: env('SAVE_SUBSTRATE_USDC', '0x754704Bc059F8C67012fEd69BC8A327a5aafb603'),
     maxSaveAtomic: bigintEnv('MAX_SAVE_ATOMIC', '10000000000')  // 10,000 USDC, mirrors payment cap
