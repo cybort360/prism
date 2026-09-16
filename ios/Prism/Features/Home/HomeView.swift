@@ -277,6 +277,8 @@ struct HomeView: View {
         localPeople = Array(contacts.prefix(5))
       }
       error = nil
+    } catch APIError.unauthorized {
+      // A 401 signs the user out (AppModel handles it); don't flash an error on Home.
     } catch { self.error = error.localizedDescription }
   }
   private func openRequest(_ r: PaymentRequestRecord) async {

@@ -68,12 +68,33 @@ final class AppModel: ObservableObject {
 
   var hasSession: Bool { (try? KeychainStore.shared.string(for: "session")) != nil }
 
+  private var authObserver: NSObjectProtocol?
+
   func bootstrap() async {
+    registerAuthObserver()
     defer { isBooting = false }
     guard hasSession else { return }
     do { identity = try await PrismAPI.shared.me() } catch {
       KeychainStore.shared.delete("session")
     }
+  }
+
+  /// When any authed request 401s, the session is gone — end it cleanly and return to sign-in, instead
+  /// of leaving the app showing "missing session" on every screen.
+  private func registerAuthObserver() {
+    guard authObserver == nil else { return }
+    authObserver = NotificationCenter.default.addObserver(forName: .prismUnauthorized, object: nil, queue: .main) { [weak self] _ in
+      MainActor.assumeIsolated { self?.sessionExpired() }
+    }
+  }
+
+  func sessionExpired() {
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("--uitest-preview-home") { return } // review hook: no real session
+    #endif
+    guard hasSession || identity != nil else { return }
+    signOut()
+    notify("Your session ended. Please sign in again.")
   }
 
   func refreshIdentity() async {
