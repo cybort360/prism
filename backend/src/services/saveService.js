@@ -1,7 +1,18 @@
 import { randomHex } from '../lib/crypto.js';
 import { buildPreviewPlan, verifySaveExecutionPlan } from '../lib/saveRoute.js';
 import { withdrawModes } from '../lib/saveWithdraw.js';
+import { SaveStrategyRegistry } from '../lib/saveStrategy.js';
+import { SaveEligibilityService, realSaveEnabled } from './saveEligibilityService.js';
 import { logger } from '../lib/logger.js';
+
+// V1 "optimized yield" — the ONLY promise Prism makes about where savings go. Deposits land in the one
+// approved strategy (earnAUSD), whose curator reallocates within its own policy. Prism never chases the
+// numerically highest APY across arbitrary protocols. This copy is the source of truth for the product;
+// clients render it verbatim. Never "highest yield" / "best APY" / "guaranteed returns".
+export const SAVE_MANAGED_COPY = Object.freeze({
+  headline: 'Save once. The underlying strategy manages where your savings earn.',
+  detail: 'Your savings are automatically managed across approved yield strategies by the underlying earnAUSD vault.'
+});
 
 // Prism Save — put USDC already held in a Prism account to work in AUSD's earnAUSD vault. The consumer
 // sees only: USDC → Save → amount → rate → approve → done. The substrate (AUSD/earnAUSD) is hidden.
@@ -69,25 +80,46 @@ export class DevSaveRouteProvider {
 }
 
 export class SaveService {
-  constructor({ store, config, identityService, routeProvider }) {
+  constructor({ store, config, identityService, routeProvider, eligibilityService, strategyRegistry }) {
     this.store = store;
     this.config = config;
     this.identityService = identityService;
     this.routeProvider = routeProvider ?? new DevSaveRouteProvider(config);
+    this.eligibility = eligibilityService ?? new SaveEligibilityService({ config });
+    // Only the approved earnAUSD strategy is registered and enabled in V1.
+    this.strategies = strategyRegistry ?? new SaveStrategyRegistry();
+  }
+
+  /** The strategy V1 deposits into — always the approved earnAUSD strategy, never a computed "best APY". */
+  activeStrategy() {
+    const s = this.strategies.active();
+    return s && { strategyId: s.strategyId, name: s.name, positionAsset: s.positionAsset, riskTier: s.riskTier, curator: s.curator };
   }
 
   /** The Save home surface. No stored position — reads only, always honest that it is not live yet. */
   state(prismId) {
     const s = this.config.save;
+    const eligibility = this.eligibility.snapshot();
     return {
       enabled: s.enabled,
       live: s.substrateVerified,
       substrateVerified: s.substrateVerified,
+      // Real-money Save requires BOTH a verified substrate AND an ELIGIBLE determination.
+      realMoneyEnabled: realSaveEnabled({ substrateVerified: s.substrateVerified, eligibility: eligibility.status }),
       notLiveReason: s.substrateVerified ? null : 'Save is a preview — it goes live once earnAUSD is connected',
+      // How savings are managed. Verbatim consumer copy — never "highest yield" or "guaranteed".
+      managed: SAVE_MANAGED_COPY,
+      strategy: this.activeStrategy(),
+      eligibility,
       // A preview never shows a position it cannot prove from chain truth.
       position: { shares: '0', valueAtomic: '0', currency: 'USDC' },
       rate: { available: false, apyBps: null, reason: 'Variable rate, shown when Save connects to earnAUSD' }
     };
+  }
+
+  /** Per-user eligibility for the dedicated endpoint. Async — consults the compliance provider. */
+  async checkEligibility(prismId) {
+    return this.eligibility.check(prismId);
   }
 
   /** Quote a Save. Validates the amount, resolves the user's own account as the share receiver, and
@@ -112,7 +144,7 @@ export class SaveService {
       inputAmount: String(amount)
     });
     logger.info('save.quote', { prismId, provider: quote.provider, live: quote.live, executable: verification.ok });
-    return { ...quote, planExecutable: verification.ok };
+    return { ...quote, managed: SAVE_MANAGED_COPY, strategy: this.activeStrategy(), planExecutable: verification.ok };
   }
 
   /** Withdraw-mode quote: earnAUSD → AUSD → USDC, back to the user's spendable balance. In preview neither

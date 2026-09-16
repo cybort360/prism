@@ -364,6 +364,7 @@ private struct FirstSaveDisclosure: View {
       Text("Before you save").font(PrismTheme.display(30)).tracking(-0.5).padding(.top, 26)
       VStack(alignment: .leading, spacing: 16) {
         point("Your money is converted from USDC into a yield-bearing on-chain savings position.")
+        point("Your savings are automatically managed across approved yield strategies by the underlying earnAUSD vault.")
         point("The rate is variable.")
         point("Withdrawals may not always be instant.")
         point("Savings involve stablecoin, smart-contract and underlying strategy risk.")

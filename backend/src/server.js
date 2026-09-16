@@ -190,6 +190,9 @@ route('GET', '/v1/lab/continuity', async () => runContinuityLab(), true);
 // announced preview until the earnAUSD substrate is verified (see docs/SAVE_DEPENDENCY_AUDIT.md). The
 // quote carries a fully-constrained SaveExecutionPlan the CLIENT independently verifies.
 route('GET', '/v1/save/state', async ({ user }) => saveService.state(user.prismId), true);
+// Per-user eligibility (ELIGIBLE / INELIGIBLE / UNKNOWN / SERVICE_UNAVAILABLE). No provider is wired on
+// this deployment, so it reports SERVICE_UNAVAILABLE — deliberately, never a fabricated ELIGIBLE.
+route('GET', '/v1/save/eligibility', async ({ user }) => saveService.checkEligibility(user.prismId), true);
 // The user's Save position, reconstructed from chain (canonical shares + the vault's own value
 // conversion); the store is a projection only. Announces itself when the vault isn't readable.
 route('GET', '/v1/save/position', async ({ user }) => savePositionService.position(user.prismId), true);
