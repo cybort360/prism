@@ -30,7 +30,11 @@ struct HomeView: View {
         if let request = incomingRequest { requestCard(request).padding(.bottom, 12) }
         if !claims.isEmpty { claimsSection.padding(.bottom, 30) }
         SaveHomeCard().padding(.bottom, 34)
-        CirclesSummaryRow(circles: circles).padding(.bottom, 34)
+        // Circles has its own tab, so Home only surfaces it when there's something to show — an existing
+        // Circle or a pending invitation. Empty accounts stay quiet (no "Start a Circle" nudge).
+        if !circles.summaries.isEmpty || circles.needsAttention {
+          CirclesSummaryRow(circles: circles).padding(.bottom, 34)
+        }
         people.padding(.bottom, 34)
         recent
         if let error { ErrorBanner(message: error).padding(.top, 18) }
