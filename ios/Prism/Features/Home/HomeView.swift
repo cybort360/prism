@@ -35,8 +35,10 @@ struct HomeView: View {
         if !circles.summaries.isEmpty || circles.needsAttention {
           CirclesSummaryRow(circles: circles).padding(.bottom, 34)
         }
-        people.padding(.bottom, 34)
-        recent
+        // Quiet empty states: People and Recent only appear once there's real content, so a fresh
+        // account stays calm (balance → actions → Save) instead of stacking empty-state cards.
+        if !localPeople.isEmpty { people.padding(.bottom, 34) }
+        if !activity.isEmpty { recent }
         if let error { ErrorBanner(message: error).padding(.top, 18) }
       }.padding(.horizontal, 22).padding(.top, 8).padding(.bottom, 28)
     }
