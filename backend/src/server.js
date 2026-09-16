@@ -194,6 +194,8 @@ route('GET', '/v1/save/state', async ({ user }) => saveService.state(user.prismI
 // conversion); the store is a projection only. Announces itself when the vault isn't readable.
 route('GET', '/v1/save/position', async ({ user }) => savePositionService.position(user.prismId), true);
 route('GET', '/v1/save/withdrawals', async ({ user }) => ({ pending: savePositionService.pendingWithdrawals(user.prismId) }), true);
+// Canonical PrismSaveProof: evidence-backed inspectability for one Save operation the caller owns.
+route('GET', '/v1/save/operations/:id/proof', async ({ user, params }) => savePositionService.saveProof(user.prismId, params.id), true);
 route('POST', '/v1/save/quote', async ({ user, body }) => {
   rateLimit(`save-quote:${user.prismId}`, 60);
   return saveService.quote({ prismId: user.prismId, amountAtomic: String(body.amountAtomic) });

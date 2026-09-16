@@ -33,6 +33,7 @@ final class AppModel: ObservableObject {
   @Published var savePresented = false
   @Published var withdrawPresented = false
   @Published var saveDetailsPresented = false
+  @Published var presentSaveReceipt: SaveReceiptPresentation?
   @Published var toast: String?
   @Published var onboardingComplete = false
 
@@ -55,6 +56,7 @@ final class AppModel: ObservableObject {
       if arguments.contains("--uitest-save") { savePresented = true }
       if arguments.contains("--uitest-withdraw") { withdrawPresented = true }
       if arguments.contains("--uitest-save-details") { saveDetailsPresented = true }
+      if arguments.contains("--uitest-save-receipt") { presentSaveReceipt = SaveReceiptPresentation(operationId: "demo") }
       if arguments.contains("--uitest-circles-tab") { selectedTab = .circles }
       if arguments.contains("--uitest-circle-create") { selectedTab = .circles; presentCircleCreate = true }
       // Review-only: render the main shell without a real backend session (for screenshots of a

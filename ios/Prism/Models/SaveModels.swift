@@ -161,6 +161,42 @@ struct SavePositionResponse: Codable, Equatable {
   var estimatedMonthlyEarningsAUSD: String? = nil
   var notLiveReason: String? = nil
   var apy: SaveRate? = nil
+  var createdAt: String? = nil
+}
+
+struct SaveReceiptPresentation: Identifiable { let id = UUID(); let operationId: String }
+
+// MARK: - Proof
+
+struct SaveProofCheck: Codable, Equatable, Identifiable { let check: String; let status: String; var id: String { check } }
+struct SaveProofReadback: Codable, Equatable { let available: Bool; var shares: String? = nil; var valueAtomic: String? = nil }
+
+/// The evidence-backed proof for one Save operation (from GET /v1/save/operations/:id/proof). Fields are
+/// optional because they fill only from observed evidence — a value is never fabricated to look complete.
+struct SaveProofResponse: Codable, Equatable {
+  var operationId: String? = nil
+  var positionId: String? = nil
+  var network: Int? = nil
+  var ownerAccount: String? = nil
+  var inputAsset: String = "USDC"
+  var inputAmount: String? = nil
+  var conversionProvider: String? = nil
+  var quotedAUSD: String? = nil
+  var actualAUSD: String? = nil
+  var minimumAUSD: String? = nil
+  var vault: String? = nil
+  var shareToken: String? = nil
+  var sharesQuoted: String? = nil
+  var sharesActual: String? = nil
+  var minimumShares: String? = nil
+  var sharePriceAtDeposit: String? = nil
+  var transactionHash: String? = nil
+  var blockNumber: String? = nil
+  var gasSponsored: Bool = true
+  var stateReadback: SaveProofReadback? = nil
+  var txCorrelates: Bool = true
+  var verification: [SaveProofCheck] = []
+  var complete: Bool = false
 }
 
 /// An in-flight withdrawal. Pending assets stay visible until USDC reaches the user.

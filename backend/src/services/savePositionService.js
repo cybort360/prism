@@ -1,5 +1,8 @@
 import { reconstructPosition } from '../domain/savePosition.js';
 import { isTerminal, consumerPhase } from '../lib/saveLifecycle.js';
+import { buildSaveProof } from '../lib/saveProof.js';
+
+function httpError(statusCode, message) { const e = new Error(message); e.statusCode = statusCode; return e; }
 
 // SavePositionService — reads a user's Save position. The vault is the source of truth for shares + value
 // (via an injected SaveVaultReader), and the backend store is a projection of operations only. The
@@ -79,5 +82,23 @@ export class SavePositionService {
           expectedWindow: 'Up to 72 hours'                       // documented vault window; never an exact time
         };
       });
+  }
+
+  /** The canonical PrismSaveProof for one of the user's own Save operations. Includes an independent
+   *  chain readback when the vault is readable; verification never marks a fact proven without evidence. */
+  async saveProof(prismId, operationId) {
+    const identity = this.identityService.get(prismId);
+    if (!identity?.accountAddress) throw httpError(409, 'no Prism account for this user');
+    const account = identity.accountAddress;
+    const op = (this.store.read().saveOperations ?? {})[operationId];
+    if (!op || op.positionId !== `save_${account.toLowerCase()}`) throw httpError(404, 'save operation not found');
+
+    // Independent readback is canonical — the vault's own share/value read, not the indexer or a cache.
+    let stateReadback = null;
+    if (this.vaultReader.available()) {
+      const shares = await this.vaultReader.sharesOf(account);
+      stateReadback = { available: true, shares: shares ?? '0', valueAtomic: shares == null ? null : await this.vaultReader.convertToAssets(shares) };
+    }
+    return buildSaveProof({ operation: op, save: this.config.save, ownerAccount: account, evidence: op.evidence ?? null, stateReadback });
   }
 }

@@ -43,6 +43,7 @@ final class PrismAPI: @unchecked Sendable {
   }
   func savePosition() async throws -> SavePositionResponse { try await api.request("/v1/save/position") }
   func saveWithdrawals() async throws -> SaveWithdrawalsResponse { try await api.request("/v1/save/withdrawals") }
+  func saveProof(operationId: String) async throws -> SaveProofResponse { try await api.request("/v1/save/operations/\(operationId)/proof") }
   func withdrawQuote(sharesAtomic: String) async throws -> WithdrawQuote {
     try await api.send("/v1/save/withdraw/quote", body: WithdrawQuoteBody(sharesAtomic: sharesAtomic))
   }
