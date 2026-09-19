@@ -9,6 +9,12 @@ function signable(r) {
   return { requestId, requesterPrismId, payerPrismId: r.payerPrismId ?? null, amountAtomic, token, tokenSymbol, memo, createdAt, expiresAt };
 }
 
+const PHONE_PATTERNS = [
+  /tel:/i,
+  /\+\d{7,15}/,
+  /\b\d{3}[-.\s()]*\d{3}[-.\s()]*\d{4}\b/
+];
+
 function positiveAtomic(value) {
   if (!/^\d+$/.test(String(value)) || BigInt(value) <= 0n) throw new Error('amount must be a positive integer');
   return String(BigInt(value));
@@ -34,6 +40,13 @@ export class RequestService {
     amountAtomic = positiveAtomic(amountAtomic);
     if (BigInt(amountAtomic) > this.config.limits.maxPaymentAtomic) throw new Error('amount exceeds Prism payment limit');
     memo = String(memo ?? '').trim().slice(0, 120);
+    for (const re of PHONE_PATTERNS) {
+      if (re.test(memo)) {
+        const err = new Error('memo must not contain a phone number (INV-P1)');
+        err.statusCode = 400;
+        throw err;
+      }
+    }
     const expiry = expiresAt ? new Date(expiresAt) : new Date(Date.now() + 24 * 60 * 60_000);
     if (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= Date.now() || expiry.getTime() > Date.now() + 30 * 24 * 60 * 60_000) throw new Error('invalid request expiry');
 
@@ -114,7 +127,7 @@ export class RequestService {
   getPublicView(requestId) {
     this._expireOpenRequests();
     const r = this.store.read().requests[requestId];
-    if (!r) {
+    if (!r || r.isPublic !== true) {
       const e = new Error('request not found');
       e.statusCode = 404;
       throw e;

@@ -68,6 +68,21 @@ test('getPublicView exposes only safe metadata (INV-P1)', async () => {
     assert.ok(!blob.includes(leak), `public view leaks '${leak}'`);
   }
   assert.throws(() => service.getPublicView('req_doesnotexist'), /not found/);
+  // Designated 1-to-1 requests are NOT exposed to the public view (404)
+  const designated = service.draft({ requesterPrismId: 'a', payerPrismId: 'b', amountAtomic: '15000000', memo: 'Private' });
+  assert.throws(() => service.getPublicView(designated.request.requestId), /not found/);
+});
+
+test('draft rejects phone numbers in memo (INV-P1)', async () => {
+  const { service } = fixture();
+  assert.throws(
+    () => service.draft({ requesterPrismId: 'a', amountAtomic: '1000000', memo: 'Call +15551234567' }),
+    (err) => err.statusCode === 400 && /INV-P1/.test(err.message)
+  );
+  assert.throws(
+    () => service.draft({ requesterPrismId: 'a', amountAtomic: '1000000', memo: 'tel:555-123-4567' }),
+    (err) => err.statusCode === 400 && /INV-P1/.test(err.message)
+  );
 });
 
 // --- fulfillment: anyone may pay universal; designated stays bound -----------------

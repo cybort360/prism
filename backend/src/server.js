@@ -156,7 +156,10 @@ route('POST', '/v1/resolve/prism', async ({ user, body }) => resolverService.res
 route('POST', '/v1/requests/draft', async ({ user, body }) => requestService.draft({ ...body, payerPrismId: body.payerPrismId ?? null, requesterPrismId: user.prismId }), true);
 // Public, unauthenticated: safe metadata only (handle/name, amount, token, memo,
 // destination, status, expiry) — never phone, lookup keys, or sessions.
-route('GET', '/v1/requests/:requestId/public', async ({ params }) => requestService.getPublicView(params.requestId));
+route('GET', '/v1/requests/:requestId/public', async ({ params }) => {
+  rateLimit('public-request-view', 60);
+  return requestService.getPublicView(params.requestId);
+});
 route('POST', '/v1/requests/commit', async ({ user, body }) => requestService.commit({ ...body, requesterPrismId: user.prismId }), true);
 route('GET', '/v1/requests', async ({ user }) => requestService.listFor(user.prismId), true);
 route('POST', '/v1/requests/status', async ({ user, body }) => requestService.setStatus(body.requestId, body.status, user.prismId), true);
