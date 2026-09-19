@@ -181,7 +181,7 @@ contract PrismClaimVault {
         pure
         returns (bytes32)
     {
-        return keccak256(abi.encodePacked(claimId, recipientReference, amount, sender, expiry));
+        return keccak256(abi.encode(claimId, recipientReference, amount, sender, expiry));
     }
 
     function eligibilityDigest(bytes32 claimId, address recipient, uint256 aliasVersion, uint256 expiry, bytes32 nonce)
