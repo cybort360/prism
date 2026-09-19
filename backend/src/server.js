@@ -56,17 +56,21 @@ const circleActivityService = new CircleActivityService({ store, config, circleS
 // Proposal message threads: display context only. The service holds no approval or execution
 // path, so threads cannot move money no matter what is posted through these routes.
 const circleMessageService = new CircleMessageService({ store, config, circleService, identityService });
-// Unified prepare-only facade over spend / receive / cross-chain / save. Delegates to the
-// audited services; never submits, never transitions, never completes.
-const intentDispatcherService = new IntentDispatcherService({ circleService, requestService, auroraService, config });
 // Prism Save (announced preview): quotes + chain-reconstructed positions. No real deposit is
 // produced and no APY is invented until the earnAUSD substrate is verified (INV-M2: the vault
 // is the balance authority, the backend only projects).
 const saveService = new SaveService({ store, config, identityService });
 const savePositionService = new SavePositionService({ store, config, identityService });
-// The dispatcher prepares SAVE intents through the SaveService; wire it now that both exist.
-intentDispatcherService.saves = saveService;
-intentDispatcherService.identities = identityService;
+// Unified prepare-only facade over spend / receive / cross-chain / save. Delegates to the
+// audited services; never submits, never transitions, never completes.
+const intentDispatcherService = new IntentDispatcherService({
+  circleService,
+  requestService,
+  auroraService,
+  saveService,
+  identityService,
+  config
+});
 
 // Replay/idempotency guard for webhook event ids.
 
