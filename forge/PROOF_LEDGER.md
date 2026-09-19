@@ -8,7 +8,7 @@ because code exists.
 
 | Suite | Command | Result | Status |
 |---|---|---|---|
-| Backend | `cd backend && node --test test/*.test.js` | 375 pass / 0 fail (371 baseline + 4 circle-messages) | `VERIFIED` |
+| Backend | `cd backend && node --test test/*.test.js` | 380 pass / 0 fail (375 baseline + 5 universal-requests) | `VERIFIED` |
 | Contracts | `cd contracts && forge test --no-match-path 'test/circles/*'` (canonical offline suite; `test/circles/*` needs a `--network monad` fork) | 74 pass / 0 fail | `VERIFIED` |
 | iOS unit | `xcodebuild … -only-testing:PrismTests test` | 121 pass / 0 fail (112 + 6 continuity-UX + 3 error-sanitization) | `VERIFIED` |
 
