@@ -147,8 +147,9 @@ export class IntentDispatcherService {
 
   // --- RECEIVE ---------------------------------------------------------------
   // Records destination ALONGSIDE the signed request; the request envelope itself
-  // is built exclusively by requestService.draft (never extended here).
-  async _prepareReceive({ requesterPrismId, payerPrismId, amountAtomic, memo = '', destination = ReceiveDestination.PRIMARY, circleId = null, expiresAt } = {}) {
+  // is built exclusively by requestService.draft (never extended here). An omitted
+  // payerPrismId drafts a universal public request payable by anyone.
+  async _prepareReceive({ requesterPrismId, payerPrismId = null, amountAtomic, memo = '', destination = ReceiveDestination.PRIMARY, circleId = null, expiresAt } = {}) {
     if (!requesterPrismId) throw httpError(400, 'requesterPrismId is required');
     if (!DESTINATIONS.has(destination)) {
       throw httpError(400, `unknown destination '${String(destination)}' (PRIMARY, SAVINGS, CIRCLE)`);
@@ -168,6 +169,8 @@ export class IntentDispatcherService {
       kind: IntentKind.RECEIVE,
       destination,
       circleId: destination === ReceiveDestination.CIRCLE ? circleId : null,
+      isPublic: draft.request.isPublic === true,
+      shareableUrl: draft.request.isPublic === true ? `/pay/${draft.request.requestId}` : null,
       savingsNote: destination === ReceiveDestination.SAVINGS
         ? 'auto-deposit into savings on settlement (savings vault integration specified, not yet deployed)'
         : null,

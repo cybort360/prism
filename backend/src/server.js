@@ -142,7 +142,11 @@ route('POST', '/v1/resolve/handle', async ({ user, body }) => resolverService.re
 route('POST', '/v1/resolve/prism', async ({ user, body }) => resolverService.resolvePrismId(user.prismId, body.prismId), true);
 
 // --- off-chain payment requests ---------------------------------------------
-route('POST', '/v1/requests/draft', async ({ user, body }) => requestService.draft({ ...body, requesterPrismId: user.prismId }), true);
+// payerPrismId is optional: omitted drafts a universal public request payable by anyone.
+route('POST', '/v1/requests/draft', async ({ user, body }) => requestService.draft({ ...body, payerPrismId: body.payerPrismId ?? null, requesterPrismId: user.prismId }), true);
+// Public, unauthenticated: safe metadata only (handle/name, amount, token, memo,
+// destination, status, expiry) — never phone, lookup keys, or sessions.
+route('GET', '/v1/requests/:requestId/public', async ({ params }) => requestService.getPublicView(params.requestId));
 route('POST', '/v1/requests/commit', async ({ user, body }) => requestService.commit({ ...body, requesterPrismId: user.prismId }), true);
 route('GET', '/v1/requests', async ({ user }) => requestService.listFor(user.prismId), true);
 route('POST', '/v1/requests/status', async ({ user, body }) => requestService.setStatus(body.requestId, body.status, user.prismId), true);
