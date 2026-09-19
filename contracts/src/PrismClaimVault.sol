@@ -89,7 +89,8 @@ contract PrismClaimVault {
     }
 
     /// @notice Fund a claim by pulling USDC via ERC-3009.
-    /// @dev The nonce binds the claim, amount, and sender so a relayer cannot repoint it.
+    /// @dev The nonce binds the claim, amount, sender, and expiry so a relayer cannot repoint it
+    ///      to a different expiry or recipient reference.
     function fundClaim(
         bytes32 claimId,
         bytes32 recipientReference,
@@ -108,7 +109,7 @@ contract PrismClaimVault {
         }
         if (expiry <= block.timestamp) revert InvalidClaim();
         if (claims[claimId].status != ClaimStatus.None) revert ClaimExists();
-        if (nonce != fundingNonce(claimId, recipientReference, amount, sender)) revert NonceBindingMismatch();
+        if (nonce != fundingNonce(claimId, recipientReference, amount, sender, expiry)) revert NonceBindingMismatch();
 
         claims[claimId] = Claim({
             claimId: claimId,
@@ -175,12 +176,12 @@ contract PrismClaimVault {
         emit ClaimRefunded(claimId, c.sender, c.amount);
     }
 
-    function fundingNonce(bytes32 claimId, bytes32 recipientReference, uint256 amount, address sender)
+    function fundingNonce(bytes32 claimId, bytes32 recipientReference, uint256 amount, address sender, uint256 expiry)
         public
         pure
         returns (bytes32)
     {
-        return keccak256(abi.encode(claimId, recipientReference, amount, sender));
+        return keccak256(abi.encodePacked(claimId, recipientReference, amount, sender, expiry));
     }
 
     function eligibilityDigest(bytes32 claimId, address recipient, uint256 aliasVersion, uint256 expiry, bytes32 nonce)

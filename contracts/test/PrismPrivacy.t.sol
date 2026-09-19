@@ -147,7 +147,7 @@ contract PrismPrivacyTest is Test {
         uint256 amount = 20e6;
         uint256 expiry = block.timestamp + 7 days;
         uint256 validBefore = block.timestamp + 300;
-        bytes32 nonce = vault.fundingNonce(claimId, recipientReference, amount, payer);
+        bytes32 nonce = vault.fundingNonce(claimId, recipientReference, amount, payer, expiry);
 
         bytes32 structHash =
             keccak256(abi.encode(RECEIVE_TYPEHASH, payer, address(vault), amount, uint256(0), validBefore, nonce));
