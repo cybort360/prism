@@ -8,8 +8,8 @@ because code exists.
 
 | Suite | Command | Result | Status |
 |---|---|---|---|
-| Backend | `cd backend && node --test test/*.test.js` | 380 pass / 0 fail (375 baseline + 5 universal-requests) | `VERIFIED` |
-| Contracts | `cd contracts && forge test --no-match-path 'test/circles/*'` (canonical offline suite; `test/circles/*` needs a `--network monad` fork) | 74 pass / 0 fail | `VERIFIED` |
+| Backend | `cd backend && node --test test/*.test.js` | 442 pass / 0 fail (380 baseline + 61 save-primitive + 1 universal-request-inv-p1) | `VERIFIED` |
+| Contracts | `cd contracts && forge test --no-match-path 'test/circles/*'` (canonical offline suite; `test/circles/*` needs a `--network monad` fork) | 77 pass / 0 fail (74 baseline + 3 fundingNonce-expiry-binding) | `VERIFIED` |
 | iOS unit | `xcodebuild … -only-testing:PrismTests test` | 121 pass / 0 fail (112 + 6 continuity-UX + 3 error-sanitization) | `VERIFIED` |
 
 ## Winning vertical slice (2026-09-09) — `bash scripts/verify/vertical-slice.sh`
