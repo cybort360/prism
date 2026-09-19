@@ -21,6 +21,7 @@ import { AuroraService } from './services/auroraService.js';
 import { ProofService } from './services/proofService.js';
 import { P256AccountService } from './services/p256AccountService.js';
 import { CircleService } from './services/circleService.js';
+import { CircleMessageService } from './services/circleMessageService.js';
 import { CircleActivityService } from './services/circleActivityService.js';
 import { safeCircleAdapter, allowanceModuleGate } from './chain/safeCircle.js';
 import { p256ChainOps } from './chain/p256Account.js';
@@ -50,6 +51,9 @@ const circleService = new CircleService({ store, config, identityService, safeAd
 // payment's evidence through CircleService rather than a second endpoint existing for it.
 const proofService = new ProofService({ paymentService, identityService, circleService, config });
 const circleActivityService = new CircleActivityService({ store, config, circleService, identityService });
+// Proposal message threads: display context only. The service holds no approval or execution
+// path, so threads cannot move money no matter what is posted through these routes.
+const circleMessageService = new CircleMessageService({ store, config, circleService, identityService });
 // Unified prepare-only facade over spend / receive / cross-chain. Delegates to the
 // audited services; never submits, never transitions, never completes.
 const intentDispatcherService = new IntentDispatcherService({ circleService, requestService, auroraService, config });
@@ -492,6 +496,15 @@ route('POST', '/v1/circles/:id/payments/:proposalId/execute', async ({ user, par
     scope: 'circle-execute', key: idempotencyKey, actor: user.prismId,
     fingerprint: fingerprint('execute', params.proposalId)
   }, () => circleService.executePayment({ circleId: params.id, proposalId: params.proposalId, actorPrismId: user.prismId })), true);
+
+// --- proposal message threads (context only — never spending authority) -----------
+route('POST', '/v1/circles/:id/proposals/:proposalId/messages', async ({ user, params, body }) =>
+  circleMessageService.postProposalMessage({
+    circleId: params.id, proposalId: params.proposalId, authorPrismId: user.prismId,
+    text: body.text, attachmentHash: body.attachmentHash ?? null
+  }), true);
+route('GET', '/v1/circles/:id/proposals/:proposalId/messages', async ({ user, params }) =>
+  circleMessageService.getProposalMessages({ circleId: params.id, proposalId: params.proposalId, requesterPrismId: user.prismId }), true);
 
 // --- infrastructure: Alchemy webhook, dev proof surface, observability -------
 
