@@ -4,12 +4,12 @@ The single record of what is actually proven. A row is `VERIFIED` **only** with 
 executed and its result. `UNTESTED · PARTIAL · FAILED · VERIFIED · REGRESSED`. Never upgrade a row
 because code exists.
 
-## Suite runs (executed 2026-09-08, this session, on `main`)
+## Suite runs (executed 2026-09-19, this session, on `main`)
 
 | Suite | Command | Result | Status |
 |---|---|---|---|
-| Backend | `cd backend && node --test test/*.test.js` | 159 pass / 0 fail (148 + 4 p256-account + 2 device-key activity/reconcile + 5 continuity-lab) | `VERIFIED` |
-| Contracts | `cd contracts && forge test` | 49 pass / 0 fail (43 + 6 PrismP256Account) | `VERIFIED` |
+| Backend | `cd backend && node --test test/*.test.js` | 370 pass / 0 fail (362 baseline + 8 intent-dispatcher) | `VERIFIED` |
+| Contracts | `cd contracts && forge test --no-match-path 'test/circles/*'` (canonical offline suite; `test/circles/*` needs a `--network monad` fork) | 74 pass / 0 fail | `VERIFIED` |
 | iOS unit | `xcodebuild … -only-testing:PrismTests test` | 121 pass / 0 fail (112 + 6 continuity-UX + 3 error-sanitization) | `VERIFIED` |
 
 ## Winning vertical slice (2026-09-09) — `bash scripts/verify/vertical-slice.sh`
@@ -87,6 +87,7 @@ Developer → Continuity Lab (`ContinuityLabView`).
 | AUTH-2 | Replay rejected (single-use nonce) | `VERIFIED` | `testReplayRejected`, `mutation-audit.test.js` MUT-08/16 |
 | MONEY-1 | Submission ≠ completion; UI-terminal only after reconciled receipt | `VERIFIED` | `mutation-audit.test.js` MUT-15/16 |
 | MONEY-2 | Backend not the canonical balance authority | `PARTIAL` | architectural; no explicit negative test |
+| CLAIM-EXPIRY-BINDING | Claim-vault funding nonce binds expiry; cross-expiry funding reverts (front-running mitigation) | `VERIFIED` | `PrismClaimVault.t.sol::testFundingNonceBindsExpiry` — `fundingNonce(…, expiryA)` ≠ `fundingNonce(…, expiryB)`; funding with expiryB under nonceA reverts `NonceBindingMismatch`; `PrismClaimVaultTest` 15/15 |
 | GAS-1 | Payer with MON = 0 can pay | `VERIFIED` | live: a fresh payer holding 2.00 USDC and **0 MON** paid 1.00 USDC; relayer paid gas; payer MON stayed 0. tx `0xd34de0a6ab02d6d470ef60a199a31dbeb2fb5cfb90d33fbd25fc8501a8034a16` (status `0x1`, block 60878354) |
 
 ## On-chain / live (NOT re-verified this phase — do not upgrade without a tx hash)
