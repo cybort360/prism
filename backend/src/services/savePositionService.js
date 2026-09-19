@@ -1,0 +1,104 @@
+import { reconstructPosition } from '../domain/savePosition.js';
+import { isTerminal, consumerPhase } from '../lib/saveLifecycle.js';
+import { buildSaveProof } from '../lib/saveProof.js';
+
+function httpError(statusCode, message) { const e = new Error(message); e.statusCode = statusCode; return e; }
+
+// SavePositionService — reads a user's Save position. The vault is the source of truth for shares + value
+// (via an injected SaveVaultReader), and the backend store is a projection of operations only. The
+// position reconstructs from chain, so it survives reinstall/login without a local row.
+//
+// The SaveVaultReader interface (real impl reads earnAUSD on Monad; a test injects a fixture):
+//   available()                    -> boolean          // is the vault readable on this deployment?
+//   sharesOf(account)              -> Promise<string>  // earnAUSD shares held by the account (canonical)
+//   convertToAssets(sharesAtomic)  -> Promise<string>  // the vault's OWN share→AUSD conversion
+//   apy()                          -> Promise<{ apy, apySource, apyWindow, observedAt } | null>
+
+/** Preview reader — the real earnAUSD vault is mainnet-only and its ABI is unverified, so nothing is
+ *  readable here yet. It announces itself (available:false) rather than inventing a position. */
+export class PreviewVaultReader {
+  constructor(config) { this.config = config; }
+  available() { return this.config.save.substrateVerified === true; }
+  async sharesOf() { return null; }
+  async convertToAssets() { return null; }
+  async apy() { return null; }
+}
+
+function terminalSaveOps(store, positionId) {
+  return Object.values(store.read().saveOperations ?? {})
+    .filter((o) => o.positionId === positionId && isTerminal(o.kind, o.state));
+}
+
+export class SavePositionService {
+  constructor({ store, config, identityService, vaultReader }) {
+    this.store = store;
+    this.config = config;
+    this.identityService = identityService;
+    this.vaultReader = vaultReader ?? new PreviewVaultReader(config);
+  }
+
+  async position(prismId) {
+    const identity = this.identityService.get(prismId);
+    if (!identity?.accountAddress) { const e = new Error('no Prism account for this user'); e.statusCode = 409; throw e; }
+    const account = identity.accountAddress;
+
+    // Chain first — never serve a stale cached value as if current.
+    const available = this.vaultReader.available();
+    let shares = null, value = null, apyRecord = null;
+    if (available) {
+      shares = await this.vaultReader.sharesOf(account);
+      value = shares == null ? null : await this.vaultReader.convertToAssets(shares);
+      apyRecord = await this.vaultReader.apy();
+    }
+
+    const positionId = `save_${account.toLowerCase()}`;
+    const operations = terminalSaveOps(this.store, positionId);
+    return reconstructPosition({
+      prismIdentityId: identity.prismId, ownerAccount: account,
+      chain: { available, shares, currentAUSDValue: value },
+      operations, apyRecord
+    });
+  }
+
+  /** In-flight withdrawals (queued requests + the instant/convert legs). Pending assets stay VISIBLE —
+   *  never removed from view — until USDC reaches the user. Projected from the operation store; empty in
+   *  preview since execution is gated. */
+  pendingWithdrawals(prismId) {
+    const identity = this.identityService.get(prismId);
+    if (!identity?.accountAddress) return [];
+    const positionId = `save_${identity.accountAddress.toLowerCase()}`;
+    const withdrawKinds = new Set(['WITHDRAW_INSTANT', 'WITHDRAW_STANDARD', 'CLAIM_WITHDRAWAL']);
+    return Object.values(this.store.read().saveOperations ?? {})
+      .filter((o) => o.positionId === positionId && withdrawKinds.has(o.kind) && !isTerminal(o.kind, o.state) && o.state !== 'FAILED')
+      .map((o) => {
+        const phase = consumerPhase(o.kind, o.state);
+        return {
+          operationId: o.operationId,
+          amountAtomic: o.outputUSDC ?? o.quotedUSDC ?? null,   // consumer sees the USDC they'll receive
+          status: phase.label,                                   // Withdrawal requested / Processing / Ready
+          phase: phase.phase,
+          claimable: o.state === 'CLAIMABLE',
+          requestedAt: o.submittedAt ?? o.createdAt ?? null,
+          expectedWindow: 'Up to 72 hours'                       // documented vault window; never an exact time
+        };
+      });
+  }
+
+  /** The canonical PrismSaveProof for one of the user's own Save operations. Includes an independent
+   *  chain readback when the vault is readable; verification never marks a fact proven without evidence. */
+  async saveProof(prismId, operationId) {
+    const identity = this.identityService.get(prismId);
+    if (!identity?.accountAddress) throw httpError(409, 'no Prism account for this user');
+    const account = identity.accountAddress;
+    const op = (this.store.read().saveOperations ?? {})[operationId];
+    if (!op || op.positionId !== `save_${account.toLowerCase()}`) throw httpError(404, 'save operation not found');
+
+    // Independent readback is canonical — the vault's own share/value read, not the indexer or a cache.
+    let stateReadback = null;
+    if (this.vaultReader.available()) {
+      const shares = await this.vaultReader.sharesOf(account);
+      stateReadback = { available: true, shares: shares ?? '0', valueAtomic: shares == null ? null : await this.vaultReader.convertToAssets(shares) };
+    }
+    return buildSaveProof({ operation: op, save: this.config.save, ownerAccount: account, evidence: op.evidence ?? null, stateReadback });
+  }
+}

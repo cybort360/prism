@@ -207,7 +207,7 @@ test('unknown kinds are rejected and the facade exposes no submit/execute surfac
   for (const m of ['submitIntent', 'executeIntent', 'completeIntent', 'reconcileIntent', 'submitSpend', 'submitPayment']) {
     assert.equal(typeof svc[m], 'undefined', `${m} must not exist on the facade`);
   }
-  assert.deepEqual(svc.kinds().sort(), ['CROSS_CHAIN', 'RECEIVE', 'SPEND']);
+  assert.deepEqual(svc.kinds().sort(), ['CROSS_CHAIN', 'RECEIVE', 'SAVE', 'SPEND']);
 });
 
 test('non-positive amounts are rejected before any delegation', async () => {
@@ -218,6 +218,35 @@ test('non-positive amounts are rejected before any delegation', async () => {
     /positive integer/
   );
   assert.equal(circles.calls.length, 0, 'no delegate was touched');
+});
+
+// --- SAVE: delegates to SaveService, references the user's own position -------------
+
+function saveDispatcher() {
+  return new IntentDispatcherService({
+    circleService: stubCircles(),
+    requestService: { draft: () => { throw new Error('not under test'); } },
+    auroraService: stubAurora(),
+    saveService: { quote: async ({ prismId, amountAtomic }) => ({ provider: 'stub', live: false, amountAtomic }) },
+    identityService: { get: (id) => id === 'a' ? { prismId: 'a', accountAddress: '0xAbc0000000000000000000000000000000000001' } : null },
+    config
+  });
+}
+
+test('SAVE prepares through SaveService with the user-owned position id', async () => {
+  const svc = saveDispatcher();
+  const out = await svc.prepareIntent({ kind: 'SAVE', prismId: 'a', amountAtomic: '5000000' });
+  assert.equal(out.kind, 'SAVE');
+  assert.equal(out.positionId, 'save_0xabc0000000000000000000000000000000000001');
+  assert.equal(out.quote.amountAtomic, '5000000');
+});
+
+test('SAVE without a save service is unavailable (503), never invented', async () => {
+  const svc = dispatcher();
+  await assert.rejects(
+    () => svc.prepareIntent({ kind: 'SAVE', prismId: 'a', amountAtomic: '5000000' }),
+    (e) => e.statusCode === 503
+  );
 });
 
 // --- HTTP: POST /v1/intent/prepare ------------------------------------------------

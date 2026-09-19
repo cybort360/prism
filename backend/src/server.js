@@ -21,6 +21,8 @@ import { AuroraService } from './services/auroraService.js';
 import { ProofService } from './services/proofService.js';
 import { P256AccountService } from './services/p256AccountService.js';
 import { CircleService } from './services/circleService.js';
+import { SaveService } from './services/saveService.js';
+import { SavePositionService } from './services/savePositionService.js';
 import { CircleMessageService } from './services/circleMessageService.js';
 import { CircleActivityService } from './services/circleActivityService.js';
 import { safeCircleAdapter, allowanceModuleGate } from './chain/safeCircle.js';
@@ -54,9 +56,17 @@ const circleActivityService = new CircleActivityService({ store, config, circleS
 // Proposal message threads: display context only. The service holds no approval or execution
 // path, so threads cannot move money no matter what is posted through these routes.
 const circleMessageService = new CircleMessageService({ store, config, circleService, identityService });
-// Unified prepare-only facade over spend / receive / cross-chain. Delegates to the
+// Unified prepare-only facade over spend / receive / cross-chain / save. Delegates to the
 // audited services; never submits, never transitions, never completes.
 const intentDispatcherService = new IntentDispatcherService({ circleService, requestService, auroraService, config });
+// Prism Save (announced preview): quotes + chain-reconstructed positions. No real deposit is
+// produced and no APY is invented until the earnAUSD substrate is verified (INV-M2: the vault
+// is the balance authority, the backend only projects).
+const saveService = new SaveService({ store, config, identityService });
+const savePositionService = new SavePositionService({ store, config, identityService });
+// The dispatcher prepares SAVE intents through the SaveService; wire it now that both exist.
+intentDispatcherService.saves = saveService;
+intentDispatcherService.identities = identityService;
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -159,7 +169,16 @@ route('POST', '/v1/intent/prepare', async ({ user, body }) => {
   if (kind === 'SPEND') return intentDispatcherService.prepareIntent({ ...body, actorPrismId: user.prismId });
   if (kind === 'RECEIVE') return intentDispatcherService.prepareIntent({ ...body, requesterPrismId: user.prismId });
   if (kind === 'CROSS_CHAIN') return intentDispatcherService.prepareIntent({ ...body, prismId: user.prismId });
+  if (kind === 'SAVE') return intentDispatcherService.prepareIntent({ ...body, prismId: user.prismId });
   return intentDispatcherService.prepareIntent({ ...body });
+}, true);
+
+// --- Prism Save (announced preview) ------------------------------------------------
+// Quotes and chain-reconstructed positions only. No deposit execution, no invented APY.
+route('GET', '/v1/save/position', async ({ user }) => savePositionService.position(user.prismId), true);
+route('POST', '/v1/save/prepare', async ({ user, body }) => {
+  rateLimit(`save-quote:${user.prismId}`, 60);
+  return intentDispatcherService.prepareIntent({ kind: 'SAVE', prismId: user.prismId, amountAtomic: body.amountAtomic });
 }, true);
 
 // --- direct payments (Prism envelope + USDC ERC-3009 authorization) ---------

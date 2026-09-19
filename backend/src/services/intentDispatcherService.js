@@ -17,6 +17,8 @@
  *                  (freeze into a routeHash-bound envelope). Settlement itself stays
  *                  inside auroraService -> paymentService; this facade never signs,
  *                  submits, or reconciles.
+ *   SAVE        -> saveService.quote (preview quote, writes nothing). Position id
+ *                  references the user's own account; shares live on-chain (INV-M2).
  *
  * Guardrails (enforced before any delegation):
  *   - INV-P1: any phone-looking value in params or memo is rejected with 400.
@@ -26,7 +28,8 @@
 export const IntentKind = Object.freeze({
   SPEND: 'SPEND',
   RECEIVE: 'RECEIVE',
-  CROSS_CHAIN: 'CROSS_CHAIN'
+  CROSS_CHAIN: 'CROSS_CHAIN',
+  SAVE: 'SAVE'
 });
 
 export const ReceiveDestination = Object.freeze({
@@ -81,18 +84,20 @@ function assertContextMessage(value) {
 }
 
 export class IntentDispatcherService {
-  constructor({ circleService, requestService, auroraService, config = null } = {}) {
+  constructor({ circleService, requestService, auroraService, saveService = null, identityService = null, config = null } = {}) {
     if (!circleService) throw new Error('circleService is required');
     if (!requestService) throw new Error('requestService is required');
     if (!auroraService) throw new Error('auroraService is required');
     this.circles = circleService;
     this.requests = requestService;
     this.aurora = auroraService;
+    this.saves = saveService;
+    this.identities = identityService;
     this.config = config;
   }
 
   kinds() {
-    return [IntentKind.SPEND, IntentKind.RECEIVE, IntentKind.CROSS_CHAIN];
+    return [IntentKind.SPEND, IntentKind.RECEIVE, IntentKind.CROSS_CHAIN, IntentKind.SAVE];
   }
 
   async prepareIntent({ kind, ...params } = {}) {
@@ -104,6 +109,8 @@ export class IntentDispatcherService {
         return this._prepareReceive(params);
       case IntentKind.CROSS_CHAIN:
         return this._prepareCrossChain(params);
+      case IntentKind.SAVE:
+        return this._prepareSave(params);
       default:
         throw httpError(400, `unknown intent kind '${String(kind)}'`);
     }
@@ -165,18 +172,41 @@ export class IntentDispatcherService {
       destination, circleId: destination === ReceiveDestination.CIRCLE ? circleId : null,
       expiresAt
     });
+    // SAVINGS destination references the requester's own on-chain position id
+    // (`save_<ownerAccount>`); shares live with the user, never with Prism.
+    let savingsPositionId = null;
+    if (destination === ReceiveDestination.SAVINGS) {
+      const account = this.identities?.get?.(requesterPrismId)?.accountAddress ?? null;
+      if (account) savingsPositionId = `save_${String(account).toLowerCase()}`;
+    }
     return {
       kind: IntentKind.RECEIVE,
       destination,
       circleId: destination === ReceiveDestination.CIRCLE ? circleId : null,
       isPublic: draft.request.isPublic === true,
       shareableUrl: draft.request.isPublic === true ? `/pay/${draft.request.requestId}` : null,
+      savingsPositionId,
       savingsNote: destination === ReceiveDestination.SAVINGS
         ? 'auto-deposit into savings on settlement (savings vault integration specified, not yet deployed)'
         : null,
       request: draft.request,
       signable: draft.signable
     };
+  }
+
+  // --- SAVE ------------------------------------------------------------------
+  // USDC-to-savings deposit intent. Delegates entirely to SaveService.quote (which writes
+  // nothing and announces preview status honestly); the position id references the user's
+  // own account (`save_<ownerAccount>`) whose shares live on-chain, never with Prism.
+  async _prepareSave({ prismId, amountAtomic } = {}) {
+    if (!prismId) throw httpError(400, 'prismId is required');
+    if (!this.saves) throw httpError(503, 'save is not available on this deployment');
+    const amount = assertPositiveAtomic(amountAtomic);
+    const quote = await this.saves.quote({ prismId, amountAtomic: amount });
+    let positionId = null;
+    const account = this.identities?.get?.(prismId)?.accountAddress ?? null;
+    if (account) positionId = `save_${String(account).toLowerCase()}`;
+    return { kind: IntentKind.SAVE, positionId, quote };
   }
 
   // --- CROSS_CHAIN -------------------------------------------------------------
