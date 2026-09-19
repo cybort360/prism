@@ -19,7 +19,7 @@ export class RequestService {
     this.config = config;
   }
 
-  draft({ requesterPrismId, payerPrismId, amountAtomic, memo = '', expiresAt }) {
+  draft({ requesterPrismId, payerPrismId, amountAtomic, memo = '', destination = 'PRIMARY', circleId = null, expiresAt }) {
     if (!this.identityService.get(requesterPrismId)) throw new Error('requester not found');
     if (!this.identityService.get(payerPrismId)) throw new Error('payer not found');
     if (requesterPrismId === payerPrismId) throw new Error('cannot request yourself');
@@ -37,6 +37,11 @@ export class RequestService {
       token: this.config.chain.usdc,
       tokenSymbol: 'USDC',
       memo,
+      // Where settlement lands (PRIMARY, SAVINGS, CIRCLE + Circle id). Stored
+      // metadata ONLY — signable() below is unchanged, so the signed envelope
+      // stays byte-identical and backward compatible.
+      destination,
+      circleId,
       createdAt: new Date().toISOString(),
       expiresAt: expiry.toISOString(),
       status: 'DRAFT'

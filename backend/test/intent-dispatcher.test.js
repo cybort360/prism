@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+import net from 'node:net';
+import { spawn } from 'node:child_process';
 import { JsonStore } from '../src/lib/jsonStore.js';
 import { RequestService } from '../src/services/requestService.js';
 import { IntentDispatcherService } from '../src/services/intentDispatcherService.js';
@@ -216,4 +218,62 @@ test('non-positive amounts are rejected before any delegation', async () => {
     /positive integer/
   );
   assert.equal(circles.calls.length, 0, 'no delegate was touched');
+});
+
+// --- HTTP: POST /v1/intent/prepare ------------------------------------------------
+// Fast integration: boot the real server, auth two devices, prepare a RECEIVE
+// through HTTP. Proves the route is mounted, identity-bound, and persisted.
+test('HTTP POST /v1/intent/prepare serves RECEIVE and rejects unknown kinds', { timeout: 30_000 }, async () => {
+  const freePort = () => new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.unref();
+    s.on('error', reject);
+    s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
+  });
+  const port = await freePort();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prism-intent-http-'));
+  const child = spawn(process.execPath, ['src/server.js'], {
+    cwd: path.resolve(import.meta.dirname, '..'),
+    env: { ...process.env, PORT: String(port), STORE_PATH: path.join(dir, 'store.json'), NODE_ENV: 'development', MONAD_CHAIN_ID: '10143' },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    for (let i = 0; i < 60; i++) {
+      try { const r = await fetch(`${base}/health`); if (r.ok) break; } catch {}
+      await new Promise(r => setTimeout(r, 50));
+      if (i === 59) throw new Error('server did not become ready');
+    }
+    const post = (p, body, headers) => fetch(`${base}${p}`, {
+      method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body)
+    });
+    async function device(owner, handle) {
+      const { nonce } = await (await post('/v1/auth/challenge', {})).json();
+      const res = await post('/v1/auth/device', {
+        account: owner.address, bindingProof: await owner.bindingProof(nonce), challenge: nonce, handle
+      });
+      assert.equal(res.status, 200);
+      return res.json();
+    }
+    const alice = await device(meraAccount(PK_A), null);
+    const bob = await device(meraAccount(PK_B), null);
+    const headers = { authorization: `Bearer ${alice.session}` };
+
+    const ok = await post('/v1/intent/prepare', {
+      kind: 'RECEIVE', payerPrismId: bob.identity.prismId,
+      amountAtomic: '15000000', memo: 'Dinner', destination: 'PRIMARY'
+    }, headers);
+    assert.equal(ok.status, 200);
+    const prepared = await ok.json();
+    assert.equal(prepared.kind, 'RECEIVE');
+    assert.equal(prepared.destination, 'PRIMARY');
+    assert.equal(prepared.request.status, 'DRAFT');
+    assert.equal(prepared.request.destination, 'PRIMARY', 'destination persisted on the record');
+    assert.equal(prepared.request.requesterPrismId, alice.identity.prismId, 'server binds the caller');
+
+    const bad = await post('/v1/intent/prepare', { kind: 'TELEPORT' }, headers);
+    assert.equal(bad.status, 400);
+  } finally {
+    child.kill('SIGTERM');
+  }
 });

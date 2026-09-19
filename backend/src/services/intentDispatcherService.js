@@ -36,7 +36,7 @@ export const ReceiveDestination = Object.freeze({
 });
 const DESTINATIONS = new Set(Object.values(ReceiveDestination));
 
-const MAX_CONTEXT_CHARS = 500;
+const MAX_CONTEXT_CHARS = 120;
 
 const PHONE_PATTERNS = [
   /tel:/i,
@@ -159,7 +159,11 @@ export class IntentDispatcherService {
     const amount = assertPositiveAtomic(amountAtomic);
     const note = assertContextMessage(memo);
 
-    const draft = this.requests.draft({ requesterPrismId, payerPrismId, amountAtomic: amount, memo: note, expiresAt });
+    const draft = this.requests.draft({
+      requesterPrismId, payerPrismId, amountAtomic: amount, memo: note,
+      destination, circleId: destination === ReceiveDestination.CIRCLE ? circleId : null,
+      expiresAt
+    });
     return {
       kind: IntentKind.RECEIVE,
       destination,

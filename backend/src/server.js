@@ -13,6 +13,7 @@ import { OtpService } from './services/otpService.js';
 import { IdentityService } from './services/identityService.js';
 import { ResolverService } from './services/resolverService.js';
 import { RequestService } from './services/requestService.js';
+import { IntentDispatcherService } from './services/intentDispatcherService.js';
 import { ClaimService } from './services/claimService.js';
 import { PaymentService } from './services/paymentService.js';
 import { ActivityService } from './services/activityService.js';
@@ -49,6 +50,9 @@ const circleService = new CircleService({ store, config, identityService, safeAd
 // payment's evidence through CircleService rather than a second endpoint existing for it.
 const proofService = new ProofService({ paymentService, identityService, circleService, config });
 const circleActivityService = new CircleActivityService({ store, config, circleService, identityService });
+// Unified prepare-only facade over spend / receive / cross-chain. Delegates to the
+// audited services; never submits, never transitions, never completes.
+const intentDispatcherService = new IntentDispatcherService({ circleService, requestService, auroraService, config });
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -138,6 +142,17 @@ route('POST', '/v1/requests/draft', async ({ user, body }) => requestService.dra
 route('POST', '/v1/requests/commit', async ({ user, body }) => requestService.commit({ ...body, requesterPrismId: user.prismId }), true);
 route('GET', '/v1/requests', async ({ user }) => requestService.listFor(user.prismId), true);
 route('POST', '/v1/requests/status', async ({ user, body }) => requestService.setStatus(body.requestId, body.status, user.prismId), true);
+
+// --- unified intent prepare ----------------------------------------------------
+// One prepare entry for SPEND / RECEIVE / CROSS_CHAIN. The server binds the
+// caller's identity (mirroring /v1/requests/draft); the facade only prepares.
+route('POST', '/v1/intent/prepare', async ({ user, body }) => {
+  const kind = body?.kind;
+  if (kind === 'SPEND') return intentDispatcherService.prepareIntent({ ...body, actorPrismId: user.prismId });
+  if (kind === 'RECEIVE') return intentDispatcherService.prepareIntent({ ...body, requesterPrismId: user.prismId });
+  if (kind === 'CROSS_CHAIN') return intentDispatcherService.prepareIntent({ ...body, prismId: user.prismId });
+  return intentDispatcherService.prepareIntent({ ...body });
+}, true);
 
 // --- direct payments (Prism envelope + USDC ERC-3009 authorization) ---------
 route('POST', '/v1/payments/prepare', async ({ user, body }) => {
