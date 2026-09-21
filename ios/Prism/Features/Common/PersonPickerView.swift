@@ -31,6 +31,7 @@ struct PersonPickerView: View {
   @EnvironmentObject private var model: AppModel
   @Environment(\.dismiss) private var dismiss
   let mode: PersonPickerMode
+  @AppStorage("feature.crossChainSend") private var crossChainEnabled = false
   @State private var contacts: [ContactPerson] = []
   @State private var query = ""
   @State private var busyId: String?
@@ -68,8 +69,9 @@ struct PersonPickerView: View {
       ScrollView(showsIndicators: false) {
         LazyVStack(alignment: .leading, spacing: 0) {
           // Paying someone on another network is still "send money", so it belongs here rather than
-          // behind a separate entry point the user has to know exists.
-          if mode == .send {
+          // behind a separate entry point the user has to know exists. Hidden for everyday users:
+          // it's a cross-chain (web3) surface, shown only when enabled in Settings.
+          if mode == .send && crossChainEnabled {
             Button {
               dismiss()
               model.sendAnywherePresented = true
