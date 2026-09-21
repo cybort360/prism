@@ -76,6 +76,25 @@ final class OnboardingFlowUITests: XCTestCase {
     XCTFail("Timed out after Verify with no alert and no advance. " + Self.describe(app))
   }
 
+  /// A device that already has an account (durable marker set) must offer "Already have an account?
+  /// Sign in" on the story, and tapping it must require a local approval (PIN here — Face ID is not
+  /// enabled in this seeded state) before restoring the session. Proves the returning-user path is
+  /// wired without driving a full onboarding.
+  @MainActor
+  func testReturningUserStoryOffersSignInBehindLocalApproval() throws {
+    let app = XCUIApplication()
+    app.launchArguments = ["--uitest-returning-story"]
+    app.launch()
+
+    let signIn = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Sign in'")).firstMatch
+    XCTAssertTrue(signIn.waitForExistence(timeout: 8), "returning device shows Sign in. " + Self.describe(app))
+
+    signIn.tap()
+    // Local approval gate: PIN entry sheet (Face ID disabled in this state).
+    let pinPrompt = app.staticTexts["Enter your PIN"]
+    XCTAssertTrue(pinPrompt.waitForExistence(timeout: 5), "Sign in requires local approval. " + Self.describe(app))
+  }
+
   /// Buttons plus any visible alert text. An onboarding failure almost always surfaces as an alert,
   /// and a bare button list says only that the expected screen is missing, not why.
   @MainActor

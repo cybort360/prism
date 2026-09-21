@@ -40,7 +40,7 @@ final class AppModel: ObservableObject {
   init() {
     let arguments = ProcessInfo.processInfo.arguments
     if arguments.contains("--uitest-reset") {
-      for key in ["session", "verifiedPhone", "pin.salt", "pin.digest", "pin.iterations", "mera.dev.seed"] {
+      for key in ["session", "verifiedPhone", "pin.salt", "pin.digest", "pin.iterations", "mera.dev.seed", "device.account"] {
         KeychainStore.shared.delete(key)
       }
       for key in ["onboarding.complete", "payments.faceID", "pin.kdfVersion", "pin.failures", "pin.lockedUntil", "pin.lockouts"] {
@@ -65,10 +65,26 @@ final class AppModel: ObservableObject {
         onboardingComplete = true
         identity = PrismIdentity(prismId: "preview", displayName: "James", handle: "james", accountAddress: "0x0000000000000000000000000000000000000001", aliasVersion: 1)
       }
+      // Review-only: force the returning-user story (device already has an account, no session), so the
+      // "Already have an account? Sign in" affordance renders. Seeds the durable marker deviceHasAccount reads.
+      if arguments.contains("--uitest-returning-story") {
+        try? KeychainStore.shared.setString("0x0000000000000000000000000000000000000001", for: Self.deviceAccountKey)
+        onboardingComplete = false
+        identity = nil
+      }
     #endif
   }
 
   var hasSession: Bool { (try? KeychainStore.shared.string(for: "session")) != nil }
+
+  /// Durable marker that an account was established on this device (its address). Set at authentication
+  /// and deliberately NOT cleared by sign-out, so a returning user can be offered "Sign in". Its
+  /// lifecycle matches the Mera signer (dev seed / passkey), which is what actually recovers the account.
+  static let deviceAccountKey = "device.account"
+
+  /// True when this device has onboarded an account before — i.e. a returning user who signed out.
+  /// Gates the "Already have an account? Sign in" affordance on the onboarding story.
+  var deviceHasAccount: Bool { (try? KeychainStore.shared.string(for: Self.deviceAccountKey)) != nil }
 
   private var authObserver: NSObjectProtocol?
 
@@ -107,6 +123,10 @@ final class AppModel: ObservableObject {
   func authenticated(_ auth: AuthResponse, phone: String? = nil) {
     identity = auth.identity
     if let phone { try? KeychainStore.shared.setString(phone, for: "verifiedPhone") }
+    // Durable "an account exists on this device" marker — survives sign-out so we can offer re-login.
+    if let account = auth.identity.accountAddress {
+      try? KeychainStore.shared.setString(account, for: Self.deviceAccountKey)
+    }
   }
 
   func updateIdentity(_ value: PrismIdentity) { identity = value }
