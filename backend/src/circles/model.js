@@ -507,6 +507,23 @@ export function newCircleContribution({ contributionId, circleId, contributorPri
   };
 }
 
+// --- CircleWithdrawal -------------------------------------------------------
+
+export const CircleWithdrawalStatus = Object.freeze({
+  PROPOSED: 'PROPOSED', SUBMITTED: 'SUBMITTED', CONFIRMING: 'CONFIRMING',
+  COMPLETED: 'COMPLETED', FAILED: 'FAILED'
+});
+
+export function newCircleWithdrawal({ withdrawalId, circleId, beneficiaryPrismId, beneficiaryAccount, amount, proposalId }) {
+  const now = new Date().toISOString();
+  return {
+    withdrawalId, circleId, beneficiaryPrismId, beneficiaryAccount,
+    amount: String(amount), proposalId,
+    status: CircleWithdrawalStatus.PROPOSED, transactionHash: null,
+    createdAt: now, updatedAt: now
+  };
+}
+
 /** Guarded contribution transitions. COMPLETED is reachable only from a confirmed on-chain receipt. */
 export const ALLOWED_CONTRIBUTION_TRANSITIONS = Object.freeze({
   PREPARED: ['SUBMITTED', 'FAILED'],

@@ -41,3 +41,16 @@ test('proRataPayouts omits zero-net members and returns empty when total net is 
   assert.equal(p.has('a'), false); assert.equal(p.get('b'), 10n);
   assert.equal(proRataPayouts(new Map([['a', 0n]]), 50n).size, 0);
 });
+
+import { CircleWithdrawalStatus, newCircleWithdrawal } from '../src/circles/model.js';
+
+test('newCircleWithdrawal starts PROPOSED with the beneficiary and amount bound', () => {
+  const w = newCircleWithdrawal({
+    withdrawalId: 'wd_1', circleId: 'c1', beneficiaryPrismId: 'a',
+    beneficiaryAccount: '0xabc', amount: '1000000', proposalId: 'prp_1'
+  });
+  assert.equal(w.status, CircleWithdrawalStatus.PROPOSED);
+  assert.equal(w.beneficiaryPrismId, 'a');
+  assert.equal(w.amount, '1000000');
+  assert.equal(w.transactionHash, null);
+});
