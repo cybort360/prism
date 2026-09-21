@@ -485,8 +485,10 @@ struct SaveHomeCard: View {
         glyph
         VStack(alignment: .leading, spacing: 3) {
           Text("Put your dollars to work").font(PrismTheme.body(15, weight: .semibold)).foregroundStyle(PrismTheme.ink)
-          Text(display?.rateText.map { "Earn \($0)" } ?? "Earn a variable return on your balance")
-            .font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+          if let rate = display?.rateText {
+            Text("Earn \(rate)")
+              .font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+          }
         }
         Spacer(minLength: 6)
         Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(PrismTheme.faint)
