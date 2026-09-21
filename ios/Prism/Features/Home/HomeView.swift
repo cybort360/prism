@@ -62,8 +62,17 @@ struct HomeView: View {
 
   private var header: some View {
     HStack(spacing: 11) {
-      PrismAvatar(initials: initials, size: 42)
-      Text("Hello, \(displayName)").font(PrismTheme.body(16, weight: .semibold))
+      Button {
+        model.presentProfile = true
+      } label: {
+        HStack(spacing: 11) {
+          PrismAvatar(initials: initials, size: 42)
+          Text("Hello, \(displayName)").font(PrismTheme.body(16, weight: .semibold))
+        }
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Profile and settings")
+      .accessibilityHint("Opens your profile and settings")
       Spacer()
       Button {
         model.selectedTab = .activity
