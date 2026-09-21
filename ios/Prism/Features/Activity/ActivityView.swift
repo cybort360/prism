@@ -279,6 +279,11 @@ struct ActivityView: View {
         status: done ? "Completed" : item.status.capitalized)
       return
     }
+    // A Save deposit/withdrawal opens its Save receipt (which links to the full Save Proof).
+    if item.kind == "save-deposit" || item.kind == "save-withdraw" {
+      model.presentSaveReceipt = SaveReceiptPresentation(operationId: item.id)
+      return
+    }
     // Every money-movement row opens the one canonical PaymentDetailsView.
     let moneyKinds: Set<String> = ["sent", "received", "claim-funding", "claim-refund", "claim-received"]
     if moneyKinds.contains(item.kind) {

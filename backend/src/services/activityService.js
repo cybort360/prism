@@ -43,6 +43,22 @@ export class ActivityService {
       const addr=i.recipient?`${i.recipient.slice(0,6)}…${i.recipient.slice(-4)}`:null;
       items.push({id:op.operationId,kind:'p256-sent',direction:'outgoing',counterpartyPrismId:null,counterpartyHandle:addr,amountAtomic:i.amount??null,token:i.token??null,tokenSymbol:'USDC',memo:'Device-key payment',status:consumerState(op.state),createdAt:op.createdAt,transactionHash:op.txHash??null,requestId:null,claimId:null});
     }
+    // Save deposits and withdrawals are real money movements, so they appear in Activity — but yield
+    // accrual is position appreciation, NOT a Prism payment, so it NEVER creates daily transaction rows.
+    // Only actual SAVE / WITHDRAW operations are projected here.
+    const saveAccount = this.identityService?.get?.(prismId)?.accountAddress;
+    if (saveAccount) {
+      const savePositionId = `save_${saveAccount.toLowerCase()}`;
+      for (const op of Object.values(data.saveOperations??{})) {
+        if (op.positionId!==savePositionId) continue;
+        if (op.kind==='SAVE') {
+          items.push({id:op.operationId,kind:'save-deposit',direction:'outgoing',counterpartyPrismId:null,counterpartyHandle:'Savings',amountAtomic:op.inputUSDC??null,token:null,tokenSymbol:'USDC',memo:'Saved',status:op.state==='SAVED'?'COMPLETED':(op.state==='FAILED'?'FAILED':'PENDING'),createdAt:op.createdAt,transactionHash:op.transactionHash??null,requestId:null,claimId:null,sourceType:'save'});
+        } else if (op.kind==='WITHDRAW_INSTANT'||op.kind==='WITHDRAW_STANDARD'||op.kind==='CLAIM_WITHDRAWAL') {
+          const done=op.state==='AVAILABLE';
+          items.push({id:op.operationId,kind:'save-withdraw',direction:'incoming',counterpartyPrismId:null,counterpartyHandle:'Savings',amountAtomic:op.outputUSDC??null,token:null,tokenSymbol:'USDC',memo:done?'Savings withdrawal':'Withdrawal',status:done?'COMPLETED':'PENDING',createdAt:op.submittedAt??op.createdAt,transactionHash:op.transactionHash??null,requestId:null,claimId:null,sourceType:'save'});
+        }
+      }
+    }
     // Money OUT of a Circle lands in a person's account exactly as any other payment does, so it has
     // to appear in the recipient's Activity — the payer is the Circle, not the admin who proposed it.
     // These rows are projections of the same reconciled records the Circle's own feed reads; there is

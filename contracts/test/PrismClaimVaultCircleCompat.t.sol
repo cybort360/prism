@@ -60,7 +60,7 @@ contract PrismClaimVaultCircleCompatTest is Test {
     ///    cannot produce one: there is no key to sign with, and no `v, r, s` exists that recovers to
     ///    a contract address. Any attempt reverts, and no claim is created.
     function testSafeCannotFundAClaimBecauseFundingIsEcrecoverOnly() public {
-        bytes32 nonce = vault.fundingNonce(claimId, recipientRef, amount, address(safeLike));
+        bytes32 nonce = vault.fundingNonce(claimId, recipientRef, amount, address(safeLike), block.timestamp + 7 days);
         uint256 validBefore = block.timestamp + 300;
 
         // The Safe "approves" in the only way a contract can: EIP-1271 over the same digest. The
@@ -94,7 +94,7 @@ contract PrismClaimVaultCircleCompatTest is Test {
         assertEq(usdc.allowance(address(safeLike), address(vault)), type(uint256).max);
 
         // With a full allowance in place, funding is still impossible for exactly the same reason.
-        bytes32 nonce = vault.fundingNonce(claimId, recipientRef, amount, address(safeLike));
+        bytes32 nonce = vault.fundingNonce(claimId, recipientRef, amount, address(safeLike), block.timestamp + 7 days);
         uint256 validBefore = block.timestamp + 300;
         vm.prank(relayer);
         vm.expectRevert();
@@ -116,7 +116,7 @@ contract PrismClaimVaultCircleCompatTest is Test {
         vm.prank(address(safeLike));
         usdc.transfer(eoa, amount);
 
-        bytes32 nonce = vault.fundingNonce(claimId, recipientRef, amount, eoa);
+        bytes32 nonce = vault.fundingNonce(claimId, recipientRef, amount, eoa, block.timestamp + 1 days);
         uint256 validBefore = block.timestamp + 300;
         bytes32 structHash =
             keccak256(abi.encode(RECEIVE_TYPEHASH, eoa, address(vault), amount, uint256(0), validBefore, nonce));

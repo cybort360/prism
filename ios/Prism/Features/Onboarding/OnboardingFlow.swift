@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum OnboardingStep {
-  case story, creating, reachability, phone, otp, handle, secondAlias, contacts, pin, faceID, ready
+  case story, creating, signingIn, reachability, phone, otp, handle, secondAlias, contacts, pin, faceID, ready
 }
 enum AliasKind { case phone, handle }
 
@@ -15,6 +15,9 @@ struct OnboardingFlow: View {
   @State private var error: String?
   @State private var firstAlias: AliasKind?
   @State private var addingSecond = false
+  // Returning-user sign-in: PIN fallback when Face ID isn't enabled/available.
+  @State private var showSignInPIN = false
+  @State private var signInPIN = ""
 
   init() {
     #if DEBUG
@@ -43,9 +46,15 @@ struct OnboardingFlow: View {
 
       switch step {
       case .story:
-        StoryStep { Task { await createBaseIdentity() } }
+        StoryStep(
+          canSignIn: model.deviceHasAccount,
+          next: { Task { await createBaseIdentity() } },
+          signIn: { beginReturningSignIn() }
+        )
       case .creating:
         CreatingAccountStep()
+      case .signingIn:
+        SigningInStep()
       case .reachability:
         ReachabilityStep(phone: { startAlias(.phone) }, handle: { startAlias(.handle) })
       case .phone:
@@ -87,6 +96,12 @@ struct OnboardingFlow: View {
       Button("OK") { error = nil }
     } message: {
       Text(error ?? "")
+    }
+    .sheet(isPresented: $showSignInPIN) {
+      PINAuthorizationSheet(pin: $signInPIN, title: "Enter your PIN") {
+        Task { await completeSignIn(pin: signInPIN) }
+      }
+      .presentationDetents([.height(520)])
     }
   }
 
@@ -172,10 +187,57 @@ struct OnboardingFlow: View {
       step = .ready
     } catch { self.error = error.localizedDescription }
   }
+
+  // Returning user tapped "Already have an account? Sign in". Require a local approval first: Face ID
+  // when enabled, PIN otherwise (or as a fallback if Face ID errors). A cancel returns to the story.
+  private func beginReturningSignIn() {
+    guard !busy else { return }
+    if UserDefaults.standard.bool(forKey: "payments.faceID") {
+      Task {
+        do {
+          try await BiometricService().authenticate(reason: "Sign in to Prism")
+          await completeSignIn(pin: nil)
+        } catch {
+          // Face ID cancelled/unavailable — offer the PIN as the fallback the user can dismiss.
+          signInPIN = ""
+          showSignInPIN = true
+        }
+      }
+    } else {
+      signInPIN = ""
+      showSignInPIN = true
+    }
+  }
+
+  // Local approval passed (Face ID) or a PIN was entered — verify the PIN if present, then restore the
+  // session by re-binding the persisted device key. The backend returns the SAME identity for this
+  // account, so the user lands back in their own account on Home.
+  private func completeSignIn(pin: String?) async {
+    if let pin {
+      do {
+        guard try PINService.shared.verify(pin) else { error = "That PIN didn't match. Try again."; return }
+      } catch { self.error = error.localizedDescription; return }
+    }
+    guard !busy else { return }
+    busy = true
+    step = .signingIn
+    defer { busy = false }
+    do {
+      _ = try await MeraAccountManager.shared.ensureAccount()
+      let auth = try await PrismAPI.shared.createDeviceIdentity()
+      model.authenticated(auth)
+      model.finishOnboarding()
+    } catch {
+      self.error = error.localizedDescription
+      step = .story
+    }
+  }
 }
 
 private struct StoryStep: View {
+  var canSignIn: Bool = false
   let next: () -> Void
+  var signIn: () -> Void = {}
   @State private var page = 0
 
   private let pages: [(headline: String, support: String, art: StoryArt)] = [
@@ -224,8 +286,20 @@ private struct StoryStep: View {
         if page < pages.count - 1 { withAnimation(.easeInOut) { page += 1 } } else { next() }
       }
       .padding(.horizontal, 24)
-      .padding(.bottom, 18)
+
+      // Returning user on this device: a fast path back into the same account.
+      if canSignIn {
+        Button(action: signIn) {
+          Text("Already have an account? ")
+            .foregroundColor(PrismTheme.muted)
+          + Text("Sign in").foregroundColor(PrismTheme.mintDeep)
+        }
+        .font(PrismTheme.body(14, weight: .semibold))
+        .padding(.top, 14)
+        .accessibilityHint("Sign back in to your Prism account on this device")
+      }
     }
+    .padding(.bottom, 18)
   }
 }
 
@@ -246,6 +320,34 @@ private enum StoryArt {
     case .passkey: 1.12
     default: 1
     }
+  }
+}
+
+// Returning-user variant of CreatingAccountStep: honest copy — the account already exists, we're
+// restoring the session, not creating anything.
+private struct SigningInStep: View {
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack { PrismWordmark(); Spacer() }.padding(.top, 18)
+      Spacer()
+      ZStack {
+        Circle().fill(PrismTheme.mintSoft).frame(width: 126, height: 126)
+        ProgressView().tint(PrismTheme.mintDeep).scaleEffect(1.25)
+      }
+      Text("Welcome back")
+        .font(PrismTheme.display(34))
+        .tracking(-0.6)
+        .multilineTextAlignment(.center)
+        .padding(.top, 30)
+      Text("Signing you in with your passkey on this device.")
+        .font(PrismTheme.body(14))
+        .foregroundStyle(PrismTheme.muted)
+        .multilineTextAlignment(.center)
+        .lineSpacing(2)
+        .padding(.top, 10)
+      Spacer()
+    }
+    .padding(.horizontal, 24)
   }
 }
 

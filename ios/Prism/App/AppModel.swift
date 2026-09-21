@@ -30,13 +30,17 @@ final class AppModel: ObservableObject {
   @Published var sendAnywherePresented = false
   @Published var receivePresented = false
   @Published var scanPresented = false
+  @Published var savePresented = false
+  @Published var withdrawPresented = false
+  @Published var saveDetailsPresented = false
+  @Published var presentSaveReceipt: SaveReceiptPresentation?
   @Published var toast: String?
   @Published var onboardingComplete = false
 
   init() {
     let arguments = ProcessInfo.processInfo.arguments
     if arguments.contains("--uitest-reset") {
-      for key in ["session", "verifiedPhone", "pin.salt", "pin.digest", "pin.iterations", "mera.dev.seed"] {
+      for key in ["session", "verifiedPhone", "pin.salt", "pin.digest", "pin.iterations", "mera.dev.seed", "device.account"] {
         KeychainStore.shared.delete(key)
       }
       for key in ["onboarding.complete", "payments.faceID", "pin.kdfVersion", "pin.failures", "pin.lockedUntil", "pin.lockouts"] {
@@ -49,19 +53,66 @@ final class AppModel: ObservableObject {
       sendPickerPresented = arguments.contains("--uitest-send-picker")
       requestPickerPresented = arguments.contains("--uitest-request-picker")
       if arguments.contains("--uitest-advanced-account") { selectedTab = .profile }
+      if arguments.contains("--uitest-save") { savePresented = true }
+      if arguments.contains("--uitest-withdraw") { withdrawPresented = true }
+      if arguments.contains("--uitest-save-details") { saveDetailsPresented = true }
+      if arguments.contains("--uitest-save-receipt") { presentSaveReceipt = SaveReceiptPresentation(operationId: "demo") }
       if arguments.contains("--uitest-circles-tab") { selectedTab = .circles }
       if arguments.contains("--uitest-circle-create") { selectedTab = .circles; presentCircleCreate = true }
+      // Review-only: render the main shell without a real backend session (for screenshots of a
+      // logged-in surface). Never used in a shipping build.
+      if arguments.contains("--uitest-preview-home") {
+        onboardingComplete = true
+        identity = PrismIdentity(prismId: "preview", displayName: "James", handle: "james", accountAddress: "0x0000000000000000000000000000000000000001", aliasVersion: 1)
+      }
+      // Review-only: force the returning-user story (device already has an account, no session), so the
+      // "Already have an account? Sign in" affordance renders. Seeds the durable marker deviceHasAccount reads.
+      if arguments.contains("--uitest-returning-story") {
+        try? KeychainStore.shared.setString("0x0000000000000000000000000000000000000001", for: Self.deviceAccountKey)
+        onboardingComplete = false
+        identity = nil
+      }
     #endif
   }
 
   var hasSession: Bool { (try? KeychainStore.shared.string(for: "session")) != nil }
 
+  /// Durable marker that an account was established on this device (its address). Set at authentication
+  /// and deliberately NOT cleared by sign-out, so a returning user can be offered "Sign in". Its
+  /// lifecycle matches the Mera signer (dev seed / passkey), which is what actually recovers the account.
+  static let deviceAccountKey = "device.account"
+
+  /// True when this device has onboarded an account before — i.e. a returning user who signed out.
+  /// Gates the "Already have an account? Sign in" affordance on the onboarding story.
+  var deviceHasAccount: Bool { (try? KeychainStore.shared.string(for: Self.deviceAccountKey)) != nil }
+
+  private var authObserver: NSObjectProtocol?
+
   func bootstrap() async {
+    registerAuthObserver()
     defer { isBooting = false }
     guard hasSession else { return }
     do { identity = try await PrismAPI.shared.me() } catch {
       KeychainStore.shared.delete("session")
     }
+  }
+
+  /// When any authed request 401s, the session is gone — end it cleanly and return to sign-in, instead
+  /// of leaving the app showing "missing session" on every screen.
+  private func registerAuthObserver() {
+    guard authObserver == nil else { return }
+    authObserver = NotificationCenter.default.addObserver(forName: .prismUnauthorized, object: nil, queue: .main) { [weak self] _ in
+      MainActor.assumeIsolated { self?.sessionExpired() }
+    }
+  }
+
+  func sessionExpired() {
+    #if DEBUG
+    if ProcessInfo.processInfo.arguments.contains("--uitest-preview-home") { return } // review hook: no real session
+    #endif
+    guard hasSession || identity != nil else { return }
+    signOut()
+    notify("Your session ended. Please sign in again.")
   }
 
   func refreshIdentity() async {
@@ -72,6 +123,10 @@ final class AppModel: ObservableObject {
   func authenticated(_ auth: AuthResponse, phone: String? = nil) {
     identity = auth.identity
     if let phone { try? KeychainStore.shared.setString(phone, for: "verifiedPhone") }
+    // Durable "an account exists on this device" marker — survives sign-out so we can offer re-login.
+    if let account = auth.identity.accountAddress {
+      try? KeychainStore.shared.setString(account, for: Self.deviceAccountKey)
+    }
   }
 
   func updateIdentity(_ value: PrismIdentity) { identity = value }

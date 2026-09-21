@@ -35,6 +35,18 @@ final class PrismAPI: @unchecked Sendable {
   struct AuroraSubmitBody: Encodable { let routeId: String; let prismSignature: String; let tokenSignature: String }
 
   func config() async throws -> PrismNetworkConfig { try await api.request("/v1/config") }
+
+  // MARK: Prism Save (USDC → AUSD → earnAUSD). Read-only quotes; the client re-verifies the plan.
+  func saveState() async throws -> SaveState { try await api.request("/v1/save/state") }
+  func saveQuote(amountAtomic: String) async throws -> SaveQuote {
+    try await api.send("/v1/save/quote", body: SaveQuoteBody(amountAtomic: amountAtomic))
+  }
+  func savePosition() async throws -> SavePositionResponse { try await api.request("/v1/save/position") }
+  func saveWithdrawals() async throws -> SaveWithdrawalsResponse { try await api.request("/v1/save/withdrawals") }
+  func saveProof(operationId: String) async throws -> SaveProofResponse { try await api.request("/v1/save/operations/\(operationId)/proof") }
+  func withdrawQuote(sharesAtomic: String) async throws -> WithdrawQuote {
+    try await api.send("/v1/save/withdraw/quote", body: WithdrawQuoteBody(sharesAtomic: sharesAtomic))
+  }
   func runtimeConfig() async throws -> PrismNetworkConfig { try await config() }
 
   // MARK: onboarding

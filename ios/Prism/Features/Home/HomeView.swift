@@ -29,9 +29,16 @@ struct HomeView: View {
         actions.padding(.top, 32).padding(.bottom, 34)
         if let request = incomingRequest { requestCard(request).padding(.bottom, 12) }
         if !claims.isEmpty { claimsSection.padding(.bottom, 30) }
-        CirclesSummaryRow(circles: circles).padding(.bottom, 34)
-        people.padding(.bottom, 34)
-        recent
+        SaveHomeCard().padding(.bottom, 34)
+        // Circles has its own tab, so Home only surfaces it when there's something to show — an existing
+        // Circle or a pending invitation. Empty accounts stay quiet (no "Start a Circle" nudge).
+        if !circles.summaries.isEmpty || circles.needsAttention {
+          CirclesSummaryRow(circles: circles).padding(.bottom, 34)
+        }
+        // Quiet empty states: People and Recent only appear once there's real content, so a fresh
+        // account stays calm (balance → actions → Save) instead of stacking empty-state cards.
+        if !localPeople.isEmpty { people.padding(.bottom, 34) }
+        if !activity.isEmpty { recent }
         if let error { ErrorBanner(message: error).padding(.top, 18) }
       }.padding(.horizontal, 22).padding(.top, 8).padding(.bottom, 28)
     }
@@ -270,6 +277,8 @@ struct HomeView: View {
         localPeople = Array(contacts.prefix(5))
       }
       error = nil
+    } catch APIError.unauthorized {
+      // A 401 signs the user out (AppModel handles it); don't flash an error on Home.
     } catch { self.error = error.localizedDescription }
   }
   private func openRequest(_ r: PaymentRequestRecord) async {

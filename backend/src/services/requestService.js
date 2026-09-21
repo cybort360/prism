@@ -3,9 +3,17 @@ import { canonicalJson } from '../lib/crypto.js';
 import { verifyAccountMessage } from '../chain/eth.js';
 
 function signable(r) {
-  const { requestId, requesterPrismId, payerPrismId, amountAtomic, token, tokenSymbol, memo, createdAt, expiresAt } = r;
-  return { requestId, requesterPrismId, payerPrismId, amountAtomic, token, tokenSymbol, memo, createdAt, expiresAt };
+  const { requestId, requesterPrismId, amountAtomic, token, tokenSymbol, memo, createdAt, expiresAt } = r;
+  // Explicit null normalization: a universal request (no designated payer) serializes
+  // `"payerPrismId":null` deterministically, so the requester signs the canonical commitment.
+  return { requestId, requesterPrismId, payerPrismId: r.payerPrismId ?? null, amountAtomic, token, tokenSymbol, memo, createdAt, expiresAt };
 }
+
+const PHONE_PATTERNS = [
+  /tel:/i,
+  /\+\d{7,15}/,
+  /\b\d{3}[-.\s()]*\d{3}[-.\s()]*\d{4}\b/
+];
 
 function positiveAtomic(value) {
   if (!/^\d+$/.test(String(value)) || BigInt(value) <= 0n) throw new Error('amount must be a positive integer');
@@ -19,13 +27,26 @@ export class RequestService {
     this.config = config;
   }
 
-  draft({ requesterPrismId, payerPrismId, amountAtomic, memo = '', expiresAt }) {
+  draft({ requesterPrismId, payerPrismId = null, amountAtomic, memo = '', destination = 'PRIMARY', circleId = null, expiresAt }) {
     if (!this.identityService.get(requesterPrismId)) throw new Error('requester not found');
-    if (!this.identityService.get(payerPrismId)) throw new Error('payer not found');
-    if (requesterPrismId === payerPrismId) throw new Error('cannot request yourself');
+    // A designated payer is validated exactly as before. An omitted payer makes this a
+    // universal public request payable by anyone — no identity check is possible or required.
+    if (payerPrismId !== null && payerPrismId !== undefined) {
+      if (!this.identityService.get(payerPrismId)) throw new Error('payer not found');
+      if (requesterPrismId === payerPrismId) throw new Error('cannot request yourself');
+    } else {
+      payerPrismId = null;
+    }
     amountAtomic = positiveAtomic(amountAtomic);
     if (BigInt(amountAtomic) > this.config.limits.maxPaymentAtomic) throw new Error('amount exceeds Prism payment limit');
     memo = String(memo ?? '').trim().slice(0, 120);
+    for (const re of PHONE_PATTERNS) {
+      if (re.test(memo)) {
+        const err = new Error('memo must not contain a phone number (INV-P1)');
+        err.statusCode = 400;
+        throw err;
+      }
+    }
     const expiry = expiresAt ? new Date(expiresAt) : new Date(Date.now() + 24 * 60 * 60_000);
     if (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= Date.now() || expiry.getTime() > Date.now() + 30 * 24 * 60 * 60_000) throw new Error('invalid request expiry');
 
@@ -33,10 +54,17 @@ export class RequestService {
       requestId: `req_${crypto.randomUUID()}`,
       requesterPrismId,
       payerPrismId,
+      // Universal public requests carry no designated payer and may be fulfilled by anyone.
+      isPublic: payerPrismId === null,
       amountAtomic,
       token: this.config.chain.usdc,
       tokenSymbol: 'USDC',
       memo,
+      // Where settlement lands (PRIMARY, SAVINGS, CIRCLE + Circle id). Stored
+      // metadata ONLY — signable() below is unchanged, so the signed envelope
+      // stays byte-identical and backward compatible.
+      destination,
+      circleId,
       createdAt: new Date().toISOString(),
       expiresAt: expiry.toISOString(),
       status: 'DRAFT'
@@ -76,10 +104,48 @@ export class RequestService {
     this._expireOpenRequests();
     const r = this.store.read().requests[requestId];
     if (!r || r.status !== 'OPEN') throw new Error('request is not open');
-    if (r.payerPrismId !== payerPrismId) throw new Error('request belongs to another payer');
+    if (r.payerPrismId !== null && r.payerPrismId !== undefined) {
+      // Designated 1-to-1 request: strict payer binding, byte-identical behavior.
+      if (r.payerPrismId !== payerPrismId) throw new Error('request belongs to another payer');
+    } else if (!payerPrismId) {
+      // Universal request: anyone may fulfill (direct payer or cross-chain relayer id),
+      // but a payer must still be named — anonymous fulfillment is never recorded.
+      throw new Error('payer is required to fulfill this request');
+    }
     if (r.requesterPrismId !== recipientPrismId) throw new Error('payment recipient does not match requester');
     if (String(r.amountAtomic) !== String(amountAtomic)) throw new Error('payment amount does not match request');
     return r;
+  }
+
+  /**
+   * Public, unauthenticated view of a request for universal payment links.
+   *
+   * Only public profile metadata leaves this function — handle/name, amount, token, memo,
+   * destination, status, expiry. Phone numbers, HMAC lookup keys, and session details are
+   * never read here, so they cannot leak through it (INV-P1).
+   */
+  getPublicView(requestId) {
+    this._expireOpenRequests();
+    const r = this.store.read().requests[requestId];
+    if (!r || r.isPublic !== true) {
+      const e = new Error('request not found');
+      e.statusCode = 404;
+      throw e;
+    }
+    const requester = this.identityService.get(r.requesterPrismId);
+    return {
+      requestId: r.requestId,
+      requesterHandle: requester?.handle ?? null,
+      requesterDisplayName: requester?.displayName ?? null,
+      requesterAccount: requester?.accountAddress ?? null,
+      amountAtomic: r.amountAtomic,
+      token: r.token,
+      tokenSymbol: r.tokenSymbol,
+      memo: r.memo,
+      destination: r.destination ?? 'PRIMARY',
+      status: r.status,
+      expiresAt: r.expiresAt
+    };
   }
 
   setStatus(requestId, status, actorPrismId) {

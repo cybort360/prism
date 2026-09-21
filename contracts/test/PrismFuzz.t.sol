@@ -103,7 +103,7 @@ contract PrismFuzzTest is Test {
 
         // fund
         usdc.mint(payer, amount);
-        bytes32 nonce = vault.fundingNonce(claimId, ref, amount, payer);
+        bytes32 nonce = vault.fundingNonce(claimId, ref, amount, payer, expiry);
         uint256 vb = block.timestamp + 300;
         bytes32 fsh = keccak256(abi.encode(RECEIVE_TYPEHASH, payer, address(vault), amount, uint256(0), vb, nonce));
         (uint8 fv, bytes32 fr, bytes32 fs) =

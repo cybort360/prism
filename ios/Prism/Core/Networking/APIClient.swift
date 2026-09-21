@@ -34,6 +34,12 @@ actor APIClient {
     if let body { req.httpBody = try encoder.encode(body) }
     let (data, response) = try await session.data(for: req)
     guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+    // A 401 on an authed route means the session is missing or expired. Don't surface it as a raw
+    // "missing session" error everywhere — signal the app to end the session and re-authenticate.
+    if http.statusCode == 401 {
+      NotificationCenter.default.post(name: .prismUnauthorized, object: nil)
+      throw APIError.unauthorized
+    }
     guard 200..<300 ~= http.statusCode else {
       let message =
         (try? decoder.decode(ErrorEnvelope.self, from: data).error) ?? "HTTP \(http.statusCode)"
@@ -58,12 +64,15 @@ actor APIClient {
   }
 }
 private struct ErrorEnvelope: Decodable { let error: String }
+extension Notification.Name { static let prismUnauthorized = Notification.Name("prism.unauthorized") }
 enum APIError: LocalizedError {
   case invalidResponse
+  case unauthorized
   case server(String)
   var errorDescription: String? {
     switch self {
     case .invalidResponse: "Invalid response"
+    case .unauthorized: "Your session ended. Please sign in again."
     case .server(let m): m
     }
   }

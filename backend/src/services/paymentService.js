@@ -347,7 +347,7 @@ export class PaymentService {
     });
     const from = checksum(sender.accountAddress);
     const vault = checksum(this.config.chain.claimVault);
-    const nonce = claimFundingNonce(claim.claimId, claim.recipientReference, BigInt(amountAtomic), from);
+    const nonce = claimFundingNonce(claim.claimId, claim.recipientReference, BigInt(amountAtomic), from, claim.expiry);
     const validBefore = Math.floor(Date.now() / 1000) + AUTH_WINDOW_SECONDS;
     const fundingArgs = {
       claimId: claim.claimId, recipientReference: claim.recipientReference, sender: from,

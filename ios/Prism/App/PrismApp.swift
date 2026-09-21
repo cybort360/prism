@@ -74,6 +74,10 @@ struct MainShell: View {
     .sheet(isPresented: $model.requestPickerPresented) { PersonPickerView(mode: .request) }
     .sheet(isPresented: $model.addMoneyPresented) { AddMoneyView() }
     .sheet(isPresented: $model.receivePresented) { ReceiveView() }
+    .sheet(isPresented: $model.savePresented) { SaveView() }
+    .sheet(isPresented: $model.withdrawPresented) { WithdrawView() }
+    .sheet(isPresented: $model.saveDetailsPresented) { SaveDetailsView() }
+    .sheet(item: $model.presentSaveReceipt) { SaveReceiptView(operationId: $0.operationId) }
     .fullScreenCover(isPresented: $model.scanPresented) { ScanToPayView() }
     .onOpenURL { url in Task { await routeDeepLink(url) } }
     .overlay(alignment: .top) {
