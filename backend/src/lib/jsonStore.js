@@ -20,7 +20,8 @@ const EMPTY = {
   circleInvitations: {},
   circleProposals: {},
   circleApprovals: {},
-  circleContributions: {}
+  circleContributions: {},
+  circleWithdrawals: {}
 };
 
 export class JsonStore {

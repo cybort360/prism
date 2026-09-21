@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { getAddress } from 'viem';
 import { circleStack, makeIdentity, acknowledgement } from './circles-harness.js';
 import { ContributionStatus } from '../src/circles/model.js';
 
@@ -91,4 +92,62 @@ test('a live balance read failure is treated as zero, never thrown', async (t) =
   const preview = await s.circles.withdrawablePreview({ circleId: s.circle.circleId, memberPrismId: s.octane.prismId });
   assert.equal(preview.balanceAtomic, '0');
   assert.equal(preview.withdrawableAtomic, '0');
+});
+
+// ===========================================================================
+// proposeWithdrawal — capped payment to the member's own account
+// ===========================================================================
+
+test('proposeWithdrawal: HOSTILE — a member cannot propose more than their withdrawable', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+
+  seedContribution(s.store, { id: 'ctr_a1', circleId: s.circle.circleId, contributorPrismId: s.octane.prismId, amount: 100000000n });
+  s.circles.safe.getUsdcBalance = async () => 100000000n;
+
+  await assert.rejects(
+    () => s.circles.proposeWithdrawal({ circleId: s.circle.circleId, memberPrismId: s.octane.prismId, amountAtomic: '100000001' }),
+    (e) => statusOf(e) === 409
+  );
+});
+
+test('proposeWithdrawal: at exactly the withdrawable amount, creates a PAYMENT proposal to the member\'s own account and a PROPOSED withdrawal record', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+
+  seedContribution(s.store, { id: 'ctr_a1', circleId: s.circle.circleId, contributorPrismId: s.octane.prismId, amount: 100000000n });
+  s.circles.safe.getUsdcBalance = async () => 100000000n;
+
+  const { proposal, withdrawalId } = await s.circles.proposeWithdrawal({
+    circleId: s.circle.circleId, memberPrismId: s.octane.prismId, amountAtomic: '100000000'
+  });
+
+  assert.equal(proposal.kind, 'PAYMENT');
+  assert.equal(proposal.amount, '100000000');
+  assert.equal(getAddress(proposal.recipientAccount), getAddress(s.octane.accountAddress));
+
+  // The persisted proposal record carries the same recipient inside `payment`, plus the withdrawal
+  // tag that a later confirmation hook needs to recognize it as a withdrawal rather than a payment.
+  const stored = s.store.read().circleProposals[proposal.proposalId];
+  assert.equal(getAddress(stored.payment.recipientAccount), getAddress(s.octane.accountAddress));
+  assert.equal(stored.payment.recipientPrismId, s.octane.prismId);
+  assert.deepEqual(stored.withdrawal, { beneficiaryPrismId: s.octane.prismId });
+
+  // A PROPOSED withdrawal record links back to this exact proposal.
+  assert.ok(withdrawalId);
+  const record = s.store.read().circleWithdrawals[withdrawalId];
+  assert.ok(record, 'a circleWithdrawals record was written');
+  assert.equal(record.status, 'PROPOSED');
+  assert.equal(record.proposalId, proposal.proposalId);
+  assert.equal(record.circleId, s.circle.circleId);
+  assert.equal(record.beneficiaryPrismId, s.octane.prismId);
+  assert.equal(getAddress(record.beneficiaryAccount), getAddress(s.octane.accountAddress));
+  assert.equal(record.amount, '100000000');
+
+  // Never auto-approved or auto-executed — it is recorded as PROPOSED and starts life needing the
+  // Circle's normal threshold of signatures (nothing has approved it yet).
+  assert.equal(stored.lifecycle, 'PROPOSED');
+  assert.equal(proposal.storedLifecycle, 'PROPOSED');
+  assert.equal(proposal.collectedApprovals, 0);
+  assert.equal(proposal.executionTxHash, null);
 });

@@ -22,7 +22,7 @@ import {
   CircleStatus, MemberRole, MemberStatus, ProposalKind, ProposalStatus, CIRCLE_ASSET, SPENDING_LIMIT_KINDS,
   TERMINAL_MEMBER_STATUSES, CHAIN_BACKED_ROLES, ContributionStatus,
   CirclePaymentState, CIRCLE_PAYMENT_PRE_BROADCAST, APPROVAL_BOUND_FIELDS, CLOSE_REQUIREMENTS,
-  newCircle, newCircleMember, newCircleProposal, newCircleApproval, newCircleContribution,
+  newCircle, newCircleMember, newCircleProposal, newCircleApproval, newCircleContribution, newCircleWithdrawal,
   assertCircleTransition, assertCirclePaymentTransition, assertContributionTransition,
   assertMemberTransition, assertThresholdWithinOwners, thresholdWarnings, assertRole,
   badRequest, forbidden, notFound, conflict
@@ -1250,6 +1250,81 @@ export class CircleService {
       // collected, and simulation is the gate that actually decides whether it can execute.
       sufficientBalance: balance === null ? null : balance >= BigInt(amount)
     };
+  }
+
+  /**
+   * Propose a withdrawal: an ordinary threshold PAYMENT proposal whose recipient is the withdrawing
+   * member's own Prism account rather than a resolved contact. There is no Protected Alias Resolver
+   * step here — the recipient is already a known Circle member, so `getAddress` is applied directly
+   * to their `authorityAddress` the same way `proposePayment` applies it to a resolved identity.
+   *
+   * The only thing this adds over a normal payment is the cap: the amount can never exceed what
+   * `withdrawablePreview` says this member may take out right now (their COMPLETED contributions
+   * minus their COMPLETED withdrawals, capped by the Safe's live balance). Nothing here approves or
+   * executes anything — like every Circle payment, it still needs the Circle's normal threshold of
+   * signatures before `executePayment` will touch it.
+   */
+  async proposeWithdrawal({ circleId, memberPrismId, amountAtomic }) {
+    const circle = this._circle(circleId);
+    const member = this._activeMember(circleId, memberPrismId);
+    if (!this.payments) throw conflict('Circle payments are not available on this deployment');
+    if (circle.status === CircleStatus.CLOSED) throw conflict('this Circle is closed');
+    if (!SPENDING_STATUSES.includes(circle.status)) throw conflict('this Circle is not active on-chain yet');
+    if (!circle.safeAddress) throw conflict('this Circle has no verified Safe address');
+    if (!member.authorityAddress) throw badRequest('you have not finished setting up your Prism account');
+
+    const { withdrawableAtomic } = await this.withdrawablePreview({ circleId, memberPrismId });
+    const amount = this._assertAmount(amountAtomic);
+    if (BigInt(amount) > BigInt(withdrawableAtomic)) {
+      throw conflict(`you can withdraw at most ${withdrawableAtomic} base units`);
+    }
+
+    const memberAccount = getAddress(member.authorityAddress);
+    if (memberAccount === getAddress(circle.safeAddress)) throw badRequest('a Circle cannot pay itself');
+
+    const authority = await this._readAuthority(circle);
+
+    const withdrawalId = `wd_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
+    const trace = [];
+    const mark = (state, detail = {}) => trace.push({ state, at: new Date().toISOString(), detail });
+    mark(CirclePaymentState.CREATED, { amount });
+
+    const proposal = await this._createProposal({
+      circle, actorPrismId: memberPrismId, kind: ProposalKind.PAYMENT, authority,
+      intent: { kind: 'PAYMENT', recipient: memberAccount, amountAtomic: amount },
+      memo: `Withdrawal to ${member.displayName ?? 'a member'}`,
+      subject: { prismId: memberPrismId, authorityAddress: memberAccount },
+      payment: {
+        amount,
+        recipientPrismId: memberPrismId,
+        recipientAccount: memberAccount,
+        recipientDisplayName: member.displayName ?? null,
+        recipientHandle: member.handle ?? null,
+        // A withdrawal has no alias resolution behind it — the recipient IS the member record.
+        aliasVersion: null,
+        resolutionRequestId: null,
+        resolutionRoute: null
+      },
+      trace
+    });
+
+    // `_createProposal` only knows about `payment` and `governance` proposals; a withdrawal tag is
+    // written directly onto the persisted record (and mirrored onto the view returned here) so a
+    // later confirmation hook can recognize this PAYMENT as a withdrawal without guessing from the
+    // memo string.
+    this.store.mutate((d) => {
+      const stored = d.circleProposals?.[proposal.proposalId];
+      if (stored) stored.withdrawal = { beneficiaryPrismId: memberPrismId };
+    });
+    proposal.withdrawal = { beneficiaryPrismId: memberPrismId };
+
+    const withdrawalRecord = newCircleWithdrawal({
+      withdrawalId, circleId, beneficiaryPrismId: memberPrismId, beneficiaryAccount: memberAccount,
+      amount, proposalId: proposal.proposalId
+    });
+    this.store.mutate((d) => { (d.circleWithdrawals ||= {})[withdrawalId] = withdrawalRecord; });
+
+    return { proposal, withdrawalId };
   }
 
   /**
