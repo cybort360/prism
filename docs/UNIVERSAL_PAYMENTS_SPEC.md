@@ -83,8 +83,10 @@ Initiator: recipient. Two shapes:
 - **Universal payment links**: public links payable without the payer holding a Prism account. The
   recipient declares the destination (see §6 for cross-chain arrival):
   - `PRIMARY`: recipient's Monad EOA (default).
-  - `SAVINGS`: SPECIFIED — auto-deposit into savings (no `PrismSavingsVault` contract or
-    `saveService` exists in this build; see §4).
+  - `SAVINGS`: SPECIFIED — auto-deposit into savings on settlement. The Save backend exists (§4),
+    but there is no `PrismSavingsVault` contract and no settlement→deposit wiring, so this
+    destination is not executed; the dispatcher returns the position id plus an explicit
+    "not yet deployed" note rather than pretending it settled.
   - `CIRCLE`: contribution credited to the Circle Safe (threshold/contribution path, IMPLEMENTED
     via Circle payments).
 - **Cross-chain arrival** (IMPLEMENTED, `AURORA_INTENTS.md`): any token on any chain → Aurora
@@ -93,7 +95,7 @@ Initiator: recipient. Two shapes:
   attributed via the `UsdcTransfer` Envio entity. `GET /v1/aurora/arrivals` reports `indexed: false`
   (unknown) rather than "nothing arrived" when the index is unavailable.
 
-## 4. SAVE / EARN (asset transformation) — SPECIFIED
+## 4. SAVE / EARN (asset transformation) — PREVIEW (backend IMPLEMENTED, execution gated)
 
 Nature: transformation, NOT a peer-to-peer payment. USDC → yield-bearing earnAUSD
 (Agora / Upshift reserves). User abstraction: "$USDC earning X% APY"; mint/rebate/share mechanics
@@ -103,9 +105,17 @@ hidden. Non-custodial: shares held directly by the user's account; backend never
 - **Fixed-term** (e.g. 90-day): higher fixed yield (Pendle PT-AUSD backing); contract-enforced
   lockup; early withdrawal reverts on-chain.
 
-Status: **no `saveService` / `domain/savePosition.js` and no savings contract exist in this build**
-(earnAUSD appears in docs only as an excluded product from Circle paths). The state machine below
-is the specified contract for the future implementation and its tests:
+Status: the backend Save surface EXISTS — `saveService`, `domain/savePosition.js`, average-cost
+accounting, a governed single-strategy registry (`lib/saveStrategy.js`, only the approved earnAUSD
+strategy enabled — never a computed "best APY"), eligibility gating (`saveEligibilityService`:
+ELIGIBLE / INELIGIBLE / UNKNOWN / SERVICE_UNAVAILABLE, no hardcoded countries), money-safe quotes,
+and chain-reconstructed positions. It ships as an **ANNOUNCED PREVIEW**: no real deposit is produced
+and no APY is invented. **No on-chain savings vault contract exists and the earnAUSD substrate is
+not connected** — earnAUSD / AUSD live on Monad mainnet (143) while Prism runs on testnet (10143),
+and the deposit / Teller ABI is not independently verified (see `docs/SAVE_DEPENDENCY_AUDIT.md`).
+Real execution is **double-gated**: `save.substrateVerified === false` AND eligibility defaults to
+`SERVICE_UNAVAILABLE` (no compliance provider wired). See `forge/SAVE_MATRIX.md` for the row-by-row
+status. The state machine below is the contract execution must satisfy once the substrate connects:
 
 ```
 SPECIFIED: DEPOSIT_PREPARED → DEPOSIT_SUBMITTED → EARNING → (REDEEM_REQUESTED → REDEEMED | matured)
@@ -186,15 +196,19 @@ threshold `PAYMENT` proposal (the Circle's money, not the member's allowance). N
 unavailable, unreadable-chain, and limits-disabled all degrade to `THRESHOLD` with a reason —
 never to a silent refusal.
 
-**Contextual message thread — SPECIFIED**: an overflow proposal MAY carry a human-context thread
-(who needs what, why, by when). Constraints (non-negotiable):
+**Contextual message thread — IMPLEMENTED** (`circleMessageService`): an overflow or threshold
+proposal MAY carry a human-context thread (who needs what, why, by when). Constraints
+(non-negotiable, all enforced):
 
 - Context only. A message NEVER confers spending authority (INV-A1); approval is counted only from
-  verified owner signatures over the exact Safe digest against the live owner set and threshold.
-- No backend thread store exists in this build (no message model in `circleService`). Until built,
-  context lives in the client proposal memo surface; the backend MUST NOT treat memo presence,
-  authorship, or content as an approval signal.
-- Privacy: no phone-derived value in thread content, metadata, or indexes (INV-P1).
+  verified owner signatures over the exact Safe digest against the live owner set and threshold. The
+  service holds no reference to any approval or execution path — it writes display text under a
+  proposal id and nothing else; the backend MUST NOT treat message presence, authorship, or content
+  as an approval signal.
+- Access: only ACTIVE members of the Circle may read or post (else 403); a non-existent or
+  non-payment proposal is 404. Text is length-capped and must be non-empty.
+- Privacy: E.164-looking values in thread text or metadata are rejected with 400 (INV-P1).
+- Endpoints: `POST` / `GET /v1/circles/:id/proposals/:proposalId/messages`.
 
 ## 8. SECURITY STANDARD
 
@@ -215,10 +229,25 @@ never to a silent refusal.
   `PrismP256Account` path proven live; consumer settlement today is Mera secp256k1 EOA →
   `PrismPaymentRouter`.
 
-## 9. BACKEND DISPATCHER FACADE (P3 hook, SPECIFIED)
+## 9. BACKEND DISPATCHER FACADE — IMPLEMENTED
 
-`backend/src/services/intentDispatcherService.js` does not exist yet. When built, it unifies
-`POST /v1/spend/prepare` + destination routing as an additive facade over the existing tested
-services (resolver, payment, circle, aurora) without mutating them. This spec is its behavioral
-contract; the facade MUST NOT widen `ALLOWED_TRANSITIONS`, mint authority from memos/threads,
-or present a Monad-leg confirmation as cross-chain delivery.
+`backend/src/services/intentDispatcherService.js` exists: a prepare-only facade over the existing
+tested services (circle, request, aurora, save), exposed at `POST /v1/intent/prepare` (plus the
+Save alias `POST /v1/save/prepare`). It routes `SPEND / RECEIVE / CROSS_CHAIN / SAVE`:
+
+- **SPEND** → `circleService.previewPayment` picks the route from live chain state: within limit →
+  `prepareSpend` (member signs the module hash); over limit → Graceful Overflow `proposePayment`
+  (the context message is display memo ONLY, §7).
+- **RECEIVE** → `requestService.draft` with the destination recorded alongside the signed request;
+  an omitted `payerPrismId` drafts a universal public request (§3).
+- **CROSS_CHAIN** → `auroraService.quoteSend` (quote) / `prepareSend` (freeze into the routeHash-
+  bound envelope, §6a); settlement stays inside aurora → payment.
+- **SAVE** → `saveService.quote` (preview, writes nothing, §4); the position id references the
+  user's own account.
+
+It is strictly additive: **no store writes, no state transitions, no submissions, no balance
+reads** — it returns only `prepared`-level artifacts from the delegates. It does not widen
+`ALLOWED_TRANSITIONS`, never mints authority from memos/threads (INV-A1), and never presents a
+Monad-leg confirmation as cross-chain delivery. Guardrails run before any delegation: INV-P1
+rejects phone-looking values anywhere in the parameters or memo (recursively), and context messages
+are length-capped and phone-scanned. Tests: `intent-dispatcher.test.js`.
