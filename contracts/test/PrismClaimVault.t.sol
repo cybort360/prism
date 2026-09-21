@@ -37,7 +37,7 @@ contract PrismClaimVaultTest is Test {
     }
 
     function _fund(bytes32 id, bytes32 ref, uint256 amt, uint256 expiry) internal {
-        bytes32 nonce = vault.fundingNonce(id, ref, amt, sender);
+        bytes32 nonce = vault.fundingNonce(id, ref, amt, sender, expiry);
         uint256 validBefore = block.timestamp + 300;
         bytes32 structHash =
             keccak256(abi.encode(RECEIVE_TYPEHASH, sender, address(vault), amt, uint256(0), validBefore, nonce));
@@ -68,6 +68,24 @@ contract PrismClaimVaultTest is Test {
         assertEq(s_, sender);
         assertEq(a_, amount);
         assertEq(uint256(st_), uint256(PrismClaimVault.ClaimStatus.Funded));
+    }
+
+    function testFundingNonceBindsExpiry() public {
+        uint256 expiryA = block.timestamp + 7 days;
+        uint256 expiryB = block.timestamp + 8 days;
+        bytes32 nonceA = vault.fundingNonce(claimId, recipientRef, amount, sender, expiryA);
+        bytes32 nonceB = vault.fundingNonce(claimId, recipientRef, amount, sender, expiryB);
+        assertTrue(nonceA != nonceB, "expiry must change fundingNonce");
+
+        // A nonce bound to expiryA cannot fund a claim declaring expiryB.
+        uint256 validBefore = block.timestamp + 300;
+        bytes32 structHash =
+            keccak256(abi.encode(RECEIVE_TYPEHASH, sender, address(vault), amount, uint256(0), validBefore, nonceA));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(senderPk, digest);
+        vm.prank(relayer);
+        vm.expectRevert(PrismClaimVault.NonceBindingMismatch.selector);
+        vault.fundClaim(claimId, recipientRef, sender, amount, expiryB, 0, validBefore, nonceA, v, r, s);
     }
 
     function testRandomRecipientReferenceHasNoPhoneCorrelation() public {

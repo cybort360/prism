@@ -13,6 +13,7 @@ import { OtpService } from './services/otpService.js';
 import { IdentityService } from './services/identityService.js';
 import { ResolverService } from './services/resolverService.js';
 import { RequestService } from './services/requestService.js';
+import { IntentDispatcherService } from './services/intentDispatcherService.js';
 import { ClaimService } from './services/claimService.js';
 import { PaymentService } from './services/paymentService.js';
 import { ActivityService } from './services/activityService.js';
@@ -22,6 +23,7 @@ import { P256AccountService } from './services/p256AccountService.js';
 import { SaveService } from './services/saveService.js';
 import { SavePositionService } from './services/savePositionService.js';
 import { CircleService } from './services/circleService.js';
+import { CircleMessageService } from './services/circleMessageService.js';
 import { CircleActivityService } from './services/circleActivityService.js';
 import { safeCircleAdapter, allowanceModuleGate } from './chain/safeCircle.js';
 import { p256ChainOps } from './chain/p256Account.js';
@@ -46,13 +48,29 @@ const paymentService = new PaymentService({ store, config, identityService, clai
 const activityService = new ActivityService({ store, identityService });
 const auroraService = new AuroraService({ store, config, identityService, paymentService });
 const p256AccountService = new P256AccountService({ store, config, chainOps: p256ChainOps });
-const saveService = new SaveService({ store, config, identityService });
-const savePositionService = new SavePositionService({ store, config, identityService });
 const circleService = new CircleService({ store, config, identityService, safeAdapter: safeCircleAdapter(), paymentService, limitGate: allowanceModuleGate() });
 // One proof surface for every Prism payment, personal or shared: ProofService assembles a Circle
 // payment's evidence through CircleService rather than a second endpoint existing for it.
 const proofService = new ProofService({ paymentService, identityService, circleService, config });
 const circleActivityService = new CircleActivityService({ store, config, circleService, identityService });
+// Proposal message threads: display context only. The service holds no approval or execution
+// path, so threads cannot move money no matter what is posted through these routes.
+const circleMessageService = new CircleMessageService({ store, config, circleService, identityService });
+// Prism Save (announced preview): quotes + chain-reconstructed positions. No real deposit is
+// produced and no APY is invented until the earnAUSD substrate is verified (INV-M2: the vault
+// is the balance authority, the backend only projects).
+const saveService = new SaveService({ store, config, identityService });
+const savePositionService = new SavePositionService({ store, config, identityService });
+// Unified prepare-only facade over spend / receive / cross-chain / save. Delegates to the
+// audited services; never submits, never transitions, never completes.
+const intentDispatcherService = new IntentDispatcherService({
+  circleService,
+  requestService,
+  auroraService,
+  saveService,
+  identityService,
+  config
+});
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -138,10 +156,37 @@ route('POST', '/v1/resolve/handle', async ({ user, body }) => resolverService.re
 route('POST', '/v1/resolve/prism', async ({ user, body }) => resolverService.resolvePrismId(user.prismId, body.prismId), true);
 
 // --- off-chain payment requests ---------------------------------------------
-route('POST', '/v1/requests/draft', async ({ user, body }) => requestService.draft({ ...body, requesterPrismId: user.prismId }), true);
+// payerPrismId is optional: omitted drafts a universal public request payable by anyone.
+route('POST', '/v1/requests/draft', async ({ user, body }) => requestService.draft({ ...body, payerPrismId: body.payerPrismId ?? null, requesterPrismId: user.prismId }), true);
+// Public, unauthenticated: safe metadata only (handle/name, amount, token, memo,
+// destination, status, expiry) — never phone, lookup keys, or sessions.
+route('GET', '/v1/requests/:requestId/public', async ({ params }) => {
+  rateLimit('public-request-view', 60);
+  return requestService.getPublicView(params.requestId);
+});
 route('POST', '/v1/requests/commit', async ({ user, body }) => requestService.commit({ ...body, requesterPrismId: user.prismId }), true);
 route('GET', '/v1/requests', async ({ user }) => requestService.listFor(user.prismId), true);
 route('POST', '/v1/requests/status', async ({ user, body }) => requestService.setStatus(body.requestId, body.status, user.prismId), true);
+
+// --- unified intent prepare ----------------------------------------------------
+// One prepare entry for SPEND / RECEIVE / CROSS_CHAIN. The server binds the
+// caller's identity (mirroring /v1/requests/draft); the facade only prepares.
+route('POST', '/v1/intent/prepare', async ({ user, body }) => {
+  const kind = body?.kind;
+  if (kind === 'SPEND') return intentDispatcherService.prepareIntent({ ...body, actorPrismId: user.prismId });
+  if (kind === 'RECEIVE') return intentDispatcherService.prepareIntent({ ...body, requesterPrismId: user.prismId });
+  if (kind === 'CROSS_CHAIN') return intentDispatcherService.prepareIntent({ ...body, prismId: user.prismId });
+  if (kind === 'SAVE') return intentDispatcherService.prepareIntent({ ...body, prismId: user.prismId });
+  return intentDispatcherService.prepareIntent({ ...body });
+}, true);
+
+// --- Prism Save: unified intent prepare -------------------------------------------
+// The intent-facade entry for Save. Read-only quotes/positions live in the dedicated
+// /v1/save/* block below; this one delegates SAVE prepares through the dispatcher.
+route('POST', '/v1/save/prepare', async ({ user, body }) => {
+  rateLimit(`save-quote:${user.prismId}`, 60);
+  return intentDispatcherService.prepareIntent({ kind: 'SAVE', prismId: user.prismId, amountAtomic: body.amountAtomic });
+}, true);
 
 // --- direct payments (Prism envelope + USDC ERC-3009 authorization) ---------
 route('POST', '/v1/payments/prepare', async ({ user, body }) => {
@@ -503,6 +548,15 @@ route('POST', '/v1/circles/:id/payments/:proposalId/execute', async ({ user, par
     scope: 'circle-execute', key: idempotencyKey, actor: user.prismId,
     fingerprint: fingerprint('execute', params.proposalId)
   }, () => circleService.executePayment({ circleId: params.id, proposalId: params.proposalId, actorPrismId: user.prismId })), true);
+
+// --- proposal message threads (context only — never spending authority) -----------
+route('POST', '/v1/circles/:id/proposals/:proposalId/messages', async ({ user, params, body }) =>
+  circleMessageService.postProposalMessage({
+    circleId: params.id, proposalId: params.proposalId, authorPrismId: user.prismId,
+    text: body.text, attachmentHash: body.attachmentHash ?? null
+  }), true);
+route('GET', '/v1/circles/:id/proposals/:proposalId/messages', async ({ user, params }) =>
+  circleMessageService.getProposalMessages({ circleId: params.id, proposalId: params.proposalId, requesterPrismId: user.prismId }), true);
 
 // --- infrastructure: Alchemy webhook, dev proof surface, observability -------
 

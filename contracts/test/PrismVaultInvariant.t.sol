@@ -53,7 +53,7 @@ contract VaultHandler is Test {
         bytes32 ref = keccak256(abi.encode("r", counter));
         counter++;
         uint256 expiry = block.timestamp + ttl;
-        bytes32 nonce = vault.fundingNonce(claimId, ref, amount, sender);
+        bytes32 nonce = vault.fundingNonce(claimId, ref, amount, sender, expiry);
         uint256 vb = block.timestamp + 300;
         bytes32 sh = keccak256(abi.encode(RECEIVE_TYPEHASH, sender, address(vault), amount, uint256(0), vb, nonce));
         (uint8 v, bytes32 r, bytes32 s) =

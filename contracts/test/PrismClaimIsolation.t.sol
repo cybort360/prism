@@ -29,7 +29,7 @@ contract PrismClaimIsolationTest is Test {
     function _fundFrom(uint256 senderPk, bytes32 id, bytes32 ref, uint256 amt, uint256 expiry) internal {
         address sender = vm.addr(senderPk);
         usdc.mint(sender, amt);
-        bytes32 nonce = vault.fundingNonce(id, ref, amt, sender);
+        bytes32 nonce = vault.fundingNonce(id, ref, amt, sender, expiry);
         uint256 validBefore = block.timestamp + 300;
         bytes32 structHash =
             keccak256(abi.encode(RECEIVE_TYPEHASH, sender, address(vault), amt, uint256(0), validBefore, nonce));

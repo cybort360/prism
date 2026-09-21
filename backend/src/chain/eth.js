@@ -139,10 +139,10 @@ export async function recoverAccountMessageDebug(message, signature) {
 
 // ---- deterministic nonces --------------------------------------------------
 
-export function claimFundingNonce(claimId, recipientReference, amount, from) {
+export function claimFundingNonce(claimId, recipientReference, amount, from, expiry) {
   return keccak256(encodeAbiParameters(
-    parseAbiParameters('bytes32, bytes32, uint256, address'),
-    [claimId, recipientReference, BigInt(amount), getAddress(from)]
+    parseAbiParameters('bytes32, bytes32, uint256, address, uint256'),
+    [claimId, recipientReference, BigInt(amount), getAddress(from), BigInt(expiry)]
   ));
 }
 
