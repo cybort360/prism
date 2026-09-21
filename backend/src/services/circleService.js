@@ -35,6 +35,7 @@ import { canonicalPayment, receiptFor } from '../lib/lifecycle.js';
 import { assertTemplateChoice, templateOptions, CircleTemplate } from '../circles/templates.js';
 import { sameOwnerSet, normalizeOwnerSet, safeTransaction, safeTxHash, decodeUsdcTransfer, safeExecutionOutcome, ZERO_ADDRESS } from '../circles/safeEncoding.js';
 import { contributionHash } from '../chain/eth.js';
+import { netContributions, withdrawableFor } from '../circles/withdrawal.js';
 import {
   assertPeriod, assertAllowanceAmount, periodMinutes, PERIOD_LABELS, PERIOD_ADJECTIVES
 } from '../circles/allowanceModule.js';
@@ -1075,6 +1076,32 @@ export class CircleService {
       .filter((c) => c.circleId === circleId)
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
     return { circleId, contributions: all.map((c) => this._contributionView(c, circle)) };
+  }
+
+  /**
+   * How much `memberPrismId` may withdraw from this Circle right now: their COMPLETED contributions
+   * minus their COMPLETED withdrawals (never negative), capped by what the Safe actually holds on
+   * Monad. The balance is always a live chain read — never the stored ledger — so this can never
+   * promise more than the Circle could really pay out.
+   */
+  async withdrawablePreview({ circleId, memberPrismId }) {
+    const circle = this._circle(circleId);
+    this._activeMember(circleId, memberPrismId);
+
+    const data = this.store.read();
+    const contributions = Object.values(data.circleContributions ?? {}).filter((c) => c.circleId === circleId);
+    const withdrawals = Object.values(data.circleWithdrawals ?? {}).filter((w) => w.circleId === circleId);
+    const net = netContributions(contributions, withdrawals);
+
+    const balance = await this.safe.getUsdcBalance(circle.safeAddress).catch(() => 0n);
+    const withdrawable = withdrawableFor(memberPrismId, net, balance);
+
+    return {
+      circleId, memberPrismId,
+      netContributedAtomic: (net.get(memberPrismId) ?? 0n).toString(),
+      balanceAtomic: balance.toString(),
+      withdrawableAtomic: withdrawable.toString()
+    };
   }
 
   /**
@@ -3676,6 +3703,15 @@ export class CircleService {
   _assertMember(circleId, prismId) {
     const member = this.store.read().circleMembers?.[memberKey(circleId, prismId)];
     if (!member || TERMINAL_MEMBER_STATUSES.includes(member.status)) throw notFound('circle not found');
+    return member;
+  }
+
+  /** ACTIVE membership only — same boundary `CircleMessageService` applies to proposal messages. */
+  _activeMember(circleId, prismId) {
+    const member = this.store.read().circleMembers?.[memberKey(circleId, prismId)];
+    if (!member || member.status !== MemberStatus.ACTIVE) {
+      throw forbidden('only active members of this Circle can do that');
+    }
     return member;
   }
 
