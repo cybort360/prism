@@ -319,7 +319,7 @@ struct PaymentDisplay {
     guard let route = payment.route else { return nil }
     return switch route.state {
     case .quoted, .awaitingDeposit: "Not sent yet"
-    case .funding: "Sent — waiting for the network"
+    case .funding: "Sent. Waiting for the network"
     case .funded: "Received by the network"
     case .routing: "Converting to \(route.destinationSymbol ?? "the destination token")"
     case .delivered: "Delivered"

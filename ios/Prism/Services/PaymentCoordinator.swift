@@ -88,7 +88,7 @@ final class PaymentCoordinator: ObservableObject {
       if st.state == "failed" { PrismHaptics.error(); throw PaymentError.failed }
     }
     PrismHaptics.warning()
-    state = .pendingReview("Your payment was sent and is still confirming. It’ll appear in Activity once it settles — don’t send it again.")
+    state = .pendingReview("Your payment is confirming. It’ll show in Activity once it settles. Don’t send it again.")
   }
 
   // MARK: claims (send before signup)
@@ -156,7 +156,7 @@ final class PaymentCoordinator: ObservableObject {
       }
     }
     PrismHaptics.warning()
-    state = .pendingReview("Your payment was sent and is still confirming. It’ll appear in Activity once it settles — don’t send it again.")
+    state = .pendingReview("Your payment is confirming. It’ll show in Activity once it settles. Don’t send it again.")
   }
 
   private func fail(_ error: Error) {

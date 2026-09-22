@@ -174,7 +174,7 @@ struct CircleCloseView: View {
       .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
       .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PrismTheme.line, lineWidth: 0.6))
 
-      Text("Pro-rata by net contribution, split across what's left. Returns are sent one at a time: propose a member's return, approve it, then send the next — until everyone's been paid back. Each still needs the Circle's own approvals.")
+      Text("Pro-rata by net contribution, split across what's left. Returns go out one at a time. Propose a return, approve it, then send the next. Each needs the Circle's own approvals.")
         .font(PrismTheme.body(11.5))
         .foregroundStyle(PrismTheme.muted)
         .lineSpacing(2)
@@ -310,12 +310,12 @@ struct CircleCloseView: View {
   /// Human summary of a sequential close-payout step.
   private func closeMessage(_ r: CircleClosePayoutsResult) -> String {
     let skippedNote = r.skipped.isEmpty ? "" :
-      " \(r.skipped.count) member\(r.skipped.count == 1 ? "" : "s") can't be paid yet — they need to set up an account before the Circle can finish closing."
+      " \(r.skipped.count) member\(r.skipped.count == 1 ? "" : "s") can't be paid yet. They need to set up an account before the Circle can finish closing."
     if r.done { return "All returns sent." + skippedNote }
     if let p = r.proposal?.proposal {
       let name = p.recipientDisplayName ?? p.recipientHandle ?? memberName(p.recipientPrismId ?? "")
       let left = r.remaining.count
-      return "Return to \(name) proposed — approve it, then send the next. \(left) member\(left == 1 ? "" : "s") still to be returned." + skippedNote
+      return "Return to \(name) proposed. Approve it, then send the next. \(left) member\(left == 1 ? "" : "s") still to be returned." + skippedNote
     }
     // Nothing proposed this cycle: a return is still awaiting approval/execution.
     return "A return is still waiting for approval. Approve it, then send the next." + skippedNote

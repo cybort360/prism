@@ -31,7 +31,7 @@ struct CircleLimitStrip: View {
           .font(PrismTheme.body(12, weight: .semibold))
           .foregroundStyle(PrismTheme.muted)
         Spacer()
-        Text(limit.limitDisplay ?? "—")
+        Text(limit.limitDisplay ?? "-")
           .font(PrismTheme.body(13, weight: .semibold))
           .monospacedDigit()
       }
@@ -39,11 +39,11 @@ struct CircleLimitStrip: View {
       meter
 
       HStack {
-        Text("Spent \(spentLabel) \(limit.spentDisplay ?? "—")")
+        Text("Spent \(spentLabel) \(limit.spentDisplay ?? "-")")
           .font(PrismTheme.body(11.5))
           .foregroundStyle(PrismTheme.muted)
         Spacer()
-        Text("\(limit.availableDisplay ?? "—") available")
+        Text("\(limit.availableDisplay ?? "-") available")
           .font(PrismTheme.body(11.5, weight: .semibold))
           .foregroundStyle(wouldExceed ? PrismTheme.amber : PrismTheme.mintDeep)
           .monospacedDigit()

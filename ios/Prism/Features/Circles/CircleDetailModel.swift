@@ -125,7 +125,7 @@ final class CircleDetailModel: ObservableObject {
 
   /// A dash means "not known right now". It never means zero, and it is never the last number seen.
   var balanceLine: String {
-    guard let balance = detail?.balance, balance.isKnown, let atomic = balance.amountAtomic else { return "—" }
+    guard let balance = detail?.balance, balance.isKnown, let atomic = balance.amountAtomic else { return "-" }
     return Money.assetAmount(fromAtomic: atomic, decimals: balance.decimals ?? 6)
   }
 

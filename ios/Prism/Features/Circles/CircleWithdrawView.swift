@@ -91,7 +91,7 @@ struct CircleWithdrawView: View {
   }
 
   private var ceilingDisplay: String {
-    guard let withdrawable else { return "—" }
+    guard let withdrawable else { return "-" }
     return Money.assetAmount(fromAtomic: withdrawable.withdrawableAtomic)
   }
 

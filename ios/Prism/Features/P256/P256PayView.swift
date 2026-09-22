@@ -57,7 +57,7 @@ struct P256PayView: View {
         Spacer()
         PrismHeaderIconButton(icon: "xmark") { dismiss() }
       }
-      Text("Spending is authorized by your device's P-256 key and verified on-chain. Gas is sponsored — you hold no MON.")
+      Text("Spending is authorized by your device's P-256 key and verified on-chain. Gas is sponsored. You hold no MON.")
         .font(PrismTheme.body(13)).foregroundStyle(PrismTheme.muted).lineSpacing(2)
     }
     .padding(.top, 6)
@@ -76,8 +76,8 @@ struct P256PayView: View {
             .background((credential?.isSecureEnclave == true ? PrismTheme.mintSoft : PrismTheme.amber.opacity(0.12)))
             .clipShape(Capsule())
         }
-        Text(account ?? "—").font(PrismTheme.mono(11.5)).foregroundStyle(PrismTheme.ink).textSelection(.enabled)
-        Text("Fund this account with USDC to pay from it. It holds no MON — the relayer pays gas.")
+        Text(account ?? "-").font(PrismTheme.mono(11.5)).foregroundStyle(PrismTheme.ink).textSelection(.enabled)
+        Text("Fund this account with USDC to pay from it. It holds no MON. The relayer pays gas.")
           .font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted).lineSpacing(1.5)
       }
     }

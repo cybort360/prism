@@ -57,7 +57,7 @@ struct AddMoneyView: View {
         .tracking(-0.8)
         .padding(.top, 24)
 
-      Text("Top up from your card or bank in a few taps. We're putting the finishing touches on it — it'll be here soon.")
+      Text("Top up from your card or bank in a few taps. Coming soon.")
         .font(PrismTheme.body(14))
         .foregroundStyle(PrismTheme.muted)
         .lineSpacing(2)

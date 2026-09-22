@@ -112,7 +112,7 @@ struct ProfileView: View {
           divider
           advancedToggle(
             "Add money by crypto transfer", isOn: $addMoneyDeposit,
-            caption: "Fund with an on-chain deposit. Off by default — adding money with a card is coming soon.")
+            caption: "Fund with an on-chain deposit. Off by default. Adding money with a card is coming soon.")
         }
 
         section("Account") {
@@ -648,7 +648,7 @@ private struct MeraRecoveryInfoView: View {
       Text("Your account lives in your passkey").font(PrismTheme.display(32))
         .multilineTextAlignment(.center)
       Text(
-        "Prism uses a Mera passkey to sign. Because your account is derived from that passkey, signing in on a new phone with Face ID or Touch ID restores the same account — nothing to reset and no seed phrase to copy. A new SIM or OTP alone can never take over a funded account."
+        "Prism uses a Mera passkey to sign. Because your account is derived from that passkey, signing in on a new phone with Face ID or Touch ID restores the same account. Nothing to reset. No seed phrase to copy. A new SIM or OTP alone can never take over a funded account."
       ).font(PrismTheme.body(14)).foregroundStyle(PrismTheme.muted).multilineTextAlignment(.center).padding(.horizontal, 32)
       Spacer()
       PrismPrimaryButton(title: "Got it") { dismiss() }.padding(24)
@@ -663,7 +663,7 @@ struct RecoveryView: View {
       PrismTopBar(title: "Recovery", back: { dismiss() })
       Text("Recovery is separate from your phone number.").font(PrismTheme.display(38))
       Text(
-        "A new SIM or OTP alone cannot take over a funded Prism account. Your account is derived from a Mera passkey, so signing in with Face ID or Touch ID on a new device restores the same account — no seed phrase, nothing to reset. Passkeys sync through your platform account (iCloud Keychain); loss of every passkey is handled by Mera's recovery, not by your phone number."
+        "A new SIM or OTP alone cannot take over a funded Prism account. Your account is derived from a Mera passkey, so signing in with Face ID or Touch ID on a new device restores the same account. No seed phrase, nothing to reset. Passkeys sync through your platform account (iCloud Keychain); loss of every passkey is handled by Mera's recovery, not by your phone number."
       ).font(PrismTheme.body(15)).foregroundStyle(PrismTheme.muted)
       PrismCard {
         VStack(alignment: .leading, spacing: 14) {

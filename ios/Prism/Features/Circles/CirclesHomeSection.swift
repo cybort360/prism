@@ -150,8 +150,8 @@ private struct CircleRow: View {
 
   /// A dash, never a stale number: the balance is a chain fact and an unread one is unknown.
   private var balanceLine: String {
-    guard let balance = detail?.balance else { return "—" }
-    guard balance.isKnown, let atomic = balance.amountAtomic else { return "—" }
+    guard let balance = detail?.balance else { return "-" }
+    guard balance.isKnown, let atomic = balance.amountAtomic else { return "-" }
     return Money.assetAmount(fromAtomic: atomic, decimals: balance.decimals ?? 6)
   }
 
@@ -167,7 +167,7 @@ private struct CircleRow: View {
   private var accessibilityLine: String {
     var parts = [summary.name]
     if let status = CircleVocabulary.circleStatus(summary) { parts.append(status.text) }
-    parts.append(balanceLine == "—" ? "balance unavailable" : balanceLine)
+    parts.append(balanceLine == "-" ? "balance unavailable" : balanceLine)
     if let count = peopleCount { parts.append("\(count) \(count == 1 ? "person" : "people")") }
     return parts.joined(separator: ", ")
   }

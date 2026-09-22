@@ -51,7 +51,7 @@ struct SaveDisplay: Equatable {
   // MARK: formatting
 
   private func dollars(_ atomic: String?) -> String {
-    guard let atomic, !atomic.isEmpty, atomic.allSatisfy({ $0.isNumber || $0 == "-" }) else { return "—" }
+    guard let atomic, !atomic.isEmpty, atomic.allSatisfy({ $0.isNumber || $0 == "-" }) else { return "-" }
     return Money.dollars(fromAtomic: atomic)
   }
   private func signedDollars(_ atomic: String?) -> String? {

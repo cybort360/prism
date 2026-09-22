@@ -109,7 +109,7 @@ struct AuroraDepositSection: View {
         // is presented as a requirement, not a footnote.
         if let memo = display.memoRequirement {
           VStack(alignment: .leading, spacing: 4) {
-            Text("Include this memo — a deposit without it cannot be recovered")
+            Text("Include this memo. A deposit without it cannot be recovered")
               .font(PrismTheme.body(12, weight: .semibold))
               .foregroundStyle(PrismTheme.amber)
             Text(memo)

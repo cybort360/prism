@@ -73,7 +73,7 @@ final class CircleCoordinator: ObservableObject {
       }
     }
     PrismHaptics.warning()
-    state = .pendingReview("Your money was sent and is still confirming. It'll show in the Circle once it settles — don't add it again.")
+    state = .pendingReview("Your money is confirming. It'll show in the Circle once it settles. Don't add it again.")
   }
 
   // MARK: - proposing a payment
@@ -230,7 +230,7 @@ final class CircleCoordinator: ObservableObject {
         lastGovernance = result
       }
       PrismHaptics.warning()
-      state = .pendingReview("The change was sent and is still confirming. It'll show in the Circle once Monad confirms it — don't send it again.")
+      state = .pendingReview("The change is confirming. It'll show in the Circle once Monad confirms it. Don't send it again.")
     } catch { fail(error) }
   }
 
@@ -271,7 +271,7 @@ final class CircleCoordinator: ObservableObject {
         lastPayment = result
       }
       PrismHaptics.warning()
-      state = .pendingReview("The payment was sent and is still confirming. It'll show in the Circle once it settles — don't send it again.")
+      state = .pendingReview("The payment is confirming. It'll show in the Circle once it settles. Don't send it again.")
     } catch { fail(error) }
   }
 
@@ -357,7 +357,7 @@ final class CircleCoordinator: ObservableObject {
       }
     }
     PrismHaptics.warning()
-    state = .pendingReview("Your payment was sent and is still confirming. It'll show in the Circle once it settles — don't send it again.")
+    state = .pendingReview("Your payment is confirming. It'll show in the Circle once it settles. Don't send it again.")
   }
 
   // MARK: - shared

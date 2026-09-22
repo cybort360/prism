@@ -188,7 +188,7 @@ struct PersonPickerView: View {
       Text(contactsBlocked ? "Search a @handle to pay" : (query.isEmpty ? "No contacts with a number" : "No matches"))
         .font(PrismTheme.body(15, weight: .semibold)).foregroundStyle(PrismTheme.ink)
       Text(contactsBlocked
-        ? "Contacts access is off. Type someone’s @handle above to pay them — you don’t need your contacts."
+        ? "Contacts access is off. Type someone’s @handle above to pay them. You don’t need your contacts."
         : "Type a @handle above to pay anyone on Prism.")
         .font(PrismTheme.body(12.5)).foregroundStyle(PrismTheme.muted)
         .multilineTextAlignment(.center).lineSpacing(2)
@@ -319,7 +319,7 @@ enum PickerError: LocalizedError {
       "This person is not on Prism yet. Payment requests can only be sent to an active Prism account."
     case .handleNotFound: "That Prism handle could not be found."
     case .circleCannotSendBeforeSignup:
-      "This person hasn't joined Prism yet. A Circle can only pay an active Prism account — you can still send to them from your own balance."
+      "This person hasn't joined Prism yet. A Circle can only pay an active Prism account. You can still send to them from your own balance."
     }
   }
 }
