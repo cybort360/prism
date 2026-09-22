@@ -381,6 +381,37 @@ extension PrismAPI {
   func cancelCircleProposal(circleId: String, proposalId: String) async throws -> CircleGovernanceProposal {
     try await APIClient.shared.send("/v1/circles/\(circleId)/proposals/\(proposalId)/cancel", body: EmptyBody())
   }
+
+  // MARK: - member withdrawals: money OUT of a Circle, capped by a member's own net contribution
+
+  struct ProposeCircleWithdrawalBody: Encodable { let amountAtomic: String }
+
+  /// What this member may withdraw from this Circle right now. Always a live read, never a number
+  /// this screen is trusted to compute for itself.
+  func circleWithdrawable(_ circleId: String) async throws -> CircleWithdrawableResponse {
+    try await APIClient.shared.request("/v1/circles/\(circleId)/withdrawable")
+  }
+
+  /// Propose taking money out of a Circle, to the caller's own account. Like any other Circle
+  /// payment, this only builds the proposal: the Circle's normal threshold of approvals still gates
+  /// whether it ever executes.
+  func proposeCircleWithdrawal(circleId: String, amountAtomic: String) async throws -> CircleWithdrawalProposalResponse {
+    try await APIClient.shared.send(
+      "/v1/circles/\(circleId)/withdrawals",
+      body: ProposeCircleWithdrawalBody(amountAtomic: amountAtomic))
+  }
+
+  /// Preview, per member, what closing this Circle would pay out right now. Writes nothing and
+  /// proposes nothing; `proposeCircleClosePayouts` is the action this previews.
+  func circleClosePlan(_ circleId: String) async throws -> CircleClosePlan {
+    try await APIClient.shared.request("/v1/circles/\(circleId)/close/plan")
+  }
+
+  /// Turn the close preview into real proposals: one withdrawal-tagged payment per member with a
+  /// positive payout, each still needing the Circle's own approvals before anything moves.
+  func proposeCircleClosePayouts(_ circleId: String) async throws -> CircleClosePayoutsResult {
+    try await APIClient.shared.send("/v1/circles/\(circleId)/close/payouts", body: EmptyBody())
+  }
 }
 
 struct CircleCloseBeginBody: Encodable { let reason: String? }

@@ -93,6 +93,23 @@ final class CircleCoordinator: ObservableObject {
     } catch { fail(error) }
   }
 
+  // MARK: - proposing a withdrawal
+
+  /// Propose taking money out of a Circle, to the caller's own account. This is an ordinary Circle
+  /// payment under the hood — `lastPayment` is set the same way `proposePayment` sets it — so it
+  /// ends at the same honest stopping point: nothing moves until the Circle's own threshold of
+  /// approvals is met.
+  func proposeWithdrawal(circleId: String, amountAtomic: String) async {
+    do {
+      blockedReason = nil
+      state = .preparing
+      let response = try await api.proposeCircleWithdrawal(circleId: circleId, amountAtomic: amountAtomic)
+      lastPayment = response.proposal
+      state = .idle
+      PrismHaptics.success()
+    } catch { fail(error) }
+  }
+
   // MARK: - approving a payment
 
   /// Validate, then sign.

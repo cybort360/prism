@@ -18,6 +18,7 @@ final class AppModel: ObservableObject {
   /// authorities: one needs only the contributor's own consent, the other needs the Circle's.
   @Published var presentCircleAddMoney: CircleSummary?
   @Published var presentCirclePay: CirclePayTarget?
+  @Published var presentCircleWithdraw: CircleSummary?
   @Published var presentCircleApproval: CircleApprovalPresentation?
   /// The Circle being looked at. A full-screen place rather than a sheet, because a Circle is
   /// somewhere a person stays — with its own members, settings and history to move between.

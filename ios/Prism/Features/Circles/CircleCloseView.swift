@@ -23,6 +23,13 @@ struct CircleCloseView: View {
   @State private var busy = false
   @State private var error: String?
   @State private var confirmingFinal = false
+  /// What each member would get back right now, pro-rata across the Safe's live balance. Nil while
+  /// there is nothing left to return — the same "not asked, not zero" rule every other read here
+  /// follows.
+  @State private var plan: CircleClosePlan?
+  @State private var members: [CircleMember] = []
+  @State private var payoutsBusy = false
+  @State private var payoutsSent: String?
 
   private var isClosing: Bool { state?.status == "CLOSING" }
   private var isClosed: Bool { state?.status == "CLOSED" }
@@ -134,7 +141,58 @@ struct CircleCloseView: View {
         .background(PrismTheme.ice)
         .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
       }
+
+      if let plan, !plan.payouts.isEmpty { returnsPreview(plan).padding(.top, 18) }
     }
+  }
+
+  /// One option for how that money leaves: pro-rata by what each member put in, net of anything
+  /// they already withdrew. This previews the split before anything is proposed — sending still puts
+  /// one threshold proposal per member through the Circle's ordinary approvals, exactly like any
+  /// other Circle payment.
+  private func returnsPreview(_ plan: CircleClosePlan) -> some View {
+    VStack(alignment: .leading, spacing: 11) {
+      Text("What each member would get back")
+        .font(PrismTheme.body(14, weight: .semibold))
+
+      VStack(spacing: 0) {
+        ForEach(Array(plan.payouts.enumerated()), id: \.offset) { idx, payout in
+          HStack {
+            Text(memberName(payout.prismId))
+              .font(PrismTheme.body(13.5, weight: .medium))
+            Spacer()
+            Text(Money.assetAmount(fromAtomic: payout.amountAtomic))
+              .font(PrismTheme.body(13.5, weight: .semibold))
+              .monospacedDigit()
+          }
+          .padding(.vertical, 11)
+          if idx < plan.payouts.count - 1 { Divider().overlay(PrismTheme.line) }
+        }
+      }
+      .padding(.horizontal, 14)
+      .background(PrismTheme.paper)
+      .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+      .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PrismTheme.line, lineWidth: 0.6))
+
+      Text("Pro-rata by net contribution, split across what's left. Nothing moves until you send these, and each one still needs the Circle's own approvals.")
+        .font(PrismTheme.body(11.5))
+        .foregroundStyle(PrismTheme.muted)
+        .lineSpacing(2)
+        .fixedSize(horizontal: false, vertical: true)
+
+      if let payoutsSent { SuccessBanner(message: payoutsSent) }
+
+      PrismSecondaryButton(title: payoutsBusy ? "Sending…" : "Send returns", icon: "arrow.up.right") {
+        Task { await sendPayouts() }
+      }
+      .disabled(payoutsBusy)
+      .opacity(payoutsBusy ? 0.6 : 1)
+    }
+  }
+
+  private func memberName(_ prismId: String) -> String {
+    guard let member = members.first(where: { $0.prismId == prismId }) else { return "A member" }
+    return member.displayName ?? member.handle ?? "A member"
   }
 
   private func satisfiedTitle(_ code: String, state: CircleCloseState) -> String {
@@ -214,8 +272,41 @@ struct CircleCloseView: View {
   private func refresh() async {
     loading = true
     defer { loading = false }
-    do { state = try await PrismAPI.shared.circleCloseState(circleId); error = nil }
-    catch { self.error = error.localizedDescription }
+    do {
+      state = try await PrismAPI.shared.circleCloseState(circleId)
+      error = nil
+      await loadPlan()
+    } catch { self.error = error.localizedDescription }
+  }
+
+  /// Re-read the pro-rata preview alongside the close state. Only worth asking while there is
+  /// actually money left — a Circle with nothing to return has nothing to preview.
+  private func loadPlan() async {
+    guard let balance = state?.balance?.amountAtomic, let amount = Decimal(string: balance), amount > 0 else {
+      plan = nil
+      return
+    }
+    async let planTask = PrismAPI.shared.circleClosePlan(circleId)
+    async let membersTask = PrismAPI.shared.circleMembers(circleId)
+    plan = try? await planTask
+    members = (try? await membersTask) ?? []
+  }
+
+  /// Turn the preview into real proposals. Each one is an ordinary threshold Circle payment — this
+  /// button starts them, it does not approve or send them; the Circle's admins still have to.
+  private func sendPayouts() async {
+    payoutsBusy = true
+    defer { payoutsBusy = false }
+    do {
+      let result = try await PrismAPI.shared.proposeCircleClosePayouts(circleId)
+      error = nil
+      let count = result.proposals.count
+      payoutsSent = count == 0
+        ? "Nothing left to send."
+        : "\(count) \(count == 1 ? "payout" : "payouts") proposed. Each still needs the Circle's own approvals."
+      await refresh()
+      await reload()
+    } catch { self.error = error.localizedDescription }
   }
 
   private func begin() async {
