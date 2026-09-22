@@ -77,6 +77,14 @@ actor APIClient {
 }
 private struct ErrorEnvelope: Decodable { let error: String }
 extension Notification.Name { static let prismUnauthorized = Notification.Name("prism.unauthorized") }
+
+extension Error {
+  /// A request that was cancelled (a SwiftUI `.task` superseded or a view that went away) is not a
+  /// failure the user should ever see. Load/refresh paths check this before showing an error banner.
+  var isCancellation: Bool {
+    self is CancellationError || (self as? URLError)?.code == .cancelled
+  }
+}
 enum APIError: LocalizedError {
   case invalidResponse
   case unauthorized

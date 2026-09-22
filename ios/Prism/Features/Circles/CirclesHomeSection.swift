@@ -256,7 +256,7 @@ private struct CircleInvitationCard: View {
       }
       await reload()
     } catch {
-      self.error = error.localizedDescription
+      if !error.isCancellation { self.error = error.localizedDescription }
     }
   }
 }
@@ -289,7 +289,8 @@ final class CirclesHomeModel: ObservableObject {
       invitations = (try? await invites) ?? []
       unavailable = nil
     } catch {
-      unavailable = error.localizedDescription
+      // A cancelled/superseded load is not a failure; keep the last good state, show nothing.
+      if !error.isCancellation { unavailable = error.localizedDescription }
       return
     }
 

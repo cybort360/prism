@@ -288,7 +288,10 @@ struct HomeView: View {
       error = nil
     } catch APIError.unauthorized {
       // A 401 signs the user out (AppModel handles it); don't flash an error on Home.
-    } catch { self.error = error.localizedDescription }
+    } catch {
+      // A cancelled/superseded refresh is not a failure; never flash it as an error.
+      if !error.isCancellation { self.error = error.localizedDescription }
+    }
   }
   private func openRequest(_ r: PaymentRequestRecord) async {
     do {
