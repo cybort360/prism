@@ -429,6 +429,23 @@ route('POST', '/v1/circles/:id/close/cancel', async ({ user, params }) =>
 route('POST', '/v1/circles/:id/close/finalize', async ({ user, params, body }) =>
   circleService.finalizeClose({ circleId: params.id, actorPrismId: user.prismId, acknowledgement: body?.acknowledgement ?? null }), true);
 
+// --- member withdrawals: money OUT of a Circle, capped by a member's own net contribution ------
+route('GET', '/v1/circles/:id/withdrawable', async ({ user, params }) =>
+  circleService.withdrawablePreview({ circleId: params.id, memberPrismId: user.prismId }), true);
+route('POST', '/v1/circles/:id/withdrawals', async ({ user, params, body }) =>
+  circleService.proposeWithdrawal({ circleId: params.id, memberPrismId: user.prismId, amountAtomic: String(body.amountAtomic) }), true);
+
+// --- close payouts: pro-rata return of what remains when a Circle closes -----------------------
+// `planClosePayouts` is a preview with no auth check of its own, so the route gates it here: calling
+// `getCircle` first throws the standard 403/404 for a caller who is not a member, before the plan
+// (which reveals every member's payout) is ever returned.
+route('GET', '/v1/circles/:id/close/plan', async ({ user, params }) => {
+  await circleService.getCircle(params.id, user.prismId);
+  return circleService.planClosePayouts({ circleId: params.id });
+}, true);
+route('POST', '/v1/circles/:id/close/payouts', async ({ user, params }) =>
+  circleService.proposeClosePayouts({ circleId: params.id, actorPrismId: user.prismId }), true);
+
 // --- contributions: money INTO a Circle --------------------------------------
 // A contribution is an ordinary Prism payment whose recipient is the Circle's Safe: same envelope,
 // same ERC-3009 receive-authorization to the audited router, same relayer, same reconciliation.
