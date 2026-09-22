@@ -442,3 +442,36 @@ test('while a close plan is frozen, ordinary withdrawals are blocked; clearing t
   const wd = await circles.proposeWithdrawal({ circleId: circle.circleId, memberPrismId: octane.prismId, amountAtomic: '1000000' });
   assert.ok(wd.proposal, 'withdrawal is allowed once the Circle is no longer returning funds');
 });
+
+// ===========================================================================
+// reconcilePendingFor — a delivered payout stops showing as Pending in Activity
+// ===========================================================================
+
+test('reconcilePendingFor settles a delivered-but-still-CONFIRMING withdrawal the viewer received', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+  const { circles, circle, octane, tobi, fake } = s;
+
+  seedContribution(s.store, { id: 'ctr', circleId: circle.circleId, contributorPrismId: octane.prismId, amount: 100000000n });
+  fake.setBalance(circle.safeAddress, 100000000n);
+
+  const { proposal, withdrawalId } = await circles.proposeWithdrawal({
+    circleId: circle.circleId, memberPrismId: octane.prismId, amountAtomic: '100000000'
+  });
+  await approve(s, circle.circleId, proposal, octane);
+  await approve(s, circle.circleId, proposal, tobi);
+  await circles.executePayment({ circleId: circle.circleId, proposalId: proposal.proposalId, actorPrismId: octane.prismId });
+
+  // Simulate a lost reconcile: the tx settled on-chain, but the record is stuck CONFIRMING and the
+  // withdrawal record never reached COMPLETED (exactly the "always pending" bug).
+  s.store.mutate((d) => {
+    d.circleProposals[proposal.proposalId].lifecycle = 'CONFIRMING';
+    d.circleWithdrawals[withdrawalId].status = 'PROPOSED';
+  });
+
+  // Opening Activity reconciles the viewer's received payouts from chain truth.
+  await circles.reconcilePendingFor(octane.prismId);
+
+  assert.equal(s.store.read().circleProposals[proposal.proposalId].lifecycle, 'COMPLETED');
+  assert.equal(s.store.read().circleWithdrawals[withdrawalId].status, 'COMPLETED');
+});

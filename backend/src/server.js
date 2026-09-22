@@ -284,6 +284,9 @@ route('GET', '/v1/activity', async ({ user }) => {
   // Opening Activity reconciles any non-terminal device-P256 payments from chain truth first, so a
   // stuck "Pending" row (e.g. an earlier lost status poll) flips to its real Completed/Failed state.
   await p256AccountService.reconcile(user.prismId).catch(() => {});
+  // Same for Circle payouts the viewer received (withdrawals, close returns): settle any that already
+  // landed on-chain so a delivered payment stops showing as Pending.
+  await circleService.reconcilePendingFor(user.prismId).catch(() => {});
   return activityService.list(user.prismId);
 }, true);
 

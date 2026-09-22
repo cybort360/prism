@@ -1900,6 +1900,25 @@ export class CircleService {
    * that is precisely the case where a backend that trusted `status: success` would report a payment
    * that never happened.
    */
+  /**
+   * Settle the viewer's broadcast-but-unconfirmed Circle payments (withdrawals included) against the
+   * chain, so a payout that already landed on-chain stops showing as "Pending" in their Activity.
+   * Without an Alchemy webhook wired, a Circle payment otherwise only reconciles when its own detail
+   * screen is opened; the Activity list never opened it. Best-effort and idempotent: a read failure or
+   * a still-unconfirmed tx leaves the row exactly as it was. Scoped to payments the viewer receives.
+   */
+  async reconcilePendingFor(prismId) {
+    const pending = Object.values(this.store.read().circleProposals ?? {}).filter((p) =>
+      p.kind === ProposalKind.PAYMENT
+      && p.recipientPrismId === prismId
+      && p.executionTxHash
+      && (p.lifecycle === CirclePaymentState.SUBMITTED || p.lifecycle === CirclePaymentState.CONFIRMING)
+    );
+    for (const p of pending) {
+      await this.reconcilePayment({ circleId: p.circleId, proposalId: p.proposalId, prismId }).catch(() => null);
+    }
+  }
+
   async reconcilePayment({ circleId, proposalId, prismId }) {
     const circle = this._circle(circleId);
     this._assertMember(circleId, prismId);
