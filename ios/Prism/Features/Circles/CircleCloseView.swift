@@ -174,7 +174,7 @@ struct CircleCloseView: View {
       .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
       .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PrismTheme.line, lineWidth: 0.6))
 
-      Text("Pro-rata by net contribution, split across what's left. Nothing moves until you send these, and each one still needs the Circle's own approvals.")
+      Text("Pro-rata by net contribution, split across what's left. Returns are sent one at a time: propose a member's return, approve it, then send the next — until everyone's been paid back. Each still needs the Circle's own approvals.")
         .font(PrismTheme.body(11.5))
         .foregroundStyle(PrismTheme.muted)
         .lineSpacing(2)
@@ -182,7 +182,7 @@ struct CircleCloseView: View {
 
       if let payoutsSent { SuccessBanner(message: payoutsSent) }
 
-      PrismSecondaryButton(title: payoutsBusy ? "Sending…" : "Send returns", icon: "arrow.up.right") {
+      PrismSecondaryButton(title: payoutsBusy ? "Sending…" : "Send next return", icon: "arrow.up.right") {
         Task { await sendPayouts() }
       }
       .disabled(payoutsBusy)
@@ -292,21 +292,33 @@ struct CircleCloseView: View {
     members = (try? await membersTask) ?? []
   }
 
-  /// Turn the preview into real proposals. Each one is an ordinary threshold Circle payment — this
-  /// button starts them, it does not approve or send them; the Circle's admins still have to.
+  /// Propose the NEXT member's return. Returns are sent one at a time — each is an ordinary threshold
+  /// Circle payment against the Safe's current nonce, so only one can execute per cycle. This button
+  /// starts the next one; it does not approve or send it — the Circle's admins still have to.
   private func sendPayouts() async {
     payoutsBusy = true
     defer { payoutsBusy = false }
     do {
       let result = try await PrismAPI.shared.proposeCircleClosePayouts(circleId)
       error = nil
-      let count = result.proposals.count
-      payoutsSent = count == 0
-        ? "Nothing left to send."
-        : "\(count) \(count == 1 ? "payout" : "payouts") proposed. Each still needs the Circle's own approvals."
+      payoutsSent = closeMessage(result)
       await refresh()
       await reload()
     } catch { self.error = error.localizedDescription }
+  }
+
+  /// Human summary of a sequential close-payout step.
+  private func closeMessage(_ r: CircleClosePayoutsResult) -> String {
+    let skippedNote = r.skipped.isEmpty ? "" :
+      " \(r.skipped.count) member\(r.skipped.count == 1 ? "" : "s") can't be paid yet — they need to set up an account before the Circle can finish closing."
+    if r.done { return "All returns sent." + skippedNote }
+    if let p = r.proposal?.proposal {
+      let name = p.recipientDisplayName ?? p.recipientHandle ?? memberName(p.recipientPrismId ?? "")
+      let left = r.remaining.count
+      return "Return to \(name) proposed — approve it, then send the next. \(left) member\(left == 1 ? "" : "s") still to be returned." + skippedNote
+    }
+    // Nothing proposed this cycle: a return is still awaiting approval/execution.
+    return "A return is still waiting for approval. Approve it, then send the next." + skippedNote
   }
 
   private func begin() async {

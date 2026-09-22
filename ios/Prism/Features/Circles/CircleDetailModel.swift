@@ -48,7 +48,7 @@ final class CircleDetailModel: ObservableObject {
 
   func reload() async {
     guard let circleId else { return }
-    // Six reads, each allowed to fail on its own. A Circle whose limits could not be read still has
+    // Seven reads, each allowed to fail on its own. A Circle whose limits could not be read still has
     // a balance worth showing; hiding the screen behind its least important call would be worse.
     async let detailTask = PrismAPI.shared.circle(circleId)
     async let pendingTask = PrismAPI.shared.circlePending(circleId)

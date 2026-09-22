@@ -409,9 +409,17 @@ struct CircleClosePayout: Codable, Equatable, Identifiable {
 /// live balance. A preview only — nothing here has been proposed yet.
 struct CircleClosePlan: Codable, Equatable { let balanceAtomic: String; let payouts: [CircleClosePayout] }
 
-/// What turning a `CircleClosePlan` into real proposals produced: one withdrawal-tagged PAYMENT
-/// proposal per member with a positive payout, each still needing the Circle's own approvals.
-struct CircleClosePayoutsResult: Codable { let proposals: [CircleWithdrawalProposalResponse] }
+/// The result of proposing the next close payout. Returns are sent one at a time (each Circle payment
+/// uses the Safe's current nonce, so only one can execute per cycle): `proposal` is the single payout
+/// just kicked off (or nil when nothing is left to propose or one is still in flight), `remaining` are
+/// the members not yet fully returned, `skipped` are members still owed but with no account to pay to,
+/// and `done` is true once every member's frozen target has been met.
+struct CircleClosePayoutsResult: Codable {
+  let proposal: CircleWithdrawalProposalResponse?
+  let remaining: [CircleClosePayout]
+  let skipped: [CircleClosePayout]
+  let done: Bool
+}
 
 struct CircleApprovalResult: Codable { let proposalId: String; let approvedBy: String?; let signatureType: String?; let payment: CirclePayment }
 

@@ -327,42 +327,73 @@ test('planClosePayouts excludes a member with zero net contribution', async (t) 
 });
 
 // ===========================================================================
-// proposeClosePayouts — one withdrawal-tagged PAYMENT proposal per positive payout
+// proposeClosePayouts — sequential: one payout at a time from a FROZEN pro-rata plan
 // ===========================================================================
 
-test('proposeClosePayouts (admin actor): one PAYMENT proposal per member with the correct pro-rata amounts', async (t) => {
+test('proposeClosePayouts (admin actor): sequential — proposes the largest target one at a time; the frozen plan prevents over-pay under a shortfall', async (t) => {
   const s = await circleWithMembers();
   t.after(s.restoreProvider);
   const carol = await makeIdentity(s.identityService, { name: 'Carol', handle: 'carol' });
   await addContributor(s, s.circle, s.octane.prismId, carol);
+  const { circles, circle, octane, tobi, fake } = s;
 
-  seedContribution(s.store, { id: 'ctr_a', circleId: s.circle.circleId, contributorPrismId: s.octane.prismId, amount: 100000000n });
-  seedContribution(s.store, { id: 'ctr_b', circleId: s.circle.circleId, contributorPrismId: s.tobi.prismId, amount: 50000000n });
-  seedContribution(s.store, { id: 'ctr_c', circleId: s.circle.circleId, contributorPrismId: carol.prismId, amount: 50000000n });
-  s.circles.safe.getUsdcBalance = async () => 100000000n;
+  seedContribution(s.store, { id: 'ctr_a', circleId: circle.circleId, contributorPrismId: octane.prismId, amount: 100000000n });
+  seedContribution(s.store, { id: 'ctr_b', circleId: circle.circleId, contributorPrismId: tobi.prismId, amount: 50000000n });
+  seedContribution(s.store, { id: 'ctr_c', circleId: circle.circleId, contributorPrismId: carol.prismId, amount: 50000000n });
+  // Shortfall: 200M owed, only 100M in the Safe -> frozen split is octane 50M, tobi 25M, carol 25M.
+  fake.setBalance(circle.safeAddress, 100000000n);
 
-  const { proposals } = await s.circles.proposeClosePayouts({ circleId: s.circle.circleId, actorPrismId: s.octane.prismId });
+  // Round 1: only the single largest target is proposed (octane 50M); the rest are still owed.
+  const r1 = await circles.proposeClosePayouts({ circleId: circle.circleId, actorPrismId: octane.prismId });
+  assert.equal(r1.proposal.proposal.recipientPrismId, octane.prismId);
+  assert.equal(r1.proposal.proposal.amount, '50000000');
+  assert.equal(r1.done, false);
+  // Everyone is still owed until their money actually moves (COMPLETED) — including octane, now in flight.
+  assert.deepEqual(r1.remaining.map((x) => x.prismId).sort(), [octane.prismId, tobi.prismId, carol.prismId].sort());
+  assert.deepEqual(r1.skipped, []);
+  const stored1 = s.store.read().circleProposals[r1.proposal.proposal.proposalId];
+  assert.equal(stored1.withdrawal.closePayout, true);
+  assert.equal(stored1.lifecycle, 'PROPOSED');
+  assert.equal(r1.proposal.proposal.collectedApprovals, 0);
 
-  assert.equal(proposals.length, 3);
-  const byRecipient = Object.fromEntries(proposals.map((p) => [p.proposal.recipientPrismId, p]));
-  assert.equal(byRecipient[s.octane.prismId].proposal.amount, '50000000');
-  assert.equal(byRecipient[s.tobi.prismId].proposal.amount, '25000000');
-  assert.equal(byRecipient[carol.prismId].proposal.amount, '25000000');
+  // Dedup: with octane's payout still in flight, another call proposes nothing (waits for it).
+  const waiting = await circles.proposeClosePayouts({ circleId: circle.circleId, actorPrismId: octane.prismId });
+  assert.equal(waiting.proposal, null);
+  assert.equal(waiting.done, false);
+  assert.equal(waiting.remaining.length, 3); // nothing paid yet; octane's payout is still in flight
 
-  for (const { proposal, withdrawalId } of proposals) {
-    assert.equal(proposal.kind, 'PAYMENT');
-    const stored = s.store.read().circleProposals[proposal.proposalId];
-    assert.deepEqual(stored.withdrawal, { beneficiaryPrismId: proposal.recipientPrismId });
+  // Execute octane's payout -> balance drops, octane's frozen target is now met.
+  await approve(s, circle.circleId, r1.proposal.proposal, octane);
+  await approve(s, circle.circleId, r1.proposal.proposal, tobi);
+  const exec1 = await circles.executePayment({ circleId: circle.circleId, proposalId: r1.proposal.proposal.proposalId, actorPrismId: octane.prismId });
+  assert.equal(exec1.lifecycle, 'COMPLETED');
 
-    // Never auto-approved or auto-executed.
-    assert.equal(stored.lifecycle, 'PROPOSED');
-    assert.equal(proposal.collectedApprovals, 0);
-    assert.equal(proposal.executionTxHash, null);
+  // Round 2: octane is NOT proposed again (frozen target met — no over-pay); the next largest
+  // remaining target is proposed instead (tobi or carol, 25M).
+  const r2 = await circles.proposeClosePayouts({ circleId: circle.circleId, actorPrismId: octane.prismId });
+  assert.notEqual(r2.proposal, null);
+  assert.notEqual(r2.proposal.proposal.recipientPrismId, octane.prismId);
+  assert.equal(r2.proposal.proposal.amount, '25000000');
+  assert.equal(r2.done, false);
+  // octane's target is now fully paid, so they are no longer owed; only tobi and carol remain.
+  assert.deepEqual(r2.remaining.map((x) => x.prismId).sort(), [tobi.prismId, carol.prismId].sort());
+});
 
-    const record = s.store.read().circleWithdrawals[withdrawalId];
-    assert.equal(record.status, 'PROPOSED');
-    assert.equal(record.beneficiaryPrismId, proposal.recipientPrismId);
-  }
+test('proposeClosePayouts: a payee with no bound account is surfaced as skipped and keeps the close from reporting done', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+  const { circles, circle, octane, fake } = s;
+
+  // A contribution from a prismId with no active member record (e.g. a removed member) still counts
+  // toward the plan, but there is no account to pay it to.
+  seedContribution(s.store, { id: 'ctr_a', circleId: circle.circleId, contributorPrismId: octane.prismId, amount: 50000000n });
+  seedContribution(s.store, { id: 'ctr_ghost', circleId: circle.circleId, contributorPrismId: 'ghost', amount: 50000000n });
+  fake.setBalance(circle.safeAddress, 100000000n);
+
+  const r = await circles.proposeClosePayouts({ circleId: circle.circleId, actorPrismId: octane.prismId });
+  assert.equal(r.proposal.proposal.recipientPrismId, octane.prismId); // the real member is paid
+  assert.deepEqual(r.skipped.map((x) => x.prismId), ['ghost']);        // the account-less payee is surfaced
+  assert.equal(r.done, false);                                         // residual keeps it from finishing
 });
 
 test('proposeClosePayouts: a non-admin actor is rejected', async (t) => {

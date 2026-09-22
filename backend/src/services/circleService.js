@@ -1300,7 +1300,7 @@ export class CircleService {
    * calling this — it performs no cap check of its own, since `proposeClosePayouts`'s pro-rata
    * amount is already bounded by construction (see `proRataPayouts`).
    */
-  async _createWithdrawalProposal({ circle, actorPrismId, beneficiaryPrismId, beneficiaryMember, amount }) {
+  async _createWithdrawalProposal({ circle, actorPrismId, beneficiaryPrismId, beneficiaryMember, amount, closePayout = false }) {
     const memberAccount = getAddress(beneficiaryMember.authorityAddress);
     if (memberAccount === getAddress(circle.safeAddress)) throw badRequest('a Circle cannot pay itself');
 
@@ -1338,16 +1338,20 @@ export class CircleService {
     // written directly onto the persisted record (and mirrored onto the view returned here) so a
     // later confirmation hook can recognize this PAYMENT as a withdrawal without guessing from the
     // memo string.
+    const tag = { beneficiaryPrismId, ...(closePayout ? { closePayout: true } : {}) };
     this.store.mutate((d) => {
       const stored = d.circleProposals?.[proposal.proposalId];
-      if (stored) stored.withdrawal = { beneficiaryPrismId };
+      if (stored) stored.withdrawal = tag;
     });
-    proposal.withdrawal = { beneficiaryPrismId };
+    proposal.withdrawal = tag;
 
-    const withdrawalRecord = newCircleWithdrawal({
-      withdrawalId, circleId: circle.circleId, beneficiaryPrismId, beneficiaryAccount: memberAccount,
-      amount, proposalId: proposal.proposalId
-    });
+    const withdrawalRecord = {
+      ...newCircleWithdrawal({
+        withdrawalId, circleId: circle.circleId, beneficiaryPrismId, beneficiaryAccount: memberAccount,
+        amount, proposalId: proposal.proposalId
+      }),
+      ...(closePayout ? { closePayout: true } : {})
+    };
     this.store.mutate((d) => { (d.circleWithdrawals ||= {})[withdrawalId] = withdrawalRecord; });
 
     return { proposal, withdrawalId };
@@ -1380,12 +1384,51 @@ export class CircleService {
     return { balanceAtomic: balance.toString(), payouts: result };
   }
 
+  // A payout proposal is "outstanding" until its withdrawal-tagged PAYMENT reaches a terminal state.
+  static CLOSE_TERMINAL_STATES = Object.freeze([
+    CirclePaymentState.COMPLETED, CirclePaymentState.INVALIDATED,
+    CirclePaymentState.EXPIRED, CirclePaymentState.CANCELLED, CirclePaymentState.FAILED
+  ]);
+
   /**
-   * Turn a `planClosePayouts` preview into real threshold proposals: one withdrawal-tagged PAYMENT
-   * proposal per member with a positive payout, admin-proposed to that member's own account. Each
-   * amount is already ≤ that member's net contribution by construction (`proRataPayouts` never
-   * assigns more than a member's share of the total), so no per-payout cap check is needed here —
-   * only the ordinary threshold of admin signatures gates whether any of them ever execute.
+   * Freeze each member's close entitlement the first time a close payout is requested, and reuse it
+   * thereafter. This is what makes sequential payouts correct: pro-rata is `net_i / Σnet × balance`
+   * computed ONCE, at close start. Recomputing it against the shrinking net after each payout would
+   * over-pay whoever is paid first (their already-returned share still counts in `net`). Stored as
+   * `{ circleId, balanceAtomic, targets: { prismId: amountString }, createdAt }`.
+   */
+  async _ensureClosePlan(circle) {
+    const existing = this.store.read().circleClosePlans?.[circle.circleId];
+    if (existing) return existing;
+
+    const data = this.store.read();
+    const contributions = Object.values(data.circleContributions ?? {}).filter((c) => c.circleId === circle.circleId);
+    const withdrawals = Object.values(data.circleWithdrawals ?? {}).filter((w) => w.circleId === circle.circleId);
+    const net = netContributions(contributions, withdrawals);
+    const balance = await this.safe.getUsdcBalance(circle.safeAddress).catch(() => 0n);
+    const payouts = proRataPayouts(net, balance);
+    const targets = Object.fromEntries([...payouts.entries()].map(([id, amt]) => [id, amt.toString()]));
+    const plan = { circleId: circle.circleId, balanceAtomic: balance.toString(), targets, createdAt: new Date().toISOString() };
+    this.store.mutate((d) => { (d.circleClosePlans ||= {})[circle.circleId] = plan; });
+    return plan;
+  }
+
+  /**
+   * Return one member's money at a time. Every Circle payment builds against the CURRENT Safe nonce,
+   * and execution refuses any proposal at a higher nonce — so a batch of payouts sharing one nonce
+   * could only ever land one, leaving the rest to expire. Instead this proposes the SINGLE largest
+   * unpaid payout from the FROZEN close plan (`_ensureClosePlan`); once it is approved and executed
+   * the admin calls again for the next, until every target is met.
+   *
+   * Returns `{ proposal, remaining, skipped, done }`:
+   *   - `proposal`  the single payout proposal created this call, or null (nothing left to propose, or
+   *                 a payout is still in flight — only one is ever outstanding at a time).
+   *   - `remaining` members still owed part of their frozen target, to a real account.
+   *   - `skipped`   members still owed but with NO bound account — their residual keeps the balance
+   *                 above zero, so the admin is told rather than left with a silently stuck close.
+   *   - `done`      every target is met: nothing to propose, nothing in flight, no residual.
+   * Each target is ≤ the member's net at close start by construction, so no per-payout cap is needed;
+   * the ordinary admin threshold still gates whether any payout executes.
    */
   async proposeClosePayouts({ circleId, actorPrismId }) {
     const circle = this._circle(circleId);
@@ -1395,23 +1438,56 @@ export class CircleService {
     if (!SPENDING_STATUSES.includes(circle.status)) throw conflict('this Circle is not active on-chain yet');
     if (!circle.safeAddress) throw conflict('this Circle has no verified Safe address');
 
-    const plan = await this.planClosePayouts({ circleId });
-    const members = this.store.read().circleMembers ?? {};
+    const plan = await this._ensureClosePlan(circle);
+    const data = this.store.read();
+    const members = data.circleMembers ?? {};
 
-    const proposals = [];
-    for (const payout of plan.payouts) {
-      if (BigInt(payout.amountAtomic) <= 0n) continue;
-      const member = members[memberKey(circleId, payout.prismId)];
-      if (!member?.authorityAddress) continue; // no account to pay — nothing this proposal can do
-
-      const amount = this._assertAmount(payout.amountAtomic);
-      const created = await this._createWithdrawalProposal({
-        circle, actorPrismId, beneficiaryPrismId: payout.prismId, beneficiaryMember: member, amount
-      });
-      proposals.push(created);
+    // Amount already returned to each member via COMPLETED close payouts (frozen-plan progress).
+    const paid = {};
+    for (const w of Object.values(data.circleWithdrawals ?? {})) {
+      if (w.circleId !== circleId || !w.closePayout || w.status !== CircleWithdrawalStatus.COMPLETED) continue;
+      paid[w.beneficiaryPrismId] = (paid[w.beneficiaryPrismId] ?? 0n) + BigInt(w.amount);
     }
 
-    return { proposals };
+    // At most one close payout in flight at a time (single-nonce reality).
+    const terminal = new Set(CircleService.CLOSE_TERMINAL_STATES);
+    const outstanding = new Set(
+      Object.values(data.circleProposals ?? {})
+        .filter((p) => p.circleId === circleId && p.withdrawal?.closePayout && !terminal.has(p.lifecycle))
+        .map((p) => p.withdrawal.beneficiaryPrismId)
+    );
+
+    const balance = await this.safe.getUsdcBalance(circle.safeAddress).catch(() => 0n);
+
+    const skipped = [];
+    const remaining = [];   // still owed, to a real account
+    const eligible = [];    // still owed, has account, not in flight
+    for (const [prismId, targetStr] of Object.entries(plan.targets)) {
+      const owed = BigInt(targetStr) - (paid[prismId] ?? 0n);
+      if (owed <= 0n) continue;
+      const member = members[memberKey(circleId, prismId)];
+      if (!member?.authorityAddress) { skipped.push({ prismId, amountAtomic: owed.toString() }); continue; }
+      remaining.push({ prismId, account: member.authorityAddress, amountAtomic: owed.toString() });
+      if (!outstanding.has(prismId)) eligible.push({ prismId, member, owed });
+    }
+
+    if (outstanding.size > 0) return { proposal: null, remaining, skipped, done: false };
+
+    if (eligible.length > 0 && balance > 0n) {
+      eligible.sort((a, b) => (b.owed > a.owed ? 1 : b.owed < a.owed ? -1 : (a.prismId < b.prismId ? -1 : 1)));
+      const next = eligible[0];
+      // Cap at the live balance in case non-close activity drained it below the frozen target.
+      const amount = this._assertAmount((next.owed < balance ? next.owed : balance).toString());
+      const proposal = await this._createWithdrawalProposal({
+        circle, actorPrismId, beneficiaryPrismId: next.prismId, beneficiaryMember: next.member, amount, closePayout: true
+      });
+      // `remaining` lists every member not yet fully paid (COMPLETED) — including the one just
+      // proposed, whose money has not moved yet; the returned `proposal` says which is now in flight.
+      return { proposal, remaining, skipped, done: false };
+    }
+
+    // Nothing to propose and nothing in flight: done only when no unpaid residual remains at all.
+    return { proposal: null, remaining, skipped, done: remaining.length === 0 && skipped.length === 0 };
   }
 
   /**
