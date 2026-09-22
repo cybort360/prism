@@ -414,3 +414,31 @@ test('proposeClosePayouts: a non-admin actor is rejected', async (t) => {
   // Nothing was created.
   assert.deepEqual(s.store.read().circleProposals ?? {}, {});
 });
+
+// ===========================================================================
+// Fund-return lock: while a close plan is frozen, no other spending
+// ===========================================================================
+
+test('while a close plan is frozen, ordinary withdrawals are blocked; clearing the plan unlocks them', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+  const { circles, circle, octane, fake } = s;
+
+  seedContribution(s.store, { id: 'ctr_a', circleId: circle.circleId, contributorPrismId: octane.prismId, amount: 50000000n });
+  fake.setBalance(circle.safeAddress, 50000000n);
+
+  // Freeze the close plan by starting the return-on-close flow.
+  await circles.proposeClosePayouts({ circleId: circle.circleId, actorPrismId: octane.prismId });
+  assert.ok(s.store.read().circleClosePlans[circle.circleId], 'plan is frozen');
+
+  // A side-channel self-withdrawal can no longer drain the balance out from under the frozen plan.
+  await assert.rejects(
+    () => circles.proposeWithdrawal({ circleId: circle.circleId, memberPrismId: octane.prismId, amountAtomic: '1000000' }),
+    (e) => statusOf(e) === 409
+  );
+
+  // Cancelling the close (here via the same clear the lifecycle uses) unlocks ordinary spending again.
+  circles._clearClosePlan(circle.circleId);
+  const wd = await circles.proposeWithdrawal({ circleId: circle.circleId, memberPrismId: octane.prismId, amountAtomic: '1000000' });
+  assert.ok(wd.proposal, 'withdrawal is allowed once the Circle is no longer returning funds');
+});

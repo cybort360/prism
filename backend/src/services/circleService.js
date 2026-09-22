@@ -1207,6 +1207,7 @@ export class CircleService {
   async proposePayment({ circleId, actorPrismId, resolution, amountAtomic, memo = '' }) {
     const circle = await this._spendableCircle(circleId, actorPrismId, PROPOSING_ROLES, 'pay from', { allowClosing: true });
     if (!this.payments) throw conflict('Circle payments are not available on this deployment');
+    this._assertNotReturningFunds(circleId);
     const amount = this._assertAmount(amountAtomic);
     const note = String(memo ?? '').trim().slice(0, 120);
 
@@ -1273,6 +1274,7 @@ export class CircleService {
     if (!SPENDING_STATUSES.includes(circle.status)) throw conflict('this Circle is not active on-chain yet');
     if (!circle.safeAddress) throw conflict('this Circle has no verified Safe address');
     if (!member.authorityAddress) throw badRequest('you have not finished setting up your Prism account');
+    this._assertNotReturningFunds(circleId);
 
     const { withdrawableAtomic } = await this.withdrawablePreview({ circleId, memberPrismId });
     const amount = this._assertAmount(amountAtomic);
@@ -1397,6 +1399,21 @@ export class CircleService {
    * over-pay whoever is paid first (their already-returned share still counts in `net`). Stored as
    * `{ circleId, balanceAtomic, targets: { prismId: amountString }, createdAt }`.
    */
+  /** Drop a circle's frozen close plan. Called whenever a close starts, cancels, or finalizes, so a
+   *  reopened close never reuses stale targets and ordinary spending unlocks again. */
+  _clearClosePlan(circleId) {
+    this.store.mutate((d) => { if (d.circleClosePlans) delete d.circleClosePlans[circleId]; });
+  }
+
+  /** While a close plan is frozen, the Circle is returning funds to members. Block any other spend so
+   *  a side-channel payment or self-withdrawal can't drain the balance out from under the frozen plan
+   *  (which would over-pay whoever's returned first and stale the pending close payout's nonce). */
+  _assertNotReturningFunds(circleId) {
+    if (this.store.read().circleClosePlans?.[circleId]) {
+      throw conflict('this Circle is returning funds to members; no other payments until the close finishes or is cancelled');
+    }
+  }
+
   async _ensureClosePlan(circle) {
     const existing = this.store.read().circleClosePlans?.[circle.circleId];
     if (existing) return existing;
@@ -3561,6 +3578,7 @@ export class CircleService {
         evidence: null
       };
     });
+    this._clearClosePlan(circleId); // a fresh close never inherits a prior attempt's frozen targets
     this._transition(circleId, CircleStatus.CLOSING, { by: actorPrismId, reason: reason ?? null });
     this._event(circleId, 'circle.closing.started', { by: actorPrismId, reason: reason ?? null });
     logger.info('circle.closing.started', { circleId, by: actorPrismId });
@@ -3582,6 +3600,7 @@ export class CircleService {
       const record = d.circles[circleId];
       record.closing = { ...(record.closing ?? {}), cancelledAt: new Date().toISOString(), cancelledByPrismId: actorPrismId };
     });
+    this._clearClosePlan(circleId); // reopening recomputes from scratch, and spending unlocks again
     this._transition(circleId, CircleStatus.RECONCILING, { by: actorPrismId, reason: 'closing cancelled' });
     this._event(circleId, 'circle.closing.cancelled', { by: actorPrismId });
     await this._reverifyActive(circleId);
@@ -3681,6 +3700,7 @@ export class CircleService {
       };
       record.closedAt = new Date().toISOString();
     });
+    this._clearClosePlan(circleId); // the close is done; drop the frozen targets
     this._transition(circleId, CircleStatus.CLOSED, { by: actorPrismId, balanceAtomic });
     this._event(circleId, 'circle.closed', { by: actorPrismId, balanceAtomic, withdrawals: evidence.withdrawals.length });
     logger.info('circle.closed', { circleId, by: actorPrismId });
