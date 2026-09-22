@@ -22,6 +22,7 @@ import {
   CircleStatus, MemberRole, MemberStatus, ProposalKind, ProposalStatus, CIRCLE_ASSET, SPENDING_LIMIT_KINDS,
   TERMINAL_MEMBER_STATUSES, CHAIN_BACKED_ROLES, ContributionStatus,
   CirclePaymentState, CIRCLE_PAYMENT_PRE_BROADCAST, APPROVAL_BOUND_FIELDS, CLOSE_REQUIREMENTS,
+  CircleWithdrawalStatus,
   newCircle, newCircleMember, newCircleProposal, newCircleApproval, newCircleContribution, newCircleWithdrawal,
   assertCircleTransition, assertCirclePaymentTransition, assertContributionTransition,
   assertMemberTransition, assertThresholdWithinOwners, thresholdWarnings, assertRole,
@@ -1300,8 +1301,12 @@ export class CircleService {
         recipientAccount: memberAccount,
         recipientDisplayName: member.displayName ?? null,
         recipientHandle: member.handle ?? null,
-        // A withdrawal has no alias resolution behind it — the recipient IS the member record.
-        aliasVersion: null,
+        // A withdrawal has no alias resolution behind it — the recipient IS the member record — but
+        // `_paymentContinuity` still binds every payment to the recipient's aliasVersion AT PROPOSAL
+        // TIME so an approval re-check can tell whether that identity has mutated since. `null` here
+        // would compare as 0 against a real identity's version (which starts at 1), so every
+        // withdrawal would fail continuity at the first approval; the live version must be captured.
+        aliasVersion: this.identityService.get(memberPrismId)?.aliasVersion ?? null,
         resolutionRequestId: null,
         resolutionRoute: null
       },
@@ -1325,6 +1330,23 @@ export class CircleService {
     this.store.mutate((d) => { (d.circleWithdrawals ||= {})[withdrawalId] = withdrawalRecord; });
 
     return { proposal, withdrawalId };
+  }
+
+  /**
+   * Move the `circleWithdrawals` record tied to a withdrawal-tagged PAYMENT proposal to a terminal
+   * status. Found by `proposalId` — never trusted from a caller-supplied `withdrawalId` — so this
+   * can only ever touch the one record that this exact proposal created. A record already COMPLETED
+   * is left alone (this only ever runs once, from `reconcilePayment`'s own COMPLETED/FAILED branches,
+   * but the guard costs nothing and keeps the terminal state honest under a retry).
+   */
+  _setWithdrawalForProposal(proposalId, status, extra = {}) {
+    this.store.mutate((d) => {
+      const record = Object.values(d.circleWithdrawals ?? {}).find((w) => w.proposalId === proposalId);
+      if (!record || record.status === CircleWithdrawalStatus.COMPLETED) return;
+      Object.assign(record, extra);
+      record.status = status;
+      record.updatedAt = new Date().toISOString();
+    });
   }
 
   /**
@@ -1632,6 +1654,21 @@ export class CircleService {
       };
     }
 
+    // Withdrawal cap, re-derived from the ledger as it stands right now — the last checkpoint before
+    // anything is broadcast. The propose-time check only proved the amount was safe THEN; another
+    // withdrawal for the same member may have confirmed in the time since this one was proposed and
+    // approved. Safe's own nonce ordering cannot catch that on its own: two withdrawals proposed
+    // before either had executed are built against the SAME live nonce, so only one of them can ever
+    // reach this point at all — this check is what stops that one from over-paying once it does.
+    if (proposal.withdrawal) {
+      const { withdrawableAtomic } = await this.withdrawablePreview({
+        circleId, memberPrismId: proposal.withdrawal.beneficiaryPrismId
+      });
+      if (BigInt(proposal.amount) > BigInt(withdrawableAtomic)) {
+        throw conflict(`this withdrawal can no longer be sent: at most ${withdrawableAtomic} base units are withdrawable now`);
+      }
+    }
+
     // Claim the right to broadcast, atomically, before anything leaves the process.
     //
     // Two simultaneous "send" taps would otherwise both pass every check above and both broadcast.
@@ -1719,6 +1756,9 @@ export class CircleService {
         extra: { failureReason: evidence.reason },
         detail: { reason: evidence.reason, txHash: proposal.executionTxHash }
       });
+      // A withdrawal whose payment did not really happen must not be treated as spent — the member's
+      // net contribution is untouched, so a fresh withdrawal may still be proposed for it.
+      if (proposal.withdrawal) this._setWithdrawalForProposal(proposalId, CircleWithdrawalStatus.FAILED);
       logger.error('circle.payment.evidence.failed', { circleId, proposalId, reason: evidence.reason });
       return this._paymentView(circle, this._proposal(circleId, proposalId), {});
     }
@@ -1743,6 +1783,13 @@ export class CircleService {
     });
     this._setPaymentState(proposalId, CirclePaymentState.COMPLETED, { detail: {} });
     this.store.mutate((d) => { d.circleProposals[proposalId].status = ProposalStatus.EXECUTED; });
+    // The withdrawal's ledger effect lands here and only here: the same confirmed receipt that
+    // completes the payment also completes the withdrawal it was tagged with, so `netContributions`
+    // (and therefore `withdrawablePreview`) reflects it from this moment on — never before, since
+    // nothing before this point is backed by an on-chain receipt.
+    if (proposal.withdrawal) {
+      this._setWithdrawalForProposal(proposalId, CircleWithdrawalStatus.COMPLETED, { transactionHash: proposal.executionTxHash });
+    }
     this._event(circleId, 'circle.payment.completed', {
       proposalId, amount: proposal.amount, recipientPrismId: proposal.recipientPrismId,
       transactionHash: proposal.executionTxHash

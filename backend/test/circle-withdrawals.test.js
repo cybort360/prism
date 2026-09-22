@@ -4,6 +4,11 @@ import { getAddress } from 'viem';
 import { circleStack, makeIdentity, acknowledgement } from './circles-harness.js';
 import { ContributionStatus } from '../src/circles/model.js';
 
+/** Sign and approve a payment (or withdrawal) proposal exactly as `circles-payments.test.js` does. */
+const approve = (stack, circleId, payment, admin) =>
+  admin.account.sign({ hash: payment.safeTxHash }).then((signature) =>
+    stack.circles.approvePayment({ circleId, proposalId: payment.proposalId, prismId: admin.prismId, signature }));
+
 /** 2-admin Circle, modeled on circle-messages.test.js's `circleWithProposal`. */
 async function circleWithMembers() {
   const stack = await circleStack({ withPayments: true });
@@ -150,4 +155,93 @@ test('proposeWithdrawal: at exactly the withdrawable amount, creates a PAYMENT p
   assert.equal(proposal.storedLifecycle, 'PROPOSED');
   assert.equal(proposal.collectedApprovals, 0);
   assert.equal(proposal.executionTxHash, null);
+});
+
+// ===========================================================================
+// Withdrawal confirmation — the ledger effect only lands once the chain confirms
+// ===========================================================================
+
+test('a confirmed withdrawal payment marks the CircleWithdrawal COMPLETED and drops the member\'s withdrawable to 0', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+  const { circles, circle, octane, tobi, fake } = s;
+
+  seedContribution(s.store, { id: 'ctr_a1', circleId: circle.circleId, contributorPrismId: octane.prismId, amount: 100000000n });
+  // Fund the Safe for real on the fake chain — `executePayment` broadcasts a real USDC transfer,
+  // so the on-chain balance (not just the mocked preview) must actually hold the money.
+  fake.setBalance(circle.safeAddress, 100000000n);
+
+  const { proposal, withdrawalId } = await circles.proposeWithdrawal({
+    circleId: circle.circleId, memberPrismId: octane.prismId, amountAtomic: '100000000'
+  });
+
+  await approve(s, circle.circleId, proposal, octane);
+  await approve(s, circle.circleId, proposal, tobi);
+
+  const done = await circles.executePayment({ circleId: circle.circleId, proposalId: proposal.proposalId, actorPrismId: octane.prismId });
+  assert.equal(done.lifecycle, 'COMPLETED');
+
+  // The withdrawal record is COMPLETED, carrying the confirmed transaction hash — the real ledger
+  // effect, not something asserted just because the proposal said so.
+  const record = s.store.read().circleWithdrawals[withdrawalId];
+  assert.equal(record.status, 'COMPLETED');
+  assert.ok(record.transactionHash, 'a transaction hash was recorded');
+  assert.equal(record.transactionHash, done.evidence.transactionHash);
+
+  // A fresh preview reflects the completed withdrawal: net contribution minus the completed
+  // withdrawal leaves nothing to take out.
+  const preview = await circles.withdrawablePreview({ circleId: circle.circleId, memberPrismId: octane.prismId });
+  assert.equal(preview.withdrawableAtomic, '0');
+
+  // A second withdrawal of any positive amount is rejected — the cap is re-derived from the ledger,
+  // not cached from before this one confirmed.
+  await assert.rejects(
+    () => circles.proposeWithdrawal({ circleId: circle.circleId, memberPrismId: octane.prismId, amountAtomic: '1' }),
+    (e) => statusOf(e) === 409
+  );
+});
+
+test('execute-time cap re-check: a withdrawal that confirmed in between propose and execute blocks this one', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+  const { circles, circle, octane, tobi, fake } = s;
+
+  seedContribution(s.store, { id: 'ctr_a1', circleId: circle.circleId, contributorPrismId: octane.prismId, amount: 100000000n });
+  fake.setBalance(circle.safeAddress, 100000000n);
+
+  const { proposal, withdrawalId } = await circles.proposeWithdrawal({
+    circleId: circle.circleId, memberPrismId: octane.prismId, amountAtomic: '100000000'
+  });
+  await approve(s, circle.circleId, proposal, octane);
+  await approve(s, circle.circleId, proposal, tobi);
+
+  // The proposal is now fully approved, on its original (still-current) Safe nonce — nothing about
+  // it looks stale. But another withdrawal for the same member has, in this moment, confirmed
+  // elsewhere and already consumed the entire net contribution. A Safe's nonce ordering cannot
+  // itself catch this (both withdrawals were proposed against the same nonce before either executed,
+  // which is exactly how two honestly-raced withdrawals would look on-chain); only re-deriving the
+  // cap from the ledger at execute time can. This seeds that outcome directly — the repo's
+  // established idiom for exercising a defensive check against ledger state a single synchronous
+  // test cannot otherwise race into being (see circles-payments.test.js's "hand-marked COMPLETED"
+  // test for the same idiom).
+  s.store.mutate((d) => {
+    d.circleWithdrawals['wd_other'] = {
+      withdrawalId: 'wd_other', circleId: circle.circleId, beneficiaryPrismId: octane.prismId,
+      beneficiaryAccount: octane.accountAddress, amount: '100000000', proposalId: 'prp_other',
+      status: 'COMPLETED', transactionHash: `0x${'11'.repeat(32)}`,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    };
+  });
+
+  // Even though every existing check (binding, continuity, approvals, nonce, simulation) would
+  // pass, executing this proposal must fail: the ledger it would draw from has already been spent.
+  await assert.rejects(
+    () => circles.executePayment({ circleId: circle.circleId, proposalId: proposal.proposalId, actorPrismId: octane.prismId }),
+    (e) => statusOf(e) === 409
+  );
+
+  // Nothing was broadcast, and this withdrawal's own record is untouched.
+  assert.equal(fake.calls.executions.length, 0, 'the payment was never sent');
+  const record = s.store.read().circleWithdrawals[withdrawalId];
+  assert.notEqual(record.status, 'COMPLETED');
 });
