@@ -39,6 +39,16 @@ function statusOf(e) {
   return e?.statusCode;
 }
 
+/** Invite `identity` as a CONTRIBUTOR and accept immediately — CONTRIBUTOR is not chain-backed, so
+ *  this lands ACTIVE with a real `authorityAddress` in one step, exactly like `circles-members.test.js`. */
+async function addContributor(stack, circle, adminPrismId, identity) {
+  const invite = stack.circles.invite({
+    circleId: circle.circleId, actorPrismId: adminPrismId, prismId: identity.prismId, role: 'CONTRIBUTOR'
+  });
+  stack.circles.acceptInvitation({ circleId: circle.circleId, inviteId: invite.inviteId, prismId: identity.prismId });
+  return identity;
+}
+
 test('withdrawablePreview reports net contribution capped by the live Safe balance', async (t) => {
   const s = await circleWithMembers();
   t.after(s.restoreProvider);
@@ -244,4 +254,132 @@ test('execute-time cap re-check: a withdrawal that confirmed in between propose 
   assert.equal(fake.calls.executions.length, 0, 'the payment was never sent');
   const record = s.store.read().circleWithdrawals[withdrawalId];
   assert.notEqual(record.status, 'COMPLETED');
+});
+
+// ===========================================================================
+// planClosePayouts — pro-rata preview, writes nothing
+// ===========================================================================
+
+test('planClosePayouts previews a pro-rata split of the live balance, summing exactly to it', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+  const carol = await makeIdentity(s.identityService, { name: 'Carol', handle: 'carol' });
+  await addContributor(s, s.circle, s.octane.prismId, carol);
+
+  seedContribution(s.store, { id: 'ctr_a', circleId: s.circle.circleId, contributorPrismId: s.octane.prismId, amount: 100000000n });
+  seedContribution(s.store, { id: 'ctr_b', circleId: s.circle.circleId, contributorPrismId: s.tobi.prismId, amount: 50000000n });
+  seedContribution(s.store, { id: 'ctr_c', circleId: s.circle.circleId, contributorPrismId: carol.prismId, amount: 50000000n });
+
+  s.circles.safe.getUsdcBalance = async () => 100000000n;
+  const plan = await s.circles.planClosePayouts({ circleId: s.circle.circleId });
+
+  assert.equal(plan.balanceAtomic, '100000000');
+  const byId = Object.fromEntries(plan.payouts.map((p) => [p.prismId, p]));
+  assert.equal(byId[s.octane.prismId].amountAtomic, '50000000');
+  assert.equal(byId[s.tobi.prismId].amountAtomic, '25000000');
+  assert.equal(byId[carol.prismId].amountAtomic, '25000000');
+  assert.equal(getAddress(byId[s.octane.prismId].account), getAddress(s.octane.accountAddress));
+  const total = plan.payouts.reduce((sum, p) => sum + BigInt(p.amountAtomic), 0n);
+  assert.equal(total, 100000000n);
+
+  // Writes nothing: no proposal, no withdrawal record.
+  assert.deepEqual(s.store.read().circleProposals ?? {}, {});
+  assert.deepEqual(s.store.read().circleWithdrawals ?? {}, {});
+});
+
+test('planClosePayouts under a shortfall still sums exactly to the smaller live balance', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+  const carol = await makeIdentity(s.identityService, { name: 'Carol', handle: 'carol' });
+  await addContributor(s, s.circle, s.octane.prismId, carol);
+
+  seedContribution(s.store, { id: 'ctr_a', circleId: s.circle.circleId, contributorPrismId: s.octane.prismId, amount: 100000000n });
+  seedContribution(s.store, { id: 'ctr_b', circleId: s.circle.circleId, contributorPrismId: s.tobi.prismId, amount: 50000000n });
+  seedContribution(s.store, { id: 'ctr_c', circleId: s.circle.circleId, contributorPrismId: carol.prismId, amount: 50000000n });
+
+  s.circles.safe.getUsdcBalance = async () => 80000000n;
+  const plan = await s.circles.planClosePayouts({ circleId: s.circle.circleId });
+
+  assert.equal(plan.balanceAtomic, '80000000');
+  const byId = Object.fromEntries(plan.payouts.map((p) => [p.prismId, p]));
+  assert.equal(byId[s.octane.prismId].amountAtomic, '40000000');
+  assert.equal(byId[s.tobi.prismId].amountAtomic, '20000000');
+  assert.equal(byId[carol.prismId].amountAtomic, '20000000');
+  const total = plan.payouts.reduce((sum, p) => sum + BigInt(p.amountAtomic), 0n);
+  assert.equal(total, 80000000n);
+});
+
+test('planClosePayouts excludes a member with zero net contribution', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+  const carol = await makeIdentity(s.identityService, { name: 'Carol', handle: 'carol' });
+  await addContributor(s, s.circle, s.octane.prismId, carol); // never contributes
+
+  seedContribution(s.store, { id: 'ctr_a', circleId: s.circle.circleId, contributorPrismId: s.octane.prismId, amount: 100000000n });
+  seedContribution(s.store, { id: 'ctr_b', circleId: s.circle.circleId, contributorPrismId: s.tobi.prismId, amount: 50000000n });
+
+  s.circles.safe.getUsdcBalance = async () => 100000000n;
+  const plan = await s.circles.planClosePayouts({ circleId: s.circle.circleId });
+
+  const prismIds = plan.payouts.map((p) => p.prismId);
+  assert.ok(!prismIds.includes(carol.prismId), 'a zero-net member is omitted from the payout list');
+  assert.equal(prismIds.length, 2);
+});
+
+// ===========================================================================
+// proposeClosePayouts — one withdrawal-tagged PAYMENT proposal per positive payout
+// ===========================================================================
+
+test('proposeClosePayouts (admin actor): one PAYMENT proposal per member with the correct pro-rata amounts', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+  const carol = await makeIdentity(s.identityService, { name: 'Carol', handle: 'carol' });
+  await addContributor(s, s.circle, s.octane.prismId, carol);
+
+  seedContribution(s.store, { id: 'ctr_a', circleId: s.circle.circleId, contributorPrismId: s.octane.prismId, amount: 100000000n });
+  seedContribution(s.store, { id: 'ctr_b', circleId: s.circle.circleId, contributorPrismId: s.tobi.prismId, amount: 50000000n });
+  seedContribution(s.store, { id: 'ctr_c', circleId: s.circle.circleId, contributorPrismId: carol.prismId, amount: 50000000n });
+  s.circles.safe.getUsdcBalance = async () => 100000000n;
+
+  const { proposals } = await s.circles.proposeClosePayouts({ circleId: s.circle.circleId, actorPrismId: s.octane.prismId });
+
+  assert.equal(proposals.length, 3);
+  const byRecipient = Object.fromEntries(proposals.map((p) => [p.proposal.recipientPrismId, p]));
+  assert.equal(byRecipient[s.octane.prismId].proposal.amount, '50000000');
+  assert.equal(byRecipient[s.tobi.prismId].proposal.amount, '25000000');
+  assert.equal(byRecipient[carol.prismId].proposal.amount, '25000000');
+
+  for (const { proposal, withdrawalId } of proposals) {
+    assert.equal(proposal.kind, 'PAYMENT');
+    const stored = s.store.read().circleProposals[proposal.proposalId];
+    assert.deepEqual(stored.withdrawal, { beneficiaryPrismId: proposal.recipientPrismId });
+
+    // Never auto-approved or auto-executed.
+    assert.equal(stored.lifecycle, 'PROPOSED');
+    assert.equal(proposal.collectedApprovals, 0);
+    assert.equal(proposal.executionTxHash, null);
+
+    const record = s.store.read().circleWithdrawals[withdrawalId];
+    assert.equal(record.status, 'PROPOSED');
+    assert.equal(record.beneficiaryPrismId, proposal.recipientPrismId);
+  }
+});
+
+test('proposeClosePayouts: a non-admin actor is rejected', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+  const carol = await makeIdentity(s.identityService, { name: 'Carol', handle: 'carol' });
+  await addContributor(s, s.circle, s.octane.prismId, carol);
+
+  seedContribution(s.store, { id: 'ctr_a', circleId: s.circle.circleId, contributorPrismId: s.octane.prismId, amount: 100000000n });
+  seedContribution(s.store, { id: 'ctr_c', circleId: s.circle.circleId, contributorPrismId: carol.prismId, amount: 50000000n });
+  s.circles.safe.getUsdcBalance = async () => 100000000n;
+
+  await assert.rejects(
+    () => s.circles.proposeClosePayouts({ circleId: s.circle.circleId, actorPrismId: carol.prismId }),
+    (e) => statusOf(e) === 403
+  );
+
+  // Nothing was created.
+  assert.deepEqual(s.store.read().circleProposals ?? {}, {});
 });

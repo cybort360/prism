@@ -36,7 +36,7 @@ import { canonicalPayment, receiptFor } from '../lib/lifecycle.js';
 import { assertTemplateChoice, templateOptions, CircleTemplate } from '../circles/templates.js';
 import { sameOwnerSet, normalizeOwnerSet, safeTransaction, safeTxHash, decodeUsdcTransfer, safeExecutionOutcome, ZERO_ADDRESS } from '../circles/safeEncoding.js';
 import { contributionHash } from '../chain/eth.js';
-import { netContributions, withdrawableFor } from '../circles/withdrawal.js';
+import { netContributions, withdrawableFor, proRataPayouts } from '../circles/withdrawal.js';
 import {
   assertPeriod, assertAllowanceAmount, periodMinutes, PERIOD_LABELS, PERIOD_ADJECTIVES
 } from '../circles/allowanceModule.js';
@@ -1280,7 +1280,28 @@ export class CircleService {
       throw conflict(`you can withdraw at most ${withdrawableAtomic} base units`);
     }
 
-    const memberAccount = getAddress(member.authorityAddress);
+    // The proposer IS the beneficiary here — an ordinary member cashing out their own net
+    // contribution. `proposeClosePayouts` below reuses the same builder with an ADMIN as the
+    // proposer and each member in turn as the beneficiary.
+    return this._createWithdrawalProposal({
+      circle, actorPrismId: memberPrismId, beneficiaryPrismId: memberPrismId, beneficiaryMember: member, amount
+    });
+  }
+
+  /**
+   * The proposal-building body shared by `proposeWithdrawal` and `proposeClosePayouts`: an ordinary
+   * threshold PAYMENT proposal to `beneficiaryMember`'s own account, tagged `withdrawal` so
+   * `reconcilePayment`'s COMPLETED hook recognizes it and decrements the beneficiary's ledger the
+   * same way regardless of who proposed it.
+   *
+   * `actorPrismId` and `beneficiaryPrismId` are deliberately separate parameters rather than one:
+   * a member withdrawing their own money is both; an admin proposing a member's close-out payout
+   * is only the former. Callers are responsible for whatever cap or authorization applies BEFORE
+   * calling this — it performs no cap check of its own, since `proposeClosePayouts`'s pro-rata
+   * amount is already bounded by construction (see `proRataPayouts`).
+   */
+  async _createWithdrawalProposal({ circle, actorPrismId, beneficiaryPrismId, beneficiaryMember, amount }) {
+    const memberAccount = getAddress(beneficiaryMember.authorityAddress);
     if (memberAccount === getAddress(circle.safeAddress)) throw badRequest('a Circle cannot pay itself');
 
     const authority = await this._readAuthority(circle);
@@ -1291,22 +1312,22 @@ export class CircleService {
     mark(CirclePaymentState.CREATED, { amount });
 
     const proposal = await this._createProposal({
-      circle, actorPrismId: memberPrismId, kind: ProposalKind.PAYMENT, authority,
+      circle, actorPrismId, kind: ProposalKind.PAYMENT, authority,
       intent: { kind: 'PAYMENT', recipient: memberAccount, amountAtomic: amount },
-      memo: `Withdrawal to ${member.displayName ?? 'a member'}`,
-      subject: { prismId: memberPrismId, authorityAddress: memberAccount },
+      memo: `Withdrawal to ${beneficiaryMember.displayName ?? 'a member'}`,
+      subject: { prismId: beneficiaryPrismId, authorityAddress: memberAccount },
       payment: {
         amount,
-        recipientPrismId: memberPrismId,
+        recipientPrismId: beneficiaryPrismId,
         recipientAccount: memberAccount,
-        recipientDisplayName: member.displayName ?? null,
-        recipientHandle: member.handle ?? null,
+        recipientDisplayName: beneficiaryMember.displayName ?? null,
+        recipientHandle: beneficiaryMember.handle ?? null,
         // A withdrawal has no alias resolution behind it — the recipient IS the member record — but
         // `_paymentContinuity` still binds every payment to the recipient's aliasVersion AT PROPOSAL
         // TIME so an approval re-check can tell whether that identity has mutated since. `null` here
         // would compare as 0 against a real identity's version (which starts at 1), so every
         // withdrawal would fail continuity at the first approval; the live version must be captured.
-        aliasVersion: this.identityService.get(memberPrismId)?.aliasVersion ?? null,
+        aliasVersion: this.identityService.get(beneficiaryPrismId)?.aliasVersion ?? null,
         resolutionRequestId: null,
         resolutionRoute: null
       },
@@ -1319,17 +1340,78 @@ export class CircleService {
     // memo string.
     this.store.mutate((d) => {
       const stored = d.circleProposals?.[proposal.proposalId];
-      if (stored) stored.withdrawal = { beneficiaryPrismId: memberPrismId };
+      if (stored) stored.withdrawal = { beneficiaryPrismId };
     });
-    proposal.withdrawal = { beneficiaryPrismId: memberPrismId };
+    proposal.withdrawal = { beneficiaryPrismId };
 
     const withdrawalRecord = newCircleWithdrawal({
-      withdrawalId, circleId, beneficiaryPrismId: memberPrismId, beneficiaryAccount: memberAccount,
+      withdrawalId, circleId: circle.circleId, beneficiaryPrismId, beneficiaryAccount: memberAccount,
       amount, proposalId: proposal.proposalId
     });
     this.store.mutate((d) => { (d.circleWithdrawals ||= {})[withdrawalId] = withdrawalRecord; });
 
     return { proposal, withdrawalId };
+  }
+
+  /**
+   * Preview, per member, what a Circle close would pay out right now: each member's net
+   * contribution (COMPLETED contributions minus COMPLETED withdrawals) split pro-rata across the
+   * Safe's live USDC balance — largest-remainder, so the payouts sum EXACTLY to the balance even
+   * when the balance is short of total net contributions. Writes nothing; proposes nothing.
+   */
+  async planClosePayouts({ circleId }) {
+    const circle = this._circle(circleId);
+
+    const data = this.store.read();
+    const contributions = Object.values(data.circleContributions ?? {}).filter((c) => c.circleId === circleId);
+    const withdrawals = Object.values(data.circleWithdrawals ?? {}).filter((w) => w.circleId === circleId);
+    const net = netContributions(contributions, withdrawals);
+
+    const balance = await this.safe.getUsdcBalance(circle.safeAddress).catch(() => 0n);
+    const payouts = proRataPayouts(net, balance);
+
+    const members = data.circleMembers ?? {};
+    const result = [...payouts.entries()].map(([prismId, amount]) => ({
+      prismId,
+      account: members[memberKey(circleId, prismId)]?.authorityAddress ?? null,
+      amountAtomic: amount.toString()
+    }));
+
+    return { balanceAtomic: balance.toString(), payouts: result };
+  }
+
+  /**
+   * Turn a `planClosePayouts` preview into real threshold proposals: one withdrawal-tagged PAYMENT
+   * proposal per member with a positive payout, admin-proposed to that member's own account. Each
+   * amount is already ≤ that member's net contribution by construction (`proRataPayouts` never
+   * assigns more than a member's share of the total), so no per-payout cap check is needed here —
+   * only the ordinary threshold of admin signatures gates whether any of them ever execute.
+   */
+  async proposeClosePayouts({ circleId, actorPrismId }) {
+    const circle = this._circle(circleId);
+    this._assertAdmin(circleId, actorPrismId);
+    if (!this.payments) throw conflict('Circle payments are not available on this deployment');
+    if (circle.status === CircleStatus.CLOSED) throw conflict('this Circle is closed');
+    if (!SPENDING_STATUSES.includes(circle.status)) throw conflict('this Circle is not active on-chain yet');
+    if (!circle.safeAddress) throw conflict('this Circle has no verified Safe address');
+
+    const plan = await this.planClosePayouts({ circleId });
+    const members = this.store.read().circleMembers ?? {};
+
+    const proposals = [];
+    for (const payout of plan.payouts) {
+      if (BigInt(payout.amountAtomic) <= 0n) continue;
+      const member = members[memberKey(circleId, payout.prismId)];
+      if (!member?.authorityAddress) continue; // no account to pay — nothing this proposal can do
+
+      const amount = this._assertAmount(payout.amountAtomic);
+      const created = await this._createWithdrawalProposal({
+        circle, actorPrismId, beneficiaryPrismId: payout.prismId, beneficiaryMember: member, amount
+      });
+      proposals.push(created);
+    }
+
+    return { proposals };
   }
 
   /**
