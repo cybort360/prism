@@ -46,3 +46,22 @@ test('saveService.state reports demo + persists quote', async () => {
   assert.equal(q.demo, true);
   assert.ok(store.read().saveQuotes[q.quoteId], 'quote persisted for submit');
 });
+
+test('demo executor: submit deposit verifies quote, submits, records SAVED op', async () => {
+  const { DemoSaveExecutor } = await import('../src/services/demoSaveExecutor.js');
+  const { store, config, identityService } = demoDeps();
+  const account = '0x00000000000000000000000000000000000000A1';
+  // Seed a quote as saveService.quote would.
+  store.mutate((d) => { d.saveQuotes = { q1: { quoteId: 'q1', kind: 'SAVE', prismId: 'prism_x', account, amountAtomic: '100000000', vault: config.save.mockVault, nonce: '0x' + '11'.repeat(32), deadline: Math.floor(Date.now()/1000)+300, minimumShares: '99500000', estimatedShares: '100000000' } }; });
+  const fakeVault = { available: () => true, submitDeposit: async () => '0xhash', sharesOf: async () => '100000000' };
+  const fakeChain = { getTransactionReceipt: async () => ({ status: 'success', blockNumber: 1n }) };
+  // signature verification is stubbed to pass for this unit test:
+  const exec = new DemoSaveExecutor({ store, config, identityService, vault: fakeVault, chain: fakeChain, verify: async () => true });
+  const res = await exec.submitDeposit({ prismId: 'prism_x', quoteId: 'q1', signature: '0x' + 'ab'.repeat(65) });
+  assert.equal(res.txHash, '0xhash');
+  assert.equal(res.state, 'SAVED');
+  const op = store.read().saveOperations[res.operationId];
+  assert.equal(op.kind, 'SAVE');
+  assert.equal(op.transactionHash, '0xhash');
+  assert.equal(op.inputUSDC, '100000000');
+});
