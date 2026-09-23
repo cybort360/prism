@@ -8,7 +8,9 @@ function tmpStore() { return new JsonStore(path.join(fs.mkdtempSync(path.join(os
 
 function demoDeps() {
   const store = tmpStore();
-  const config = { save: { enabled: true, mode: 'demo', demo: true, mockVault: '0x000000000000000000000000000000000000dEaD', maxSlippageBps: 50, substrateChainId: 10143, inputToken: '0x0000000000000000000000000000000000000001', maxSaveAtomic: '10000000000' } };
+  // chain.chainId (the deployment/MockVault chain) MUST differ from save.substrateChainId (the mainnet
+  // preview substrate) so the redeem-domain tests prove the fix uses the DEPLOYMENT chain id, not 143.
+  const config = { chain: { chainId: 10143 }, save: { enabled: true, mode: 'demo', demo: true, mockVault: '0x000000000000000000000000000000000000dEaD', maxSlippageBps: 50, substrateChainId: 143, inputToken: '0x0000000000000000000000000000000000000001', maxSaveAtomic: '10000000000' } };
   const identityService = { get: () => ({ prismId: 'prism_x', accountAddress: '0x00000000000000000000000000000000000000A1' }) };
   return { store, config, identityService };
 }
@@ -89,4 +91,56 @@ test('demo executor: submit withdraw records AVAILABLE op with USDC out', async 
   const op = store.read().saveOperations[res.operationId];
   assert.equal(op.kind, 'WITHDRAW_INSTANT');
   assert.equal(op.outputUSDC, '110000000');
+});
+
+test('FIX #1: redeem domain uses the DEPLOYMENT chain id, not substrateChainId', async () => {
+  const { DemoSaveExecutor } = await import('../src/services/demoSaveExecutor.js');
+  const { store, config, identityService } = demoDeps();
+  // Prove the two differ so the assertion is meaningful.
+  assert.equal(config.chain.chainId, 10143);
+  assert.equal(config.save.substrateChainId, 143);
+  const account = '0x00000000000000000000000000000000000000A1';
+  store.mutate((d) => { d.saveQuotes = { w1: { quoteId: 'w1', kind: 'WITHDRAW_INSTANT', prismId: 'prism_x', account, sharesAtomic: '100000000', vault: config.save.mockVault, nonce: '0x' + '33'.repeat(32), deadline: Math.floor(Date.now()/1000)+300, estimatedUSDC: '110000000' } }; });
+  const fakeVault = { available: () => true, submitRedeem: async () => '0xwd', convertToAssets: async () => '110000000' };
+  const fakeChain = { getTransactionReceipt: async () => ({ status: 'success', blockNumber: 2n }) };
+  // Capture the typed data the executor derives to verify the signature — its domain proves the chain id.
+  let capturedChainId = null;
+  const verify = async (typed) => { capturedChainId = typed.domain.chainId; return true; };
+  const exec = new DemoSaveExecutor({ store, config, identityService, vault: fakeVault, chain: fakeChain, verify });
+  await exec.submitWithdraw({ prismId: 'prism_x', quoteId: 'w1', signature: '0x' + 'cd'.repeat(65) });
+  assert.equal(capturedChainId, 10143, 'redeem domain.chainId must be the deployment chain id');
+  assert.notEqual(capturedChainId, 143, 'must NOT be the mainnet substrateChainId');
+});
+
+test('FIX #2: unmined receipt (always null) → op stays CONFIRMING, no fake success', async () => {
+  const { DemoSaveExecutor } = await import('../src/services/demoSaveExecutor.js');
+  const { store, config, identityService } = demoDeps();
+  const account = '0x00000000000000000000000000000000000000A1';
+  store.mutate((d) => { d.saveQuotes = { q1: { quoteId: 'q1', kind: 'SAVE', prismId: 'prism_x', account, amountAtomic: '100000000', vault: config.save.mockVault, nonce: '0x' + '11'.repeat(32), deadline: Math.floor(Date.now()/1000)+300, minimumShares: '99500000', estimatedShares: '100000000' } }; });
+  let sharesRead = false;
+  const fakeVault = { available: () => true, submitDeposit: async () => '0xhash', sharesOf: async () => { sharesRead = true; return '100000000'; } };
+  const fakeChain = { getTransactionReceipt: async () => null }; // never mines
+  const exec = new DemoSaveExecutor({ store, config, identityService, vault: fakeVault, chain: fakeChain, verify: async () => true, receiptPoll: { tries: 2, delayMs: 1 } });
+  const res = await exec.submitDeposit({ prismId: 'prism_x', quoteId: 'q1', signature: '0x' + 'ab'.repeat(65) });
+  assert.equal(res.state, 'CONFIRMING');
+  const op = store.read().saveOperations[res.operationId];
+  assert.equal(op.state, 'CONFIRMING');
+  assert.equal(op.sharesReceived, null, 'no share readback before confirmation');
+  assert.equal(sharesRead, false, 'must not read shares off an unmined tx');
+});
+
+test('FIX #2: reverted receipt → op FAILED, never reports success', async () => {
+  const { DemoSaveExecutor } = await import('../src/services/demoSaveExecutor.js');
+  const { store, config, identityService } = demoDeps();
+  const account = '0x00000000000000000000000000000000000000A1';
+  store.mutate((d) => { d.saveQuotes = { w1: { quoteId: 'w1', kind: 'WITHDRAW_INSTANT', prismId: 'prism_x', account, sharesAtomic: '100000000', vault: config.save.mockVault, nonce: '0x' + '33'.repeat(32), deadline: Math.floor(Date.now()/1000)+300, estimatedUSDC: '110000000' } }; });
+  const fakeVault = { available: () => true, submitRedeem: async () => '0xwd', convertToAssets: async () => '110000000' };
+  const fakeChain = { getTransactionReceipt: async () => ({ status: 'reverted', blockNumber: 9n }) };
+  const exec = new DemoSaveExecutor({ store, config, identityService, vault: fakeVault, chain: fakeChain, verify: async () => true });
+  const res = await exec.submitWithdraw({ prismId: 'prism_x', quoteId: 'w1', signature: '0x' + 'cd'.repeat(65) });
+  assert.equal(res.state, 'FAILED');
+  const op = store.read().saveOperations[res.operationId];
+  assert.equal(op.state, 'FAILED');
+  assert.equal(op.outputUSDC, null, 'no USDC out claimed on a reverted redeem');
+  assert.ok(op.failureReason, 'records a failure reason');
 });

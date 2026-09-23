@@ -197,8 +197,18 @@ struct SaveView: View {
         let authData = try auth.jsonData()
         let signature = try await mera.signTypedDataHex(authData)
         let result = try await PrismAPI.shared.saveSubmit(quoteId: quote.quoteId, signature: signature)
-        PrismHaptics.success()
-        terminal = .saved(amount: amountDollars)
+        // Money-truth: honor the backend's confirmed state — never claim "saved" off an unconfirmed submit.
+        switch result.state {
+        case "SAVED":
+          PrismHaptics.success()
+          terminal = .saved(amount: amountDollars)
+        case "FAILED":
+          PrismHaptics.warning()
+          terminal = .failed(message: "That didn't go through — check Activity before trying again.")
+        default: // CONFIRMING or any non-success — honest pending, not success
+          PrismHaptics.warning()
+          terminal = .pending(amount: amountDollars)
+        }
         // result.txHash is the on-chain proof; the receipt sheet reads it back from the operation itself.
         model.presentSaveReceipt = SaveReceiptPresentation(operationId: result.operationId)
         await load()
@@ -421,7 +431,8 @@ private struct FirstSaveDisclosure: View {
 // MARK: - Terminal
 
 enum SaveTerminal: Equatable {
-  case saved(amount: String)                    // live success
+  case saved(amount: String)                    // confirmed success (backend state SAVED)
+  case pending(amount: String)                  // submitted but not yet confirmed (state CONFIRMING) — honest, not success
   case preview(amount: String, reason: String)  // gated preview
   case failed(message: String)
 }
@@ -450,6 +461,7 @@ private struct SaveSuccessTerminal: View {
     let (s, t): (String, Color) = {
       switch terminal {
       case .saved: return ("checkmark", PrismTheme.mintDeep)
+      case .pending: return ("clock.badge.checkmark", PrismTheme.amber)
       case .preview: return ("clock.badge.checkmark", PrismTheme.amber)
       case .failed: return ("exclamationmark", PrismTheme.danger)
       }
@@ -459,6 +471,7 @@ private struct SaveSuccessTerminal: View {
   private var title: String {
     switch terminal {
     case .saved(let a): return "\(a) saved"
+    case .pending: return "Save is confirming"
     case .preview: return "Save is almost ready"
     case .failed: return "That didn't go through"
     }
@@ -466,6 +479,7 @@ private struct SaveSuccessTerminal: View {
   private var message: String {
     switch terminal {
     case .saved: return "Your savings are now earning at the current variable rate."
+    case .pending: return "Your save is confirming. It'll show in Activity once it settles. Don't submit it again."
     case .preview(let a, let reason): return "This is a preview. \(reason) Your \(a) wasn't moved."
     case .failed(let m): return m
     }

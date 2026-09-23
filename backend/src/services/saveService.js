@@ -193,7 +193,7 @@ export class SaveService {
       return {
         quoteId, demo: true, live: false, returnsTo: 'USDC', estimatedUSDC,
         notLiveReason: 'Demo — simulated yield on testnet, not real earnAUSD',
-        authorization: redeemAuthorizationTypedData({ owner: identity.accountAddress, shares: String(sharesAtomic), validAfter: 0, validBefore: deadline, nonce, vault, chainId: this.config.save.substrateChainId }),
+        authorization: redeemAuthorizationTypedData({ owner: identity.accountAddress, shares: String(sharesAtomic), validAfter: 0, validBefore: deadline, nonce, vault, chainId: Number(this.config.chain.chainId) }),
         nonce, deadline
       };
     }

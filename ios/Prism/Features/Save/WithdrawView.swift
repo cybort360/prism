@@ -125,9 +125,20 @@ struct WithdrawView: View {
       try await mera.beginSession(.payments)
       let authData = try auth.jsonData()
       let signature = try await mera.signTypedDataHex(authData)
-      _ = try await PrismAPI.shared.saveWithdrawSubmit(quoteId: quote.quoteId, signature: signature)
-      PrismHaptics.success()
-      terminal = .available(amount: quote.estimatedUSDC.map { Money.dollars(fromAtomic: $0) } ?? displayAmount)
+      let result = try await PrismAPI.shared.saveWithdrawSubmit(quoteId: quote.quoteId, signature: signature)
+      let amountText = quote.estimatedUSDC.map { Money.dollars(fromAtomic: $0) } ?? displayAmount
+      // Money-truth: only claim the money is available when the backend confirms it (state AVAILABLE).
+      switch result.state {
+      case "AVAILABLE":
+        PrismHaptics.success()
+        terminal = .available(amount: amountText)
+      case "FAILED":
+        PrismHaptics.warning()
+        self.error = "That didn't go through — check Activity before trying again."
+      default: // CONFIRMING or any non-success — honest pending, not success
+        PrismHaptics.warning()
+        terminal = .pending(amount: amountText)
+      }
     } catch {
       self.error = "That withdrawal didn't go through."
     }
@@ -223,7 +234,8 @@ struct WithdrawView: View {
 }
 
 enum WithdrawTerminal: Equatable {
-  case available(amount: String)                  // USDC back in the user's balance (instant success)
+  case available(amount: String)                  // confirmed: USDC back in the user's balance (state AVAILABLE)
+  case pending(amount: String)                    // submitted but not yet confirmed (state CONFIRMING) — honest, not success
   case preview(reason: String)
   case requested(amount: String)                  // queued
   case recovery(ausd: String)                     // AUSD safe with the user, USDC conversion pending
@@ -257,6 +269,7 @@ private struct WithdrawTerminalView: View {
     let (symbol, tint): (String, Color) = {
       switch terminal {
       case .available: return ("checkmark", PrismTheme.mintDeep)
+      case .pending: return ("clock.badge.checkmark", PrismTheme.amber)
       case .recovery: return ("shield.fill", PrismTheme.amber)
       case .requested: return ("clock.badge.checkmark", PrismTheme.amber)
       case .preview: return ("clock.badge.checkmark", PrismTheme.amber)
@@ -267,6 +280,7 @@ private struct WithdrawTerminalView: View {
   private var title: String {
     switch terminal {
     case .available(let amount): return "\(amount) available"
+    case .pending: return "Withdrawal is confirming"
     case .preview: return "Withdrawals are almost ready"
     case .requested: return "Withdrawal requested"
     case .recovery: return "Your savings were withdrawn"
@@ -275,6 +289,7 @@ private struct WithdrawTerminalView: View {
   private var message: String {
     switch terminal {
     case .available: return "Your withdrawal is back in your Prism balance."
+    case .pending: return "Your withdrawal is confirming. It'll show in Activity once it settles. Don't submit it again."
     case .preview(let reason): return "This is a preview. \(reason)"
     case .requested(let amount): return "\(amount) is on the way to your USDC balance. Processing can take up to 72 hours; we'll tell you when it's ready."
     case .recovery(let ausd): return "\(ausd) AUSD is safe in your Prism account. We're having trouble converting it to your available USDC balance."
