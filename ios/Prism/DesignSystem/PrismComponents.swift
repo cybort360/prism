@@ -190,7 +190,7 @@ struct PrismTabBar: View {
 
   var body: some View {
     HStack(spacing: 0) {
-      ForEach(MainTab.allCases) { tab in
+      ForEach(MainTab.barTabs) { tab in
         Button {
           withAnimation(.easeOut(duration: 0.18)) { selection = tab }
         } label: {

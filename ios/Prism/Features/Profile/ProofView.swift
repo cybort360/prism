@@ -82,13 +82,13 @@ struct ProofView: View {
         kv(p.tokenSymbol, short(p.token))
         kv("Mera account", short(p.meraAccount))
         kv("Recipient", short(p.recipient))
-        kv("Sender MON", p.senderMonBalance ?? "—")
-        kv("Sender \(p.tokenSymbol)", p.senderTokenBalance ?? "—")
-        kv("Recipient \(p.tokenSymbol) before to after", "\(p.recipientTokenBefore ?? "—") to \(p.recipientTokenAfter ?? "—")")
+        kv("Sender MON", p.senderMonBalance ?? "-")
+        kv("Sender \(p.tokenSymbol)", p.senderTokenBalance ?? "-")
+        kv("Recipient \(p.tokenSymbol) before to after", "\(p.recipientTokenBefore ?? "-") to \(p.recipientTokenAfter ?? "-")")
         Divider().overlay(PrismTheme.line)
         kv("State", p.state)
         kv("Tx hash", short(p.txHash))
-        kv("Block", p.blockNumber ?? "—")
+        kv("Block", p.blockNumber ?? "-")
         kv("Submitted", timeOnly(p.submittedAt))
         kv("Confirmed", timeOnly(p.confirmedAt))
         kv("Indexed", p.indexed ? timeOnly(p.indexedAt) : "indexing…")
@@ -112,13 +112,13 @@ struct ProofView: View {
         .multilineTextAlignment(.trailing).textSelection(.enabled)
     }
   }
-  private func fmt(_ v: Double?) -> String { v == nil ? "—" : String(format: "%.0f", v!) }
+  private func fmt(_ v: Double?) -> String { v == nil ? "-" : String(format: "%.0f", v!) }
   private func short(_ v: String?) -> String {
-    guard let v, v.count > 14 else { return v ?? "—" }
+    guard let v, v.count > 14 else { return v ?? "-" }
     return "\(v.prefix(6))…\(v.suffix(6))"
   }
   private func timeOnly(_ iso: String?) -> String {
-    guard let iso, let d = ISO8601DateFormatter().date(from: iso) else { return "—" }
+    guard let iso, let d = ISO8601DateFormatter().date(from: iso) else { return "-" }
     return d.formatted(date: .omitted, time: .standard)
   }
 }

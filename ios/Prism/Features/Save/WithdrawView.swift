@@ -74,8 +74,8 @@ struct WithdrawView: View {
       rows: [
         ("Estimated USDC", q.modes.instant.estimatedUSDCAtomic.map(usd)),
         // Fee shown only when observed — never "free" unless the vault says so.
-        ("Vault fee", q.modes.instant.vaultFeeAtomic.map(usd) ?? (q.modes.instant.available ? "—" : nil)),
-        ("Conversion cost", q.modes.instant.conversionCostAtomic.map(usd) ?? (q.modes.instant.available ? "—" : nil))
+        ("Vault fee", q.modes.instant.vaultFeeAtomic.map(usd) ?? (q.modes.instant.available ? "-" : nil)),
+        ("Conversion cost", q.modes.instant.conversionCostAtomic.map(usd) ?? (q.modes.instant.available ? "-" : nil))
       ],
       cta: "Withdraw now"
     ) { Task { await choose(.instant) } }
@@ -207,7 +207,7 @@ private struct WithdrawTerminalView: View {
   private var message: String {
     switch terminal {
     case .available: return "Your withdrawal is back in your Prism balance."
-    case .preview(let reason): return "This is a preview — \(reason)"
+    case .preview(let reason): return "This is a preview. \(reason)"
     case .requested(let amount): return "\(amount) is on the way to your USDC balance. Processing can take up to 72 hours; we'll tell you when it's ready."
     case .recovery(let ausd): return "\(ausd) AUSD is safe in your Prism account. We're having trouble converting it to your available USDC balance."
     }

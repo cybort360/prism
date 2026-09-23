@@ -263,7 +263,7 @@ extension AuroraNotice {
   static func fixture() -> AuroraNotice {
     AuroraNotice(
       mode: "preview",
-      headline: "Preview — routes are quoted, not settled",
+      headline: "Preview. Routes are quoted, not settled",
       detail: "Aurora routes to Monad mainnet. Prism is running against chain 10143, so a deposit reaches your account on mainnet and will not appear in the balance shown here.")
   }
 }

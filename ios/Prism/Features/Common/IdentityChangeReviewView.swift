@@ -116,7 +116,7 @@ struct IdentityChangeReviewView: View {
           .tracking(-0.5)
           .padding(.top, 8)
 
-        Text("A person is found by their phone or @handle — but that’s just how they’re reached, not who they are. That route now points to a different Prism identity.")
+        Text("A person is found by their phone or @handle. But that’s just how they’re reached, not who they are. That route now points to a different Prism identity.")
           .font(PrismTheme.body(13.5))
           .foregroundStyle(PrismTheme.muted)
           .lineSpacing(2.5)
@@ -131,7 +131,7 @@ struct IdentityChangeReviewView: View {
         Spacer(minLength: 26)
 
         PrismPrimaryButton(
-          title: isSend ? "I’ve verified — trust and continue" : "I’ve verified — trust and request",
+          title: isSend ? "I’ve verified, trust and continue" : "I’ve verified, trust and request",
           icon: "checkmark.shield.fill"
         ) { trustAndProceed() }
 
@@ -157,7 +157,7 @@ struct IdentityChangeReviewView: View {
           VStack(spacing: 0) {
             identityRow(
               label: "SAME PRISM IDENTITY",
-              code: candidate.resolution.attestation.map { identityCode($0.prismIdentity) } ?? "—",
+              code: candidate.resolution.attestation.map { identityCode($0.prismIdentity) } ?? "-",
               sub: candidate.previous.map { "Trusted since \(dateText($0.establishedAt))" } ?? nil,
               icon: "person.fill", tint: PrismTheme.muted, labelColor: PrismTheme.muted)
             Rectangle().fill(PrismTheme.line).frame(height: 0.7).padding(.horizontal, 17)
@@ -167,7 +167,7 @@ struct IdentityChangeReviewView: View {
               tint: PrismTheme.amber, labelColor: amberText)
           }
         }
-        verdict("Same person — but the account changed without a verified update. Confirm it with \(name) before paying.")
+        verdict("Same person, but the account changed without a verified update. Confirm it with \(name) before paying.")
       } else if let prev = candidate.previous, candidate.resolution.attestation != nil {
         // A different PrismIdentity — a different human.
         PrismCard(padding: 0) {
@@ -183,7 +183,7 @@ struct IdentityChangeReviewView: View {
             .padding(.horizontal, 17)
             identityRow(
               label: "NOW RESOLVES TO",
-              code: candidate.resolution.attestation.map { identityCode($0.prismIdentity) } ?? "—",
+              code: candidate.resolution.attestation.map { identityCode($0.prismIdentity) } ?? "-",
               sub: "A different Prism identity",
               icon: "person.fill.questionmark", tint: PrismTheme.amber, labelColor: amberText)
           }
@@ -248,8 +248,8 @@ struct IdentityChangeReviewView: View {
       Image(systemName: "shield.lefthalf.filled").foregroundStyle(PrismTheme.mintDeep)
         .font(.system(size: 16))
       Text(sameIdentity
-        ? "Reach \(name) somewhere you already trust and confirm they moved to a new account. Continue only if you expect it — this can’t be undone once the money moves."
-        : "Reach \(name) somewhere you already trust and confirm their Prism identity changed. Continue only if you expect it — this can’t be undone once the money moves.")
+        ? "Reach \(name) somewhere you already trust and confirm they moved to a new account. Continue only if you expect it. This can’t be undone once the money moves."
+        : "Reach \(name) somewhere you already trust and confirm their Prism identity changed. Continue only if you expect it. This can’t be undone once the money moves.")
         .font(PrismTheme.body(12.5))
         .foregroundStyle(PrismTheme.ink)
         .lineSpacing(2)

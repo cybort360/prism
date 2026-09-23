@@ -23,10 +23,22 @@ actor APIClient {
     try await send(path, method: method, body: Optional<EmptyBody>.none)
   }
 
+  /// Build the request URL from a path that MAY carry a query string ("/x?a=1&b=2"). Splitting is
+  /// required: `URL.appending(path:)` treats the whole string as one path segment and percent-encodes
+  /// the "?" into "%3F", so "/v1/circles/templates?template=TRIP" would miss its route and 404.
+  private func url(for path: String) -> URL {
+    guard let q = path.firstIndex(of: "?") else { return baseURL.appending(path: path) }
+    let base = baseURL.appending(path: String(path[..<q]))
+    let query = String(path[path.index(after: q)...])
+    guard !query.isEmpty, var comps = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return base }
+    comps.percentEncodedQuery = query
+    return comps.url ?? base
+  }
+
   func send<Body: Encodable, Response: Decodable>(
     _ path: String, method: String = "POST", body: Body?, idempotencyKey: String? = nil
   ) async throws -> Response {
-    var req = URLRequest(url: baseURL.appending(path: path))
+    var req = URLRequest(url: url(for: path))
     req.httpMethod = method
     req.setValue("application/json", forHTTPHeaderField: "content-type")
     if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "authorization") }
@@ -65,6 +77,14 @@ actor APIClient {
 }
 private struct ErrorEnvelope: Decodable { let error: String }
 extension Notification.Name { static let prismUnauthorized = Notification.Name("prism.unauthorized") }
+
+extension Error {
+  /// A request that was cancelled (a SwiftUI `.task` superseded or a view that went away) is not a
+  /// failure the user should ever see. Load/refresh paths check this before showing an error banner.
+  var isCancellation: Bool {
+    self is CancellationError || (self as? URLError)?.code == .cancelled
+  }
+}
 enum APIError: LocalizedError {
   case invalidResponse
   case unauthorized

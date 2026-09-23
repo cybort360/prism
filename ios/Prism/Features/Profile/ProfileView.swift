@@ -3,6 +3,7 @@ import UIKit
 
 struct ProfileView: View {
   @EnvironmentObject private var model: AppModel
+  @Environment(\.dismiss) private var dismiss
   @State private var phoneDiscoverable = true
   @State private var handleSearchable = true
   @State private var showSecurity = false
@@ -14,11 +15,16 @@ struct ProfileView: View {
   @State private var showContinuityLab = false
   @State private var showAdvanced = false
   @State private var error: String?
+  // Advanced (web3) surfaces, hidden from everyday users. Off by default.
+  @AppStorage("feature.crossChainSend") private var crossChainSend = false
+  @AppStorage("feature.addMoneyDeposit") private var addMoneyDeposit = false
 
   var body: some View {
     ScrollView(showsIndicators: false) {
       VStack(spacing: 0) {
         HStack {
+          PrismHeaderIconButton(icon: "xmark") { dismiss() }
+            .accessibilityLabel("Close")
           Spacer()
           PrismHeaderIconButton(icon: "gearshape") { showSecurity = true }
         }
@@ -99,6 +105,16 @@ struct ProfileView: View {
             .onChange(of: handleSearchable) { _, _ in Task { await savePrivacy() } }
         }
 
+        section("Advanced") {
+          advancedToggle(
+            "Send to another network", isOn: $crossChainSend,
+            caption: "Pay any wallet on any chain. Off while cross-chain settlement is in preview.")
+          divider
+          advancedToggle(
+            "Add money by crypto transfer", isOn: $addMoneyDeposit,
+            caption: "Fund with an on-chain deposit. Off by default. Adding money with a card is coming soon.")
+        }
+
         section("Account") {
           row("checkmark.seal", "Signing", "Secured by passkey", nil)
           divider
@@ -176,6 +192,19 @@ struct ProfileView: View {
 
   private var divider: some View {
     Divider().overlay(PrismTheme.line)
+  }
+
+  private func advancedToggle(_ title: String, isOn: Binding<Bool>, caption: String) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Toggle(title, isOn: isOn)
+        .tint(PrismTheme.mintDeep)
+        .font(PrismTheme.body(13, weight: .semibold))
+      Text(caption)
+        .font(PrismTheme.body(11.5))
+        .foregroundStyle(PrismTheme.muted)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .padding(.vertical, 10)
   }
 
   private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -619,7 +648,7 @@ private struct MeraRecoveryInfoView: View {
       Text("Your account lives in your passkey").font(PrismTheme.display(32))
         .multilineTextAlignment(.center)
       Text(
-        "Prism uses a Mera passkey to sign. Because your account is derived from that passkey, signing in on a new phone with Face ID or Touch ID restores the same account — nothing to reset and no seed phrase to copy. A new SIM or OTP alone can never take over a funded account."
+        "Prism uses a Mera passkey to sign. Because your account is derived from that passkey, signing in on a new phone with Face ID or Touch ID restores the same account. Nothing to reset. No seed phrase to copy. A new SIM or OTP alone can never take over a funded account."
       ).font(PrismTheme.body(14)).foregroundStyle(PrismTheme.muted).multilineTextAlignment(.center).padding(.horizontal, 32)
       Spacer()
       PrismPrimaryButton(title: "Got it") { dismiss() }.padding(24)
@@ -634,7 +663,7 @@ struct RecoveryView: View {
       PrismTopBar(title: "Recovery", back: { dismiss() })
       Text("Recovery is separate from your phone number.").font(PrismTheme.display(38))
       Text(
-        "A new SIM or OTP alone cannot take over a funded Prism account. Your account is derived from a Mera passkey, so signing in with Face ID or Touch ID on a new device restores the same account — no seed phrase, nothing to reset. Passkeys sync through your platform account (iCloud Keychain); loss of every passkey is handled by Mera's recovery, not by your phone number."
+        "A new SIM or OTP alone cannot take over a funded Prism account. Your account is derived from a Mera passkey, so signing in with Face ID or Touch ID on a new device restores the same account. No seed phrase, nothing to reset. Passkeys sync through your platform account (iCloud Keychain); loss of every passkey is handled by Mera's recovery, not by your phone number."
       ).font(PrismTheme.body(15)).foregroundStyle(PrismTheme.muted)
       PrismCard {
         VStack(alignment: .leading, spacing: 14) {

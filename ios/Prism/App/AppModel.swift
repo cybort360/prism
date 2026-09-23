@@ -18,6 +18,7 @@ final class AppModel: ObservableObject {
   /// authorities: one needs only the contributor's own consent, the other needs the Circle's.
   @Published var presentCircleAddMoney: CircleSummary?
   @Published var presentCirclePay: CirclePayTarget?
+  @Published var presentCircleWithdraw: CircleSummary?
   @Published var presentCircleApproval: CircleApprovalPresentation?
   /// The Circle being looked at. A full-screen place rather than a sheet, because a Circle is
   /// somewhere a person stays — with its own members, settings and history to move between.
@@ -34,6 +35,8 @@ final class AppModel: ObservableObject {
   @Published var withdrawPresented = false
   @Published var saveDetailsPresented = false
   @Published var presentSaveReceipt: SaveReceiptPresentation?
+  /// Profile & Settings, reached from the top-left avatar on Home rather than a bottom tab.
+  @Published var presentProfile = false
   @Published var toast: String?
   @Published var onboardingComplete = false
 
@@ -52,7 +55,7 @@ final class AppModel: ObservableObject {
     #if DEBUG
       sendPickerPresented = arguments.contains("--uitest-send-picker")
       requestPickerPresented = arguments.contains("--uitest-request-picker")
-      if arguments.contains("--uitest-advanced-account") { selectedTab = .profile }
+      if arguments.contains("--uitest-advanced-account") { presentProfile = true }
       if arguments.contains("--uitest-save") { savePresented = true }
       if arguments.contains("--uitest-withdraw") { withdrawPresented = true }
       if arguments.contains("--uitest-save-details") { saveDetailsPresented = true }
@@ -180,5 +183,6 @@ final class AppModel: ObservableObject {
     onboardingComplete = false
     identity = nil
     selectedTab = .home
+    presentProfile = false
   }
 }

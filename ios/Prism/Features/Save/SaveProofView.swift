@@ -69,7 +69,7 @@ struct SaveReceiptView: View {
           tech("Savings position", "earnAUSD")
           tech("Shares received", shares(p.sharesActual))
           tech("Vault", short(p.vault))
-          tech("Network", p.network == 143 ? "Monad" : (p.network.map(String.init) ?? "—"))
+          tech("Network", p.network == 143 ? "Monad" : (p.network.map(String.init) ?? "-"))
           tech("Transaction", short(p.transactionHash), last: true)
         }.padding(.top, 10).transition(.opacity)
       }
@@ -102,13 +102,13 @@ struct SaveReceiptView: View {
   }
 
   private var created: String {
-    guard let iso = position?.createdAt, let d = Date.prismParse(iso) else { return "—" }
+    guard let iso = position?.createdAt, let d = Date.prismParse(iso) else { return "-" }
     return d.formatted(.dateTime.month(.abbreviated).day().year())
   }
-  private func dollars(_ a: String?) -> String { guard let a, !a.isEmpty, a.allSatisfy(\.isNumber) else { return "—" }; return Money.dollars(fromAtomic: a) }
+  private func dollars(_ a: String?) -> String { guard let a, !a.isEmpty, a.allSatisfy(\.isNumber) else { return "-" }; return Money.dollars(fromAtomic: a) }
   private func dollarsPlain(_ a: String?) -> String { dollars(a).replacingOccurrences(of: "$", with: "") }
-  private func shares(_ a: String?) -> String { guard let a, let v = Double(a) else { return "—" }; return String(format: "%.6f", v / 1_000_000) }
-  private func short(_ a: String?) -> String { guard let a, a.count > 12 else { return a ?? "—" }; return "\(a.prefix(6))…\(a.suffix(4))" }
+  private func shares(_ a: String?) -> String { guard let a, let v = Double(a) else { return "-" }; return String(format: "%.6f", v / 1_000_000) }
+  private func short(_ a: String?) -> String { guard let a, a.count > 12 else { return a ?? "-" }; return "\(a.prefix(6))…\(a.suffix(4))" }
 }
 
 /// Save Proof — the evidence-backed truth surface. Mirrors the payment proof: source, conversion,
@@ -124,7 +124,7 @@ struct SaveProofView: View {
         section("Source") { line("", dollars(proof.inputAmount) + " USDC", strong: true) }
 
         section("Conversion") {
-          line("Route", proof.conversionProvider ?? "—")
+          line("Route", proof.conversionProvider ?? "-")
           line("AUSD received", dollars(proof.actualAUSD))
         }
 
@@ -135,7 +135,7 @@ struct SaveProofView: View {
         }
 
         section("Settlement") {
-          line("Network", proof.network == 143 ? "Monad" : (proof.network.map(String.init) ?? "—"))
+          line("Network", proof.network == 143 ? "Monad" : (proof.network.map(String.init) ?? "-"))
           line("Transaction", short(proof.transactionHash))
           line("Status", proof.complete ? "Confirmed" : (proof.txCorrelates ? "Pending" : "Not matched"))
         }
@@ -194,9 +194,9 @@ struct SaveProofView: View {
   private func word(_ s: String) -> String { s == "verified" ? "Verified" : (s == "failed" ? "Failed" : "Unavailable") }
   private func icon(_ s: String) -> String { s == "verified" ? "checkmark.circle.fill" : (s == "failed" ? "xmark.circle.fill" : "minus.circle") }
   private func tint(_ s: String) -> Color { s == "verified" ? PrismTheme.positive : (s == "failed" ? PrismTheme.danger : PrismTheme.muted) }
-  private func dollars(_ a: String?) -> String { guard let a, !a.isEmpty, a.allSatisfy(\.isNumber) else { return "—" }; return Money.dollars(fromAtomic: a) }
-  private func shares(_ a: String?) -> String { guard let a, let v = Double(a) else { return "—" }; return String(format: "%.6f", v / 1_000_000) }
-  private func short(_ a: String?) -> String { guard let a, a.count > 12 else { return a ?? "—" }; return "\(a.prefix(6))…\(a.suffix(4))" }
+  private func dollars(_ a: String?) -> String { guard let a, !a.isEmpty, a.allSatisfy(\.isNumber) else { return "-" }; return Money.dollars(fromAtomic: a) }
+  private func shares(_ a: String?) -> String { guard let a, let v = Double(a) else { return "-" }; return String(format: "%.6f", v / 1_000_000) }
+  private func short(_ a: String?) -> String { guard let a, a.count > 12 else { return a ?? "-" }; return "\(a.prefix(6))…\(a.suffix(4))" }
 
   #if DEBUG
   static let demoPosition = SavePositionResponse(status: "ACTIVE", currentAUSDValue: "500120000", createdAt: "2026-09-10T00:00:00Z")

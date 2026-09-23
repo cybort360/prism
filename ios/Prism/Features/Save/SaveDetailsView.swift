@@ -28,7 +28,7 @@ struct SaveDetailsView: View {
         Text("Saving converts dollars from your Prism balance into a savings position that earns a variable rate, and converts them back to your balance when you withdraw.")
           .font(PrismTheme.body(13)).foregroundStyle(PrismTheme.muted).lineSpacing(3).padding(.top, 18)
 
-        Text("Save once. The underlying strategy manages where your savings earn — your savings are automatically managed across approved yield strategies by the underlying earnAUSD vault. Prism doesn't chase the highest rate across other protocols.")
+        Text("Save once. The underlying strategy manages where your savings earn. Your savings are automatically managed across approved yield strategies by the underlying earnAUSD vault. Prism doesn't chase the highest rate across other protocols.")
           .font(PrismTheme.body(13)).foregroundStyle(PrismTheme.muted).lineSpacing(3).padding(.top, 12)
 
         // Advanced disclosure — the substrate lives here and only here.

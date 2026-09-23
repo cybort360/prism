@@ -82,7 +82,7 @@ struct PaymentProofView: View {
   private var demoBanner: some View {
     HStack(spacing: 9) {
       Image(systemName: "theatermasks.fill").font(.system(size: 13))
-      Text("DEMO DATA — not a live on-chain payment").font(PrismTheme.body(12, weight: .semibold))
+      Text("DEMO DATA. Not a live on-chain payment").font(PrismTheme.body(12, weight: .semibold))
     }
     .foregroundStyle(PrismTheme.amber)
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -374,7 +374,7 @@ struct PaymentProofView: View {
     case "paymentLink", "link": "Payment link"
     case "claim": "Claim link"
     case "circle": "A Circle"
-    default: (raw ?? "—").capitalized
+    default: (raw ?? "-").capitalized
     }
   }
   private func localApprovalLabel(_ raw: String?) -> String {
@@ -396,12 +396,12 @@ struct PaymentProofView: View {
   }
   private func evidenceLevelBlurb(_ level: String) -> String {
     switch level {
-    case "E0": "E0 — Unverified claim."
-    case "E1": "E1 — UI / demo fixture, not live."
-    case "E2": "E2 — Local reproducible test."
-    case "E3": "E3 — Testnet transaction with independent readback."
-    case "E4": "E4 — Independently reproduced."
-    case "E5": "E5 — Production / mainnet independent verification."
+    case "E0": "E0: Unverified claim."
+    case "E1": "E1: UI / demo fixture, not live."
+    case "E2": "E2: Local reproducible test."
+    case "E3": "E3: Testnet transaction with independent readback."
+    case "E4": "E4: Independently reproduced."
+    case "E5": "E5: Production / mainnet independent verification."
     default: level
     }
   }

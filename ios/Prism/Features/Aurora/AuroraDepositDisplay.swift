@@ -48,7 +48,7 @@ struct AuroraDepositDisplay: Equatable {
   /// One line explaining what this address does, in the user's terms.
   var explanation: String {
     let shared = deposit.sharedAcrossEvmChains
-      ? "Works for any EVM chain — \(deposit.depositChainLabel) included."
+      ? "Works for any EVM chain. \(deposit.depositChainLabel) included."
       : "Only send \(deposit.depositChainLabel) assets to this address."
     return "Send any supported token here and it arrives as \(deposit.destinationSymbol) in your Prism account. \(shared)"
   }
@@ -115,7 +115,7 @@ struct AuroraArrivalsDisplay: Equatable {
     guard response.arrivals.isEmpty else { return nil }
     return response.indexed
       ? "Nothing has arrived yet."
-      : "Recent arrivals can't be listed right now. Your balance is unaffected — it's read from the chain."
+      : "Recent arrivals can't be listed right now. Your balance is unaffected. It's read from the chain."
   }
 
   func amountLabel(_ arrival: AuroraArrival) -> String {

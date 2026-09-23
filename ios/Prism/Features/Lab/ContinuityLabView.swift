@@ -40,7 +40,7 @@ struct ContinuityLabView: View {
         Spacer()
         PrismHeaderIconButton(icon: "xmark") { dismiss() }
       }
-      Text("A reassigned alias would silently redirect a normal payments app. PRISM decouples reachability from identity and blocks it. Fixtures only — no real money, no payment state.")
+      Text("A reassigned alias would silently redirect a normal payments app. PRISM decouples reachability from identity and blocks it. Fixtures only. No real money, no payment state.")
         .font(PrismTheme.body(13)).foregroundStyle(PrismTheme.muted).lineSpacing(2)
     }
     .padding(.top, 6)

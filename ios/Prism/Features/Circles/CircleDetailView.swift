@@ -69,6 +69,7 @@ struct CircleDetailView: View {
     // Circle and presenting them one level up would put a sheet over a sheet.
     .sheet(item: $model.presentCircleAddMoney) { target in CircleAddMoneyView(circle: target) }
     .sheet(item: $model.presentCirclePay) { target in CirclePayView(target: target) }
+    .sheet(item: $model.presentCircleWithdraw) { target in CircleWithdrawView(circle: target) }
     .sheet(item: $model.presentCircleApproval) { item in CircleApprovalView(presentation: item) }
     .sheet(item: $circle.governanceUnderReview) { proposal in
       CircleGovernanceApprovalView(proposal: proposal, detail: circle.detail) { await circle.reload() }
@@ -85,6 +86,7 @@ struct CircleDetailView: View {
     // never left showing the value it had before the thing that just happened.
     .onChange(of: model.presentCircleAddMoney) { old, new in if old != nil && new == nil { Task { await circle.reload() } } }
     .onChange(of: model.presentCirclePay) { old, new in if old != nil && new == nil { Task { await circle.reload() } } }
+    .onChange(of: model.presentCircleWithdraw) { old, new in if old != nil && new == nil { Task { await circle.reload() } } }
     .onChange(of: model.presentCircleApproval) { old, new in if old != nil && new == nil { Task { await circle.reload() } } }
   }
 
@@ -149,6 +151,9 @@ struct CircleDetailView: View {
       }
       CircleAction(icon: "paperplane", title: "Pay", enabled: circle.canPropose) {
         circle.payPickerPresented = true
+      }
+      CircleAction(icon: "arrow.up.right", title: "Withdraw", enabled: circle.canWithdraw) {
+        model.presentCircleWithdraw = summary
       }
       CircleAction(icon: "person.badge.plus", title: "Invite", enabled: circle.isAdmin) {
         circle.route.append(.invite)

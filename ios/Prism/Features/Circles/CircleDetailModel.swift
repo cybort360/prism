@@ -34,6 +34,9 @@ final class CircleDetailModel: ObservableObject {
   @Published private(set) var activityUnavailable = false
   /// The closure state, once someone opens it. Nil until asked for: it is a live read every time.
   @Published var closeState: CircleCloseState?
+  /// What this member could withdraw right now, read live alongside everything else. Nil means
+  /// unknown (not yet loaded, or not a member) — never treated as zero.
+  @Published private(set) var withdrawable: CircleWithdrawableResponse?
 
   private var circleId: String?
   private var myPrismId: String?
@@ -45,7 +48,7 @@ final class CircleDetailModel: ObservableObject {
 
   func reload() async {
     guard let circleId else { return }
-    // Six reads, each allowed to fail on its own. A Circle whose limits could not be read still has
+    // Seven reads, each allowed to fail on its own. A Circle whose limits could not be read still has
     // a balance worth showing; hiding the screen behind its least important call would be worse.
     async let detailTask = PrismAPI.shared.circle(circleId)
     async let pendingTask = PrismAPI.shared.circlePending(circleId)
@@ -54,6 +57,9 @@ final class CircleDetailModel: ObservableObject {
     async let paymentsTask = PrismAPI.shared.circlePayments(circleId)
     async let spendsTask = PrismAPI.shared.circleSpends(circleId)
     async let limitsTask = PrismAPI.shared.circleLimits(circleId)
+    // Fails silently for someone who isn't an active member yet — that's an ordinary "not yet
+    // known" here, the same as every other read this screen tolerates failing on its own.
+    async let withdrawableTask = PrismAPI.shared.circleWithdrawable(circleId)
 
     let fetchedDetail = try? await detailTask
     let fetchedPending = try? await pendingTask
@@ -62,6 +68,7 @@ final class CircleDetailModel: ObservableObject {
     let payments = (try? await paymentsTask) ?? []
     let spends = (try? await spendsTask) ?? []
     let fetchedLimits = try? await limitsTask
+    withdrawable = try? await withdrawableTask
 
     if let fetchedDetail { detail = fetchedDetail }
     error = fetchedDetail == nil ? "Prism couldn't reach this Circle just now. Pull down to try again." : nil
@@ -118,7 +125,7 @@ final class CircleDetailModel: ObservableObject {
 
   /// A dash means "not known right now". It never means zero, and it is never the last number seen.
   var balanceLine: String {
-    guard let balance = detail?.balance, balance.isKnown, let atomic = balance.amountAtomic else { return "—" }
+    guard let balance = detail?.balance, balance.isKnown, let atomic = balance.amountAtomic else { return "-" }
     return Money.assetAmount(fromAtomic: atomic, decimals: balance.decimals ?? 6)
   }
 
@@ -165,6 +172,13 @@ final class CircleDetailModel: ObservableObject {
   }
 
   var canPropose: Bool { canContribute }
+
+  /// Whether the Withdraw action should be offered at all. Backed entirely by the backend's live
+  /// `withdrawableAtomic` — never a number this screen derives from contributions it read itself.
+  var canWithdraw: Bool {
+    guard let withdrawable, let amount = Decimal(string: withdrawable.withdrawableAtomic) else { return false }
+    return amount > 0
+  }
 
   func limit(for prismId: String) -> CircleSpendingLimit? {
     limits.first { $0.prismId == prismId }

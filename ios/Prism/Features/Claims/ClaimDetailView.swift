@@ -113,7 +113,7 @@ struct ClaimDetailView: View {
 
   private var headline: String {
     switch phase {
-    case .waiting: return "Protected — waiting to be claimed"
+    case .waiting: return "Protected. Waiting to be claimed"
     case .expired: return "Expired"
     case .delivered: return "Delivered to \(recipientName)"
     case .returned: return "Returned to you"

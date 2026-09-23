@@ -887,7 +887,7 @@ private struct ReadyStep: View {
       art: "OnboardingReady3D",
       fallbackIcon: "checkmark",
       title: "You’re ready.",
-      message: "Your Prism is set up. Money can now move between people — starting with you.",
+      message: "Your Prism is set up. Money can now move between people, starting with you.",
       primary: "Open Prism",
       primaryAction: open,
       secondary: nil,

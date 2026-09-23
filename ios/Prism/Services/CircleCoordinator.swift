@@ -73,7 +73,7 @@ final class CircleCoordinator: ObservableObject {
       }
     }
     PrismHaptics.warning()
-    state = .pendingReview("Your money was sent and is still confirming. It'll show in the Circle once it settles — don't add it again.")
+    state = .pendingReview("Your money is confirming. It'll show in the Circle once it settles. Don't add it again.")
   }
 
   // MARK: - proposing a payment
@@ -88,6 +88,23 @@ final class CircleCoordinator: ObservableObject {
       let payment = try await api.proposeCirclePayment(
         circleId: circleId, resolution: resolution, amountAtomic: amountAtomic, memo: memo)
       lastPayment = payment
+      state = .idle
+      PrismHaptics.success()
+    } catch { fail(error) }
+  }
+
+  // MARK: - proposing a withdrawal
+
+  /// Propose taking money out of a Circle, to the caller's own account. This is an ordinary Circle
+  /// payment under the hood — `lastPayment` is set the same way `proposePayment` sets it — so it
+  /// ends at the same honest stopping point: nothing moves until the Circle's own threshold of
+  /// approvals is met.
+  func proposeWithdrawal(circleId: String, amountAtomic: String) async {
+    do {
+      blockedReason = nil
+      state = .preparing
+      let response = try await api.proposeCircleWithdrawal(circleId: circleId, amountAtomic: amountAtomic)
+      lastPayment = response.proposal
       state = .idle
       PrismHaptics.success()
     } catch { fail(error) }
@@ -213,7 +230,7 @@ final class CircleCoordinator: ObservableObject {
         lastGovernance = result
       }
       PrismHaptics.warning()
-      state = .pendingReview("The change was sent and is still confirming. It'll show in the Circle once Monad confirms it — don't send it again.")
+      state = .pendingReview("The change is confirming. It'll show in the Circle once Monad confirms it. Don't send it again.")
     } catch { fail(error) }
   }
 
@@ -254,7 +271,7 @@ final class CircleCoordinator: ObservableObject {
         lastPayment = result
       }
       PrismHaptics.warning()
-      state = .pendingReview("The payment was sent and is still confirming. It'll show in the Circle once it settles — don't send it again.")
+      state = .pendingReview("The payment is confirming. It'll show in the Circle once it settles. Don't send it again.")
     } catch { fail(error) }
   }
 
@@ -340,7 +357,7 @@ final class CircleCoordinator: ObservableObject {
       }
     }
     PrismHaptics.warning()
-    state = .pendingReview("Your payment was sent and is still confirming. It'll show in the Circle once it settles — don't send it again.")
+    state = .pendingReview("Your payment is confirming. It'll show in the Circle once it settles. Don't send it again.")
   }
 
   // MARK: - shared

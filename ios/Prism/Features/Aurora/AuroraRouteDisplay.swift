@@ -47,7 +47,7 @@ struct AuroraRouteDisplay: Equatable {
   var addressCaution: String? {
     route.destination.addressVerified
       ? nil
-      : "Prism can't fully verify \(route.destination.chainLabel) addresses. Check it carefully — a wrong address can't be recovered."
+      : "Prism can't fully verify \(route.destination.chainLabel) addresses. Check it carefully. A wrong address can't be recovered."
   }
 
   // MARK: approval gating
@@ -106,7 +106,7 @@ struct AuroraRouteDisplay: Equatable {
     switch route.state {
     case .refunded: "The route couldn't complete, so your money was returned to your Prism balance."
     case .routeFailed: "The route failed. If your money left your account it will be refunded to your Prism balance."
-    case .requiresAttention: "Something about this transfer needs a look — it hasn't been lost."
+    case .requiresAttention: "Something about this transfer needs a look. It hasn't been lost."
     case .expired: "The quote lapsed before it was sent. Nothing left your account."
     default: nil
     }

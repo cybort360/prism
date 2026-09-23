@@ -379,6 +379,48 @@ struct CirclePayment: Codable, Identifiable, Equatable {
 
 struct CirclePaymentsResponse: Codable { let circleId: String; let payments: [CirclePayment] }
 
+// MARK: - member withdrawals (money OUT of a Circle, capped by a member's own net contribution)
+
+/// What `memberPrismId` may withdraw right now: their own COMPLETED contributions minus their own
+/// COMPLETED withdrawals, never negative, capped by what the Safe actually holds on Monad. This is
+/// the ONLY ceiling a withdrawal screen may use — never a number computed on the phone.
+struct CircleWithdrawableResponse: Codable, Equatable {
+  let circleId: String
+  let memberPrismId: String
+  let netContributedAtomic: String
+  let balanceAtomic: String
+  let withdrawableAtomic: String
+}
+
+/// A withdrawal is an ordinary threshold PAYMENT proposal to the withdrawing member's own account —
+/// this IS a `CirclePayment`, plus the internal withdrawal record's id. Proposing signs nothing: the
+/// Circle's normal approvals still gate whether it ever executes.
+struct CircleWithdrawalProposalResponse: Codable { let proposal: CirclePayment; let withdrawalId: String }
+
+/// One member's share of a Circle close, as `planClosePayouts` would pay it out right now.
+struct CircleClosePayout: Codable, Equatable, Identifiable {
+  var id: String { prismId }
+  let prismId: String
+  let account: String?
+  let amountAtomic: String
+}
+
+/// The pro-rata preview of a Circle close: each member's net contribution split across the Safe's
+/// live balance. A preview only — nothing here has been proposed yet.
+struct CircleClosePlan: Codable, Equatable { let balanceAtomic: String; let payouts: [CircleClosePayout] }
+
+/// The result of proposing the next close payout. Returns are sent one at a time (each Circle payment
+/// uses the Safe's current nonce, so only one can execute per cycle): `proposal` is the single payout
+/// just kicked off (or nil when nothing is left to propose or one is still in flight), `remaining` are
+/// the members not yet fully returned, `skipped` are members still owed but with no account to pay to,
+/// and `done` is true once every member's frozen target has been met.
+struct CircleClosePayoutsResult: Codable {
+  let proposal: CircleWithdrawalProposalResponse?
+  let remaining: [CircleClosePayout]
+  let skipped: [CircleClosePayout]
+  let done: Bool
+}
+
 struct CircleApprovalResult: Codable { let proposalId: String; let approvedBy: String?; let signatureType: String?; let payment: CirclePayment }
 
 // MARK: - presentation

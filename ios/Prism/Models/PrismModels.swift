@@ -5,6 +5,8 @@ typealias RuntimeConfig = PrismNetworkConfig
 enum MainTab: String, CaseIterable, Identifiable {
   // Circles sits next to Home as a peer money surface; People/Activity stay paired as who/history.
   case home, circles, people, activity, profile
+  /// Tabs shown in the bottom bar. Profile is reached from the top-left avatar on Home, not the bar.
+  static let barTabs: [MainTab] = [.home, .circles, .people, .activity]
   var id: String { rawValue }
   var title: String { rawValue.capitalized }
   var icon: String {

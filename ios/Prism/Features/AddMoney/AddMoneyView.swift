@@ -9,6 +9,11 @@ struct AddMoneyView: View {
   /// Money enters Prism two ways: a direct USDC transfer on Monad, or a routed deposit from any
   /// other chain. Same question, so they live on one screen rather than two.
   @State private var origin: Origin = .monad
+  // Normal users never see a blockchain. The crypto deposit flow (addresses, chains, QR) is an
+  // advanced surface, off by default; the everyday "Add money" is a fiat on-ramp (coming soon).
+  @AppStorage("feature.addMoneyDeposit") private var depositEnabled = false
+  // Cross-chain deposit ("Another network") is gated by the same switch that governs cross-chain send.
+  @AppStorage("feature.crossChainSend") private var crossChainEnabled = false
 
   private enum Origin: String, CaseIterable, Identifiable {
     case monad = "Monad"
@@ -27,27 +32,82 @@ struct AddMoneyView: View {
       VStack(alignment: .leading, spacing: 0) {
         PrismTopBar(title: "Add money", back: { dismiss() }).padding(.top, 10)
 
-        Text("Add USDC to\nyour balance")
-          .font(PrismTheme.display(38))
-          .tracking(-0.8)
-          .padding(.top, 24)
+        if depositEnabled {
+          depositFlow
+        } else {
+          onRampComingSoon
+        }
 
-        Text("Top up from Monad directly, or send from another network and Prism converts it for you. Your balance updates after the transfer confirms.")
-          .font(PrismTheme.body(14))
-          .foregroundStyle(PrismTheme.muted)
-          .lineSpacing(2)
-          .padding(.top, 12)
+        Spacer(minLength: 24)
 
+        PrismPrimaryButton(title: "Done", icon: "checkmark") { dismiss() }.padding(.top, 8)
+      }
+      .padding(.horizontal, 22)
+      .padding(.bottom, 22)
+    }
+    .prismScreen()
+  }
+
+  // The everyday experience: add money with money, no blockchain in sight. The real card/bank on-ramp
+  // lands later; until then this is honest about what's coming rather than exposing a deposit address.
+  private var onRampComingSoon: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Text("Add money to\nyour balance")
+        .font(PrismTheme.display(38))
+        .tracking(-0.8)
+        .padding(.top, 24)
+
+      Text("Top up from your card or bank in a few taps. Coming soon.")
+        .font(PrismTheme.body(14))
+        .foregroundStyle(PrismTheme.muted)
+        .lineSpacing(2)
+        .padding(.top, 12)
+
+      PrismCard(padding: 20) {
+        HStack(spacing: 14) {
+          ZStack {
+            Circle().fill(PrismTheme.mintSoft).frame(width: 46, height: 46)
+            Image(systemName: "creditcard").font(.system(size: 19, weight: .medium)).foregroundStyle(PrismTheme.mintDeep)
+          }
+          VStack(alignment: .leading, spacing: 3) {
+            Text("Buy with card or bank").font(PrismTheme.body(15, weight: .semibold)).foregroundStyle(PrismTheme.ink)
+            Text("Instant top-ups, coming soon").font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted)
+          }
+          Spacer(minLength: 6)
+          PrismStatusPill(text: "Coming soon", tone: .neutral)
+        }
+      }
+      .padding(.top, 24)
+    }
+  }
+
+  @ViewBuilder private var depositFlow: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Text("Add USDC to\nyour balance")
+        .font(PrismTheme.display(38))
+        .tracking(-0.8)
+        .padding(.top, 24)
+
+      Text(crossChainEnabled
+        ? "Top up from Monad directly, or send from another network and Prism converts it for you. Your balance updates after the transfer confirms."
+        : "Send USDC on Monad to the address below. Your balance updates after the transfer confirms.")
+        .font(PrismTheme.body(14))
+        .foregroundStyle(PrismTheme.muted)
+        .lineSpacing(2)
+        .padding(.top, 12)
+
+      if crossChainEnabled {
         Picker("Where the money is coming from", selection: $origin) {
           ForEach(Origin.allCases) { option in Text(option.rawValue).tag(option) }
         }
         .pickerStyle(.segmented)
         .padding(.top, 18)
+      }
 
-        if origin == .anyChain {
-          AuroraDepositSection().padding(.top, 22)
-        } else {
-          PrismCard(padding: 18) {
+      if crossChainEnabled && origin == .anyChain {
+        AuroraDepositSection().padding(.top, 22)
+      } else {
+        PrismCard(padding: 18) {
             VStack(alignment: .leading, spacing: 16) {
               HStack {
                 ZStack {
@@ -107,16 +167,8 @@ struct AddMoneyView: View {
         #if DEBUG
           developerFaucet.padding(.top, 22)
         #endif
-
-        Spacer(minLength: 24)
-
-        PrismPrimaryButton(title: "Done", icon: "checkmark") { dismiss() }.padding(.top, 8)
       }
-      .padding(.horizontal, 22)
-      .padding(.bottom, 22)
     }
-    .prismScreen()
-  }
 
   #if DEBUG
     private var developerFaucet: some View {

@@ -114,7 +114,7 @@ struct SaveView: View {
             reviewRow("From", "Prism balance")
             reviewRow("Estimated amount saved", estimatedInvested)
             reviewRow("Current rate", d.rateText ?? "Set when Save connects")
-            reviewRow("Estimated monthly earnings", monthlyEstimate(d) ?? "—", subtle: true)
+            reviewRow("Estimated monthly earnings", monthlyEstimate(d) ?? "-", subtle: true)
             reviewRow("Conversion cost", conversionCost)
             reviewRow("Rate", "Variable", last: true)
           }
@@ -192,7 +192,7 @@ struct SaveView: View {
     guard let atomic, let balanceAtomic, let a = UInt64(atomic), let b = UInt64(balanceAtomic) else { return false }
     return a > b
   }
-  private var estimatedInvested: String { atomic.map { Money.dollars(fromAtomic: $0) } ?? "—" } // preview ≈ 1:1
+  private var estimatedInvested: String { atomic.map { Money.dollars(fromAtomic: $0) } ?? "-" } // preview ≈ 1:1
   private var conversionCost: String { "$0.00" } // preview; a live quote fills the observed cost
   private func monthlyEstimate(_ d: SaveDisplay) -> String? {
     guard d.apyFresh, let atomic, let a = Double(atomic) else { return nil }
@@ -315,8 +315,8 @@ private struct SaveHomeContent: View {
     VStack(alignment: .leading, spacing: 12) {
       PrismSectionLabel(text: "Earnings")
       HStack(spacing: 26) {
-        stat("This month (est.)", display.monthlyEstimateText ?? "—", PrismTheme.ink)
-        stat("All time", display.allTimeEarnedText ?? "—", PrismTheme.ink)
+        stat("This month (est.)", display.monthlyEstimateText ?? "-", PrismTheme.ink)
+        stat("All time", display.allTimeEarnedText ?? "-", PrismTheme.ink)
       }
     }
   }
@@ -431,7 +431,7 @@ private struct SaveSuccessTerminal: View {
   private var message: String {
     switch terminal {
     case .saved: return "Your savings are now earning at the current variable rate."
-    case .preview(let a, let reason): return "This is a preview — \(reason) Your \(a) wasn't moved."
+    case .preview(let a, let reason): return "This is a preview. \(reason) Your \(a) wasn't moved."
     case .failed(let m): return m
     }
   }
@@ -485,8 +485,10 @@ struct SaveHomeCard: View {
         glyph
         VStack(alignment: .leading, spacing: 3) {
           Text("Put your dollars to work").font(PrismTheme.body(15, weight: .semibold)).foregroundStyle(PrismTheme.ink)
-          Text(display?.rateText.map { "Earn \($0)" } ?? "Earn a variable return on your balance")
-            .font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+          if let rate = display?.rateText {
+            Text("Earn \(rate)")
+              .font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+          }
         }
         Spacer(minLength: 6)
         Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(PrismTheme.faint)
