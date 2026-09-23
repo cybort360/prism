@@ -38,6 +38,7 @@ struct WithdrawView: View {
               .accessibilityElement(children: .combine)
               .padding(.bottom, 18)
             }
+            if quote?.demo == true { demoBanner.padding(.bottom, 14) }
             PrismSectionLabel(text: "Amount to withdraw")
             AmountText(dollars: displayAmount, size: 60).padding(.top, 6)
             Text("Returns to your USDC balance").font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted).padding(.top, 8)
@@ -47,17 +48,23 @@ struct WithdrawView: View {
             if loading {
               ProgressView().frame(maxWidth: .infinity).padding(.top, 30)
             } else if let quote {
-              // Demo-shape quotes carry no `modes` breakdown (they authorize a real redeem instead);
-              // fall back to an "unavailable" breakdown so the card still renders something honest.
-              let modes = quote.modes ?? WithdrawModes(
-                live: false, sharesAtomic: "0",
-                instant: WithdrawModeInstant(available: false, reason: quote.notLiveReason),
-                standard: WithdrawModeStandard(available: false, reason: quote.notLiveReason))
-              instantCard(modes).padding(.top, 20)
-              standardCard(modes).padding(.top, 12)
-              if !quote.live, let reason = quote.notLiveReason {
-                Text(reason).font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted)
-                  .lineSpacing(2).padding(.top, 14)
+              if quote.demo == true {
+                // Demo Save: the quote carries a real testnet redeem authorization instead of a
+                // mode breakdown. One card, one CTA — no fabricated instant/standard split.
+                demoCard(quote).padding(.top, 20)
+              } else {
+                // Preview quotes carry a `modes` breakdown; fall back to an "unavailable" breakdown
+                // so the card still renders something honest if the field is somehow missing.
+                let modes = quote.modes ?? WithdrawModes(
+                  live: false, sharesAtomic: "0",
+                  instant: WithdrawModeInstant(available: false, reason: quote.notLiveReason),
+                  standard: WithdrawModeStandard(available: false, reason: quote.notLiveReason))
+                instantCard(modes).padding(.top, 20)
+                standardCard(modes).padding(.top, 12)
+                if !quote.live, let reason = quote.notLiveReason {
+                  Text(reason).font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted)
+                    .lineSpacing(2).padding(.top, 14)
+                }
               }
             }
             MoneyKeypad(value: $amount).padding(.top, 20)
@@ -69,6 +76,61 @@ struct WithdrawView: View {
       if let terminal { WithdrawTerminalView(terminal: terminal) { dismiss() } }
     }
     .task { await load() }
+  }
+
+  // MARK: demo
+
+  private var demoBanner: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "flask.fill").foregroundStyle(PrismTheme.mintDeep)
+      Text("Demo — simulated yield on testnet, not real earnAUSD")
+        .font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(PrismTheme.surface)
+    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+  }
+
+  private func demoCard(_ quote: WithdrawQuote) -> some View {
+    PrismCard {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          Text("Available").font(PrismTheme.body(15, weight: .semibold)).foregroundStyle(PrismTheme.ink)
+          Text("Available now").font(PrismTheme.body(10, weight: .semibold)).foregroundStyle(PrismTheme.mintDeep)
+            .padding(.horizontal, 8).padding(.vertical, 3).background(PrismTheme.mintSoft).clipShape(Capsule())
+          Spacer()
+        }
+        HStack {
+          Text("Estimated USDC").font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted)
+          Spacer()
+          Text(quote.estimatedUSDC.map(usd) ?? "-").font(PrismTheme.body(12.5, weight: .semibold))
+        }
+        PrismPrimaryButton(title: "Withdraw now", enabled: quote.authorization != nil, icon: "arrow.down.circle") {
+          Task { await withdrawDemo() }
+        }.padding(.top, 2)
+      }
+    }
+  }
+
+  private func withdrawDemo() async {
+    // Demo Save: a real testnet MockVault redeem. Sign the server-issued EIP-712 authorization on the
+    // Mera account (same signer payments use) and relay it — success is only reported once the backend
+    // confirms the submit; a thrown error surfaces as a real error, never a faked terminal.
+    guard let quote, let auth = quote.authorization else { error = "That withdrawal wasn't valid."; return }
+    PrismHaptics.warning()
+    do {
+      let mera = MeraAccountManager.shared
+      try await mera.beginSession(.payments)
+      let authData = try auth.jsonData()
+      let signature = try await mera.signTypedDataHex(authData)
+      _ = try await PrismAPI.shared.saveWithdrawSubmit(quoteId: quote.quoteId, signature: signature)
+      PrismHaptics.success()
+      terminal = .available(amount: quote.estimatedUSDC.map { Money.dollars(fromAtomic: $0) } ?? displayAmount)
+    } catch {
+      self.error = "That withdrawal didn't go through."
+    }
   }
 
   // MARK: mode cards
