@@ -147,7 +147,7 @@ export class PaymentService {
    * covers the real destination and not merely the address the funds pass through. Callers are
    * responsible for that binding; this method deliberately has no opinion about its contents.
    */
-  async prepareExternalSend({ senderPrismId, recipientAddress, amountAtomic, boundHash, kind, intent = {} }) {
+  async prepareExternalSend({ senderPrismId, recipientAddress, amountAtomic, boundHash, kind, intent = {}, validBefore = null }) {
     if (!this.config.chain.paymentRouter) throw httpError(503, 'PRISM_PAYMENT_ROUTER not configured');
     const stablecoin = usdcAsset(this.config);
     amountAtomic = this._paymentAmount(amountAtomic);
@@ -159,7 +159,7 @@ export class PaymentService {
 
     const paymentId = randomHex(32);
     const nonce = randomHex(32);
-    const validBefore = Math.floor(Date.now() / 1000) + AUTH_WINDOW_SECONDS;
+    const authValidBefore = validBefore ?? (Math.floor(Date.now() / 1000) + AUTH_WINDOW_SECONDS);
     const env = {
       paymentId,
       payer: checksum(sender.accountAddress),
@@ -167,7 +167,7 @@ export class PaymentService {
       amount: amountAtomic,
       requestId: ZERO32,
       resolutionHash: boundHash,
-      validBefore,
+      validBefore: authValidBefore,
       nonce
     };
 
@@ -184,7 +184,7 @@ export class PaymentService {
       events: [],
       createdAt: new Date().toISOString(),
       preparedAtMs: Date.now(),
-      expiresAt: new Date(validBefore * 1000).toISOString(),
+      expiresAt: new Date(authValidBefore * 1000).toISOString(),
       effectsApplied: false
     };
     appendEvent(record, { state: 'created', source: 'app', title: 'Payment created' });
@@ -201,7 +201,7 @@ export class PaymentService {
         envelope: serialize(paymentEnvelopeTypedData(env)),
         tokenAuthorization: serialize(receiveAuthorizationTypedData({
           from: env.payer, to: checksum(this.config.chain.paymentRouter), value: env.amount,
-          validAfter: 0, validBefore, nonce
+          validAfter: 0, validBefore: authValidBefore, nonce
         }))
       }
     };

@@ -944,7 +944,7 @@ export class CircleService {
    * the amount into the signature, so reconciliation can hold the settled payment to the claim the
    * contributor actually signed.
    */
-  async prepareContribution({ circleId, prismId, amountAtomic }) {
+  async prepareContribution({ circleId, prismId, amountAtomic, validBefore = null }) {
     const circle = await this._spendableCircle(circleId, prismId, CONTRIBUTING_ROLES, 'add money to');
     if (!this.payments) throw conflict('contributions are not available on this deployment');
 
@@ -966,6 +966,7 @@ export class CircleService {
       amountAtomic: amount,
       boundHash: bound,
       kind: 'circle-contribution',
+      validBefore,
       intent: {
         circleId, contributionId, entryMethod: 'circle', memo: `Added to ${circle.name}`,
         // The Circle context rides on the ordinary operation from the moment it is prepared, so the
