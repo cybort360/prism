@@ -28,3 +28,25 @@ test('prepareExternalSend honors an explicit validBefore', async () => {
   // The prepared authorization must carry the far deadline, not now+AUTH_WINDOW.
   assert.equal(Math.floor(Date.parse(prepared.expiresAt) / 1000), far);
 });
+
+test('SweepService.prepareForDraft builds a CIRCLE contribution authorization with far validBefore', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const store = tmpStore();
+  const expiresAt = new Date(Date.now() + 24 * 3600_000).toISOString();
+  const request = { requestId: 'req_1', requesterPrismId: 'p1', amountAtomic: '1000000', destination: 'CIRCLE', circleId: 'circle_1', expiresAt };
+  store.mutate((d) => { d.requests = { req_1: request }; });
+  let seenValidBefore = null;
+  const circleService = {
+    prepareContribution: async ({ circleId, prismId, amountAtomic, validBefore }) => {
+      seenValidBefore = validBefore;
+      return { typedData: { envelope: { primaryType: 'X' }, tokenAuthorization: { primaryType: 'ReceiveWithAuthorization' } }, contribution: { contributionId: 'ctb_1' } };
+    }
+  };
+  const svc = new SweepService({ store, circleService, saveService: null, config: { save: { mode: 'demo' } } });
+  const sweep = await svc.prepareForDraft(store.read().requests.req_1);
+  assert.equal(sweep.destination, 'CIRCLE');
+  assert.equal(sweep.preparedId, 'ctb_1');
+  assert.equal(seenValidBefore, Math.floor(Date.parse(expiresAt) / 1000));
+  assert.ok(sweep.authorization.tokenAuthorization, 'returns signable contribution typed data');
+  assert.equal(store.read().requests.req_1.sweep.state, 'PREPARING');
+});
