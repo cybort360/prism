@@ -113,7 +113,7 @@ contract MockVaultTest is Test {
         uint256 assets = vault.redeemWithAuthorization(user, 100_000000, 0, block.timestamp + 3600, rn, rv, rr, rs);
         assertEq(assets, 110_000000);
         assertEq(vault.balanceOf(user), 0);
-        assertEq(usdc.balanceOf(user), 910_000000); // 900 left after deposit + 110 redeemed - wait see note
+        assertEq(usdc.balanceOf(user), 1010_000000); // 1000 - 100 deposited + 110 redeemed
     }
 
     function test_redeemRejectsReusedNonce() public {
@@ -135,7 +135,7 @@ contract MockVaultTest is Test {
 }
 ```
 
-> Note on `test_yieldRaisesRedeemValue`'s final assert: user starts 1,000, deposits 100 (→900), redeems 100 shares worth 110 (→910). The `simulateYield` mints USDC to the vault out of thin air (demo), so the user genuinely receives 110. Correct.
+> Note on `test_yieldRaisesRedeemValue`'s final assert: user starts 1,000, deposits 100 (→900), then redeems 100 shares now worth 110 (→1,010). `simulateYield` mints USDC into the vault (demo), so the user genuinely receives 110 for a net +10 gain. Correct.
 
 - [ ] **Step 2: Run to verify it fails** — `cd contracts && forge test --match-contract MockVaultTest`. Expected: FAIL (`MockVault` not found / does not compile).
 
