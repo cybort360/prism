@@ -64,4 +64,38 @@ export class SweepService {
       return r.sweep;
     });
   }
+
+  // Settlement-time sweep. Called from the settlement hook and from read-retry, so it must be safe to
+  // call repeatedly: exactly one submit ever happens per sweep. We claim the sweep (PENDING -> SUBMITTED)
+  // synchronously before any await; a concurrent/repeated call then finds state !== 'PENDING' and no-ops.
+  async executeFor(requestId) {
+    const r = (this.store.read().requests ?? {})[requestId];
+    if (!r?.sweep || r.sweep.state !== 'PENDING') return { state: r?.sweep?.state ?? 'NONE' };
+    // Single-flight: claim the sweep before any await so a concurrent/repeated call can't double-submit.
+    this.store.mutate((d) => { d.requests[requestId].sweep.state = 'SUBMITTED'; d.requests[requestId].sweep.submittedAt = new Date().toISOString(); });
+    try {
+      const txHash = await this._submit(r);
+      this.store.mutate((d) => { const s = d.requests[requestId].sweep; s.state = 'SWEPT'; s.transactionHash = txHash; s.sweptAt = new Date().toISOString(); });
+      return { state: 'SWEPT', transactionHash: txHash };
+    } catch (err) {
+      // Safe fallback: the money stays in the requester's primary account. Never lost, never faked.
+      this.store.mutate((d) => { const s = d.requests[requestId].sweep; s.state = 'FAILED'; s.failure = String(err?.message ?? 'sweep failed'); });
+      return { state: 'FAILED' };
+    }
+  }
+
+  async _submit(r) {
+    if (r.sweep.destination === 'CIRCLE') {
+      const result = await this.circles.submitContribution({
+        circleId: r.sweep.circleId, contributionId: r.sweep.preparedId, prismId: r.requesterPrismId,
+        prismSignature: r.sweep.signatures.prismSignature, tokenSignature: r.sweep.signatures.tokenSignature
+      });
+      return result.txHash ?? result.transactionHash ?? null;
+    }
+    if (r.sweep.destination === 'SAVINGS') {
+      const result = await this.saveExecutor.submitDeposit({ prismId: r.requesterPrismId, quoteId: r.sweep.preparedId, signature: r.sweep.signatures.signature });
+      return result.txHash ?? null;
+    }
+    throw httpError(400, `unknown sweep destination '${r.sweep.destination}'`);
+  }
 }

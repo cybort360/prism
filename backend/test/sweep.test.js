@@ -84,3 +84,17 @@ test('draft -> prepareForDraft -> attachSignatures stores a PENDING sweep with s
   assert.equal(stored.state, 'PENDING');
   assert.deepEqual(stored.signatures, sweepSignatures);
 });
+
+test('executeFor submits a PENDING CIRCLE sweep exactly once (idempotent)', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const store = tmpStore();
+  store.mutate((d) => { d.requests = { req_1: { requestId: 'req_1', requesterPrismId: 'p1', circleId: 'circle_1', sweep: { destination: 'CIRCLE', circleId: 'circle_1', preparedId: 'ctb_1', state: 'PENDING', signatures: { prismSignature: '0xaa', tokenSignature: '0xbb' } } } }; });
+  let calls = 0;
+  const circleService = { submitContribution: async () => { calls++; return { state: 'confirming', txHash: '0xctb' }; } };
+  const svc = new SweepService({ store, circleService, saveService: null, config: { save: { mode: 'demo' } } });
+  const r1 = await svc.executeFor('req_1');
+  const r2 = await svc.executeFor('req_1'); // second call must NOT resubmit
+  assert.equal(calls, 1);
+  assert.ok(['SUBMITTED', 'SWEPT'].includes(store.read().requests.req_1.sweep.state));
+  assert.equal(store.read().requests.req_1.sweep.transactionHash, '0xctb');
+});
