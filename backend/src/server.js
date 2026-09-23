@@ -23,6 +23,7 @@ import { P256AccountService } from './services/p256AccountService.js';
 import { SaveService } from './services/saveService.js';
 import { SavePositionService } from './services/savePositionService.js';
 import { DemoSaveExecutor } from './services/demoSaveExecutor.js';
+import { SweepService } from './services/sweepService.js';
 import { CircleService } from './services/circleService.js';
 import { CircleMessageService } from './services/circleMessageService.js';
 import { CircleActivityService } from './services/circleActivityService.js';
@@ -63,6 +64,9 @@ const circleMessageService = new CircleMessageService({ store, config, circleSer
 const saveService = new SaveService({ store, config, identityService });
 const savePositionService = new SavePositionService({ store, config, identityService });
 const demoSaveExecutor = new DemoSaveExecutor({ store, config, identityService });
+// Second hop of a RECEIVE->Circle/Savings request: builds + stores the sweep authorization the
+// requester pre-signs at draft time, then persists their signature at commit.
+const sweepService = new SweepService({ store, circleService, saveService, config, demoSaveExecutor, identityService });
 // Unified prepare-only facade over spend / receive / cross-chain / save. Delegates to the
 // audited services; never submits, never transitions, never completes.
 const intentDispatcherService = new IntentDispatcherService({
@@ -159,14 +163,28 @@ route('POST', '/v1/resolve/prism', async ({ user, body }) => resolverService.res
 
 // --- off-chain payment requests ---------------------------------------------
 // payerPrismId is optional: omitted drafts a universal public request payable by anyone.
-route('POST', '/v1/requests/draft', async ({ user, body }) => requestService.draft({ ...body, payerPrismId: body.payerPrismId ?? null, requesterPrismId: user.prismId }), true);
+// A CIRCLE/SAVINGS destination additionally returns a `sweep` authorization the requester
+// pre-signs now, so settlement can relay it later without a second round trip.
+route('POST', '/v1/requests/draft', async ({ user, body }) => {
+  const drafted = requestService.draft({ ...body, payerPrismId: body.payerPrismId ?? null, requesterPrismId: user.prismId });
+  const sweep = await sweepService.prepareForDraft(drafted.request);
+  return sweep ? { ...drafted, sweep } : drafted;
+}, true);
 // Public, unauthenticated: safe metadata only (handle/name, amount, token, memo,
 // destination, status, expiry) — never phone, lookup keys, or sessions.
 route('GET', '/v1/requests/:requestId/public', async ({ params }) => {
   rateLimit('public-request-view', 60);
   return requestService.getPublicView(params.requestId);
 });
-route('POST', '/v1/requests/commit', async ({ user, body }) => requestService.commit({ ...body, requesterPrismId: user.prismId }), true);
+// sweepSignatures (present when the draft returned a `sweep`) is stored against the pending
+// sweep so settlement can relay it later.
+route('POST', '/v1/requests/commit', async ({ user, body }) => {
+  const committed = await requestService.commit({ ...body, requesterPrismId: user.prismId });
+  if (body.sweepSignatures) {
+    await sweepService.attachSignatures({ requestId: body.requestId, requesterPrismId: user.prismId, sweepSignatures: body.sweepSignatures });
+  }
+  return committed;
+}, true);
 route('GET', '/v1/requests', async ({ user }) => requestService.listFor(user.prismId), true);
 route('POST', '/v1/requests/status', async ({ user, body }) => requestService.setStatus(body.requestId, body.status, user.prismId), true);
 

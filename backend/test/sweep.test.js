@@ -50,3 +50,37 @@ test('SweepService.prepareForDraft builds a CIRCLE contribution authorization wi
   assert.ok(sweep.authorization.tokenAuthorization, 'returns signable contribution typed data');
   assert.equal(store.read().requests.req_1.sweep.state, 'PREPARING');
 });
+
+test('draft -> prepareForDraft -> attachSignatures stores a PENDING sweep with signatures', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const { RequestService } = await import('../src/services/requestService.js');
+  const store = tmpStore();
+  const config = (await import('../src/config.js')).config;
+  const identityService = { get: (prismId) => (prismId === 'p1' ? { prismId: 'p1', accountAddress: '0x00000000000000000000000000000000000000A1' } : null) };
+  const requestService = new RequestService({ store, identityService, config });
+
+  let seenValidBefore = null;
+  const circleService = {
+    prepareContribution: async ({ circleId, prismId, amountAtomic, validBefore }) => {
+      seenValidBefore = validBefore;
+      return { typedData: { envelope: { primaryType: 'X' }, tokenAuthorization: { primaryType: 'ReceiveWithAuthorization' } }, contribution: { contributionId: 'ctb_2' } };
+    }
+  };
+  const sweepService = new SweepService({ store, circleService, saveService: null, config });
+
+  const drafted = requestService.draft({ requesterPrismId: 'p1', amountAtomic: '1000000', destination: 'CIRCLE', circleId: 'circle_1' });
+  const sweep = await sweepService.prepareForDraft(drafted.request);
+  assert.equal(sweep.destination, 'CIRCLE');
+  assert.equal(sweep.preparedId, 'ctb_2');
+  assert.ok(seenValidBefore);
+  assert.equal(store.read().requests[drafted.request.requestId].sweep.state, 'PREPARING');
+
+  const sweepSignatures = { envelope: '0xenvelopesig', tokenAuthorization: '0xtokensig' };
+  const attached = await sweepService.attachSignatures({ requestId: drafted.request.requestId, requesterPrismId: 'p1', sweepSignatures });
+  assert.equal(attached.state, 'PENDING');
+  assert.deepEqual(attached.signatures, sweepSignatures);
+
+  const stored = store.read().requests[drafted.request.requestId].sweep;
+  assert.equal(stored.state, 'PENDING');
+  assert.deepEqual(stored.signatures, sweepSignatures);
+});
