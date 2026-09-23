@@ -98,3 +98,26 @@ test('executeFor submits a PENDING CIRCLE sweep exactly once (idempotent)', asyn
   assert.ok(['SUBMITTED', 'SWEPT'].includes(store.read().requests.req_1.sweep.state));
   assert.equal(store.read().requests.req_1.sweep.transactionHash, '0xctb');
 });
+
+test('executeFor submits a SAVINGS sweep via the demo Save executor', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const store = tmpStore();
+  store.mutate((d) => { d.requests = { req_2: { requestId: 'req_2', requesterPrismId: 'p1', sweep: { destination: 'SAVINGS', preparedId: 'sweep_q1', state: 'PENDING', signatures: { signature: '0xcc' } } } }; });
+  const demoSaveExecutor = { submitDeposit: async ({ quoteId }) => ({ txHash: '0xsave', state: 'SAVED', operationId: 'op1' }) };
+  const svc = new SweepService({ store, circleService: null, saveService: null, demoSaveExecutor, config: { save: { mode: 'demo' } } });
+  const res = await svc.executeFor('req_2');
+  assert.equal(res.state, 'SWEPT');
+  assert.equal(store.read().requests.req_2.sweep.transactionHash, '0xsave');
+});
+
+test('a failed sweep marks FAILED and leaves the request intact (funds stay in primary)', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const store = tmpStore();
+  store.mutate((d) => { d.requests = { req_3: { requestId: 'req_3', requesterPrismId: 'p1', sweep: { destination: 'SAVINGS', preparedId: 'q', state: 'PENDING', signatures: { signature: '0x' } } } }; });
+  const demoSaveExecutor = { submitDeposit: async () => { throw new Error('quote expired'); } };
+  const svc = new SweepService({ store, circleService: null, saveService: null, demoSaveExecutor, config: { save: { mode: 'demo' } } });
+  const res = await svc.executeFor('req_3');
+  assert.equal(res.state, 'FAILED');
+  assert.equal(store.read().requests.req_3.sweep.state, 'FAILED');
+  assert.match(store.read().requests.req_3.sweep.failure, /quote expired/);
+});
