@@ -41,8 +41,8 @@ const expected = () => ({
   earnAusdVault: VAULT, swapRouter: ROUTER, inputAmount: '1000000'
 });
 
-test('save: quote is money-safe and announces itself as a preview (no invented APY or position)', () => {
-  const q = svc(tmpStore()).quote({ prismId: 'alice', amountAtomic: '1000000' });
+test('save: quote is money-safe and announces itself as a preview (no invented APY or position)', async () => {
+  const q = await svc(tmpStore()).quote({ prismId: 'alice', amountAtomic: '1000000' });
   assert.equal(q.provider, 'dev-preview');
   assert.equal(q.live, false);
   assert.equal(q.substrateVerified, false);
@@ -55,8 +55,8 @@ test('save: quote is money-safe and announces itself as a preview (no invented A
   assert.equal(typeof q.inputAmount, 'string');
 });
 
-test('save: the quote carries a money-safe consumer review block', () => {
-  const q = svc(tmpStore()).quote({ prismId: 'alice', amountAtomic: '500000000' });
+test('save: the quote carries a money-safe consumer review block', async () => {
+  const q = await svc(tmpStore()).quote({ prismId: 'alice', amountAtomic: '500000000' });
   const r = q.review;
   assert.equal(r.youSaveAtomic, '500000000');
   assert.equal(r.estimatedInvestedAtomic, '500000000');
@@ -77,11 +77,11 @@ test('save: state is honest — not live, zero position, no rate', () => {
   assert.equal(st.rate.available, false);
 });
 
-test('save: amount validation fails closed', () => {
+test('save: amount validation fails closed', async () => {
   const s = svc(tmpStore());
-  assert.throws(() => s.quote({ prismId: 'alice', amountAtomic: '0' }), /positive/);
-  assert.throws(() => s.quote({ prismId: 'alice', amountAtomic: '1.5' }), /integer/);
-  assert.throws(() => s.quote({ prismId: 'alice', amountAtomic: '99999999999' }), /limit/);
+  await assert.rejects(() => s.quote({ prismId: 'alice', amountAtomic: '0' }), /positive/);
+  await assert.rejects(() => s.quote({ prismId: 'alice', amountAtomic: '1.5' }), /integer/);
+  await assert.rejects(() => s.quote({ prismId: 'alice', amountAtomic: '99999999999' }), /limit/);
 });
 
 test('save: the plan verifier ACCEPTS a well-formed executable plan', () => {
@@ -128,12 +128,12 @@ test('save: the dev preview plan is correctly NOT executable', () => {
   assert.equal(r.ok, false, 'a preview plan must not verify as executable');
 });
 
-test('save: running quotes/state creates NO production or financial state', () => {
+test('save: running quotes/state creates NO production or financial state', async () => {
   const store = tmpStore();
   const before = JSON.stringify(store.read());
   const s = svc(store);
   s.state('alice');
-  s.quote({ prismId: 'alice', amountAtomic: '5000000' });
+  await s.quote({ prismId: 'alice', amountAtomic: '5000000' });
   const after = store.read();
   assert.equal(JSON.stringify(after), before, 'Save wrote nothing to the store');
   assert.equal(Object.keys(after.operations ?? {}).length, 0);

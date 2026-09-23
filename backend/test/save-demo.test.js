@@ -1,5 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+
+const { JsonStore } = await import('../src/lib/jsonStore.js');
+
+function tmpStore() { return new JsonStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prism-save-demo-')), 'store.json')); }
+
+function demoDeps() {
+  const store = tmpStore();
+  const config = { save: { enabled: true, mode: 'demo', demo: true, mockVault: '0x000000000000000000000000000000000000dEaD', maxSlippageBps: 50, substrateChainId: 10143, inputToken: '0x0000000000000000000000000000000000000001', maxSaveAtomic: '10000000000' } };
+  const identityService = { get: () => ({ prismId: 'prism_x', accountAddress: '0x00000000000000000000000000000000000000A1' }) };
+  return { store, config, identityService };
+}
 
 test('config: SAVE_MODE defaults to preview, demo flag derived', async () => {
   delete process.env.SAVE_MODE;
@@ -20,4 +32,17 @@ test('demo route provider: executable quote with real shares + signable authoriz
   assert.equal(q.minimumShares, '99500000'); // 100000000 - 0.50%
   assert.ok(q.authorization?.types?.ReceiveWithAuthorization, 'has signable ERC-3009 typed data');
   assert.ok(/^0x[0-9a-fA-F]{64}$/.test(q.nonce));
+});
+
+test('saveService.state reports demo + persists quote', async () => {
+  const { SaveService } = await import('../src/services/saveService.js');
+  const { DemoVaultSaveRouteProvider } = await import('../src/lib/demoSaveProviders.js');
+  const fakeVault = { available: () => true, previewDeposit: async () => '100000000' };
+  const { store, config, identityService } = demoDeps();
+  const svc = new SaveService({ store, config, identityService, routeProvider: new DemoVaultSaveRouteProvider(config, fakeVault) });
+  const state = svc.state('prism_x');
+  assert.equal(state.demo, true);
+  const q = await svc.quote({ prismId: 'prism_x', amountAtomic: '100000000' });
+  assert.equal(q.demo, true);
+  assert.ok(store.read().saveQuotes[q.quoteId], 'quote persisted for submit');
 });

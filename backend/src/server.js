@@ -246,7 +246,7 @@ route('GET', '/v1/save/withdrawals', async ({ user }) => ({ pending: savePositio
 route('GET', '/v1/save/operations/:id/proof', async ({ user, params }) => savePositionService.saveProof(user.prismId, params.id), true);
 route('POST', '/v1/save/quote', async ({ user, body }) => {
   rateLimit(`save-quote:${user.prismId}`, 60);
-  return saveService.quote({ prismId: user.prismId, amountAtomic: String(body.amountAtomic) });
+  return await saveService.quote({ prismId: user.prismId, amountAtomic: String(body.amountAtomic) });
 }, true);
 route('POST', '/v1/save/withdraw/quote', async ({ user, body }) => {
   rateLimit(`save-wd-quote:${user.prismId}`, 60);
