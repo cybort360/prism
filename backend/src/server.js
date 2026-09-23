@@ -252,13 +252,19 @@ route('POST', '/v1/save/quote', async ({ user, body }) => {
 }, true);
 route('POST', '/v1/save/withdraw/quote', async ({ user, body }) => {
   rateLimit(`save-wd-quote:${user.prismId}`, 60);
-  return saveService.withdrawQuote({ prismId: user.prismId, sharesAtomic: String(body.sharesAtomic) });
+  return await saveService.withdrawQuote({ prismId: user.prismId, sharesAtomic: String(body.sharesAtomic) });
 }, true);
 route('POST', '/v1/save/submit', async ({ user, body, idempotencyKey }) => {
   rateLimit(`save-submit:${user.prismId}`, 30);
   requireSig(body.signature, 'signature');
   return withIdempotency(store, { scope: 'save-submit', key: idempotencyKey, actor: user.prismId, fingerprint: fingerprint(body.quoteId, body.signature) }, () =>
     demoSaveExecutor.submitDeposit({ prismId: user.prismId, quoteId: body.quoteId, signature: body.signature }));
+}, true);
+route('POST', '/v1/save/withdraw', async ({ user, body, idempotencyKey }) => {
+  rateLimit(`save-withdraw:${user.prismId}`, 30);
+  requireSig(body.signature, 'signature');
+  return withIdempotency(store, { scope: 'save-withdraw', key: idempotencyKey, actor: user.prismId, fingerprint: fingerprint(body.quoteId, body.signature) }, () =>
+    demoSaveExecutor.submitWithdraw({ prismId: user.prismId, quoteId: body.quoteId, signature: body.signature }));
 }, true);
 
 // Canonical Payment Proof: typed, evidence-backed inspectability for one operation the caller owns.

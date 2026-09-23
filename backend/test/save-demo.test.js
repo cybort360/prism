@@ -65,3 +65,28 @@ test('demo executor: submit deposit verifies quote, submits, records SAVED op', 
   assert.equal(op.transactionHash, '0xhash');
   assert.equal(op.inputUSDC, '100000000');
 });
+
+test('redeem typed data matches the contract domain + type', async () => {
+  const { redeemAuthorizationTypedData } = await import('../src/lib/redeemAuthorization.js');
+  const td = redeemAuthorizationTypedData({ owner: '0x00000000000000000000000000000000000000A1', shares: '100000000', validAfter: 0, validBefore: 999, nonce: '0x' + '22'.repeat(32), vault: '0x000000000000000000000000000000000000dEaD', chainId: 10143 });
+  assert.equal(td.domain.name, 'Prism Save Demo Vault');
+  assert.equal(td.domain.version, '1');
+  assert.equal(td.primaryType, 'RedeemWithAuthorization');
+  assert.deepEqual(td.types.RedeemWithAuthorization.map(f => f.name), ['owner','shares','validAfter','validBefore','nonce']);
+});
+
+test('demo executor: submit withdraw records AVAILABLE op with USDC out', async () => {
+  const { DemoSaveExecutor } = await import('../src/services/demoSaveExecutor.js');
+  const { store, config, identityService } = demoDeps();
+  const account = '0x00000000000000000000000000000000000000A1';
+  store.mutate((d) => { d.saveQuotes = { w1: { quoteId: 'w1', kind: 'WITHDRAW_INSTANT', prismId: 'prism_x', account, sharesAtomic: '100000000', vault: config.save.mockVault, nonce: '0x' + '33'.repeat(32), deadline: Math.floor(Date.now()/1000)+300, estimatedUSDC: '110000000' } }; });
+  const fakeVault = { available: () => true, submitRedeem: async () => '0xwd', convertToAssets: async () => '110000000' };
+  const fakeChain = { getTransactionReceipt: async () => ({ status: 'success', blockNumber: 2n }) };
+  const exec = new DemoSaveExecutor({ store, config, identityService, vault: fakeVault, chain: fakeChain, verify: async () => true });
+  const res = await exec.submitWithdraw({ prismId: 'prism_x', quoteId: 'w1', signature: '0x' + 'cd'.repeat(65) });
+  assert.equal(res.txHash, '0xwd');
+  assert.equal(res.state, 'AVAILABLE');
+  const op = store.read().saveOperations[res.operationId];
+  assert.equal(op.kind, 'WITHDRAW_INSTANT');
+  assert.equal(op.outputUSDC, '110000000');
+});

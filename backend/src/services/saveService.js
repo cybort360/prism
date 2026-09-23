@@ -173,11 +173,31 @@ export class SaveService {
 
   /** Withdraw-mode quote: earnAUSD → AUSD → USDC, back to the user's spendable balance. In preview neither
    *  mode's economics are observable, so both are unavailable (fees are never invented as "free"). */
-  withdrawQuote({ prismId, sharesAtomic }) {
+  async withdrawQuote({ prismId, sharesAtomic }) {
     if (!this.config.save.enabled) throw httpError(404, 'Save is not enabled on this deployment');
     if (!/^[0-9]+$/.test(String(sharesAtomic ?? ''))) throw httpError(400, 'shares must be an integer base-unit string');
     const identity = this.identityService.get(prismId);
     if (!identity?.accountAddress) throw httpError(409, 'no Prism account for this user');
+
+    if (this.config.save.mode === 'demo') {
+      const { redeemAuthorizationTypedData } = await import('../lib/redeemAuthorization.js');
+      const vault = this.config.save.mockVault;
+      const estimatedUSDC = await mockVault.convertToAssets(String(sharesAtomic));
+      const nonce = randomHex(32);
+      const deadline = Math.floor(Date.now() / 1000) + 300;
+      const quoteId = `wd_${randomHex(16).slice(2)}`;
+      this.store.mutate((data) => {
+        data.saveQuotes ??= {};
+        data.saveQuotes[quoteId] = { quoteId, kind: 'WITHDRAW_INSTANT', prismId, account: identity.accountAddress, sharesAtomic: String(sharesAtomic), vault, nonce, deadline, estimatedUSDC };
+      });
+      return {
+        quoteId, demo: true, live: false, returnsTo: 'USDC', estimatedUSDC,
+        notLiveReason: 'Demo — simulated yield on testnet, not real earnAUSD',
+        authorization: redeemAuthorizationTypedData({ owner: identity.accountAddress, shares: String(sharesAtomic), validAfter: 0, validBefore: deadline, nonce, vault, chainId: this.config.save.substrateChainId }),
+        nonce, deadline
+      };
+    }
+
     const live = this.config.save.substrateVerified === true;
     return {
       quoteId: `wd_${randomHex(16).slice(2)}`,
