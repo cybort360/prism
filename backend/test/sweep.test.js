@@ -121,3 +121,18 @@ test('a failed sweep marks FAILED and leaves the request intact (funds stay in p
   assert.equal(store.read().requests.req_3.sweep.state, 'FAILED');
   assert.match(store.read().requests.req_3.sweep.failure, /quote expired/);
 });
+
+test('PaymentService calls onRequestPaid after markPaid on a completed request payment', async () => {
+  const { PaymentService } = await import('../src/services/paymentService.js');
+  const store = tmpStore();
+  const identityService = { get: () => ({ prismId: 'p1', accountAddress: '0x00000000000000000000000000000000000000A1' }) };
+  const config = (await import('../src/config.js')).config;
+  let paidWith = null;
+  const requestService = { markPaid: () => {} };
+  const svc = new PaymentService({ store, config, identityService, requestService, onRequestPaid: (id) => { paidWith = id; } });
+  // Drive the real completion path: _applySuccess(record) is the private method that contains the
+  // markPaid call at paymentService.js:595 (the brief's placeholder name was `_onPaymentCompleted`;
+  // the actual method is `_applySuccess`, invoked synchronously from `reconcile` on a success record).
+  svc._applySuccess({ kind: 'payment', operationId: 'op1', intent: { requestId: 'req_9' }, transactionHash: '0xtx' });
+  assert.equal(paidWith, 'req_9');
+});

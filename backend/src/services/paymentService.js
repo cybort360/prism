@@ -27,13 +27,14 @@ const ZERO32 = `0x${'00'.repeat(32)}`;
  * comes only from a reconciled on-chain receipt.
  */
 export class PaymentService {
-  constructor({ store, config, identityService, claimService, resolverService, requestService }) {
+  constructor({ store, config, identityService, claimService, resolverService, requestService, onRequestPaid = null }) {
     this.store = store;
     this.config = config;
     this.identityService = identityService;
     this.claimService = claimService;
     this.resolverService = resolverService;
     this.requestService = requestService;
+    this.onRequestPaid = onRequestPaid ?? null;
   }
 
   assertResolution(resolution, requesterPrismId) {
@@ -593,6 +594,9 @@ export class PaymentService {
   _applySuccess(record) {
     const tx = record.transactionHash;
     if (record.kind === 'payment' && record.intent.requestId) this.requestService.markPaid(record.intent.requestId, record.operationId, tx);
+    // Second hop: if this request was tagged into a Circle/Savings, sweep it now. Best-effort —
+    // a sweep failure must never affect the payer's settlement (the money is already delivered).
+    if (record.kind === 'payment' && record.intent.requestId && this.onRequestPaid) { try { const p = this.onRequestPaid(record.intent.requestId); if (p && typeof p.then === 'function') p.catch(() => {}); } catch { /* swallow */ } }
     if (record.kind === 'claim-funding') this.claimService.markFunded(record.intent.claimId, record.txHash, tx);
     if (record.kind === 'claim-collection') this.claimService.markClaimed(record.intent.claimId, tx);
     if (record.kind === 'claim-refund') this.claimService.markRefunded(record.intent.claimId, tx);

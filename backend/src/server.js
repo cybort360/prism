@@ -46,7 +46,14 @@ const otpService = new OtpService({ config, store });
 const resolverService = new ResolverService({ store, config, keyService, identityService });
 const requestService = new RequestService({ store, identityService, config });
 const claimService = new ClaimService({ store, config, identityService });
-const paymentService = new PaymentService({ store, config, identityService, claimService, resolverService, requestService });
+// onRequestPaid fires the second hop (Circle/Savings sweep) after a request payment settles.
+// sweepService is constructed below (it needs circleService/saveService, built after paymentService),
+// but this arrow only captures it by closure and is invoked at settlement time, not construction
+// time, so the forward reference is safe.
+const paymentService = new PaymentService({
+  store, config, identityService, claimService, resolverService, requestService,
+  onRequestPaid: (requestId) => sweepService.executeFor(requestId).catch(() => {})
+});
 const activityService = new ActivityService({ store, identityService });
 const auroraService = new AuroraService({ store, config, identityService, paymentService });
 const p256AccountService = new P256AccountService({ store, config, chainOps: p256ChainOps });
