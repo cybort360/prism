@@ -194,6 +194,14 @@ route('POST', '/v1/requests/commit', async ({ user, body }) => {
 }, true);
 route('GET', '/v1/requests', async ({ user }) => requestService.listFor(user.prismId), true);
 route('POST', '/v1/requests/status', async ({ user, body }) => requestService.setStatus(body.requestId, body.status, user.prismId), true);
+// The requester's own view of a request, including its sweep state. A PENDING sweep is
+// retried right here on read, so a sweep missed at settlement (e.g. the process restarted
+// mid-relay) is not permanently stuck — the next status check repairs it.
+route('GET', '/v1/requests/:requestId', async ({ user, params }) => {
+  const view = requestService.getOwn(params.requestId, user.prismId);
+  if (view.sweep?.state === 'PENDING') { await sweepService.executeFor(params.requestId).catch(() => {}); return requestService.getOwn(params.requestId, user.prismId); }
+  return view;
+}, true);
 
 // --- unified intent prepare ----------------------------------------------------
 // One prepare entry for SPEND / RECEIVE / CROSS_CHAIN. The server binds the

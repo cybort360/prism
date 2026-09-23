@@ -148,6 +148,18 @@ export class RequestService {
     };
   }
 
+  /**
+   * The requester's own view of a request, including its sweep state (Circle/Savings
+   * second hop). 404s if the request doesn't exist or isn't owned by the caller, so a
+   * request can never be read by anyone other than its requester through this path.
+   */
+  getOwn(requestId, prismId) {
+    const r = this.store.read().requests[requestId];
+    if (!r || r.requesterPrismId !== prismId) { const e = new Error('request not found'); e.statusCode = 404; throw e; }
+    const sweep = r.sweep ? { state: r.sweep.state, destination: r.sweep.destination, transactionHash: r.sweep.transactionHash ?? null, failure: r.sweep.failure ?? null } : null;
+    return { requestId: r.requestId, status: r.status, amountAtomic: r.amountAtomic, destination: r.destination ?? 'PRIMARY', sweep };
+  }
+
   setStatus(requestId, status, actorPrismId) {
     const allowed = new Set(['DECLINED', 'CANCELLED']);
     if (!allowed.has(status)) throw new Error('invalid user-controlled request status');

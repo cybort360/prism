@@ -122,6 +122,42 @@ test('a failed sweep marks FAILED and leaves the request intact (funds stay in p
   assert.match(store.read().requests.req_3.sweep.failure, /quote expired/);
 });
 
+test('getOwn retries a PENDING sweep on read and reflects the fresh SWEPT state (missed-settlement recovery)', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const { RequestService } = await import('../src/services/requestService.js');
+  const store = tmpStore();
+  const config = (await import('../src/config.js')).config;
+  const identityService = { get: (prismId) => (prismId === 'p1' ? { prismId: 'p1', accountAddress: '0x00000000000000000000000000000000000000A1' } : null) };
+  const requestService = new RequestService({ store, identityService, config });
+  store.mutate((d) => {
+    d.requests = {
+      req_1: {
+        requestId: 'req_1', requesterPrismId: 'p1', status: 'PAID', amountAtomic: '1000000', destination: 'CIRCLE', circleId: 'circle_1',
+        sweep: { destination: 'CIRCLE', circleId: 'circle_1', preparedId: 'ctb_1', state: 'PENDING', signatures: { prismSignature: '0xaa', tokenSignature: '0xbb' } }
+      }
+    };
+  });
+
+  // Sanity: unowned callers and nonexistent ids 404, never leaking the request.
+  assert.throws(() => requestService.getOwn('req_1', 'someone-else'), (e) => e.statusCode === 404);
+  assert.throws(() => requestService.getOwn('nope', 'p1'), (e) => e.statusCode === 404);
+
+  const before = requestService.getOwn('req_1', 'p1');
+  assert.equal(before.sweep.state, 'PENDING');
+
+  let calls = 0;
+  const circleService = { submitContribution: async () => { calls++; return { state: 'confirming', txHash: '0xctb' }; } };
+  const sweepService = new SweepService({ store, circleService, saveService: null, config: { save: { mode: 'demo' } } });
+
+  // Route-equivalent logic: a PENDING sweep is retried on read, not just at settlement.
+  if (before.sweep?.state === 'PENDING') { await sweepService.executeFor('req_1').catch(() => {}); }
+  const after = requestService.getOwn('req_1', 'p1');
+
+  assert.equal(calls, 1);
+  assert.ok(['SUBMITTED', 'SWEPT'].includes(after.sweep.state));
+  assert.equal(after.sweep.transactionHash, '0xctb');
+});
+
 test('PaymentService calls onRequestPaid after markPaid on a completed request payment', async () => {
   const { PaymentService } = await import('../src/services/paymentService.js');
   const store = tmpStore();
