@@ -197,7 +197,7 @@ struct MetricsSnapshot: Codable {
 }
 
 /// Minimal arbitrary-JSON value so the EIP-712 typed data can round-trip untouched through iOS.
-enum JSONValue: Codable {
+enum JSONValue: Codable, Equatable {
   case string(String), number(Double), bool(Bool), object([String: JSONValue]), array([JSONValue]), null
 
   init(from decoder: Decoder) throws {

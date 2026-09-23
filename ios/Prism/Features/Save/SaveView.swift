@@ -171,7 +171,7 @@ struct SaveView: View {
       else { guard let pin, try PINService.shared.verify(pin) else { throw PaymentError.badPIN } }
       let quote = try await PrismAPI.shared.saveQuote(amountAtomic: atomic)
       let account = model.identity?.accountAddress ?? ""
-      let ok = SavePlan.verify(quote.transactionPlan, expectedInputAmount: atomic, account: account).isEmpty
+      let ok = quote.transactionPlan.map { SavePlan.verify($0, expectedInputAmount: atomic, account: account).isEmpty } ?? false
       PrismHaptics.warning()
       // Live + verified would show the real success copy; today the substrate is gated, so an honest preview.
       terminal = (quote.live && quote.planExecutable && ok)

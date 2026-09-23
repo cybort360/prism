@@ -47,8 +47,14 @@ struct WithdrawView: View {
             if loading {
               ProgressView().frame(maxWidth: .infinity).padding(.top, 30)
             } else if let quote {
-              instantCard(quote).padding(.top, 20)
-              standardCard(quote).padding(.top, 12)
+              // Demo-shape quotes carry no `modes` breakdown (they authorize a real redeem instead);
+              // fall back to an "unavailable" breakdown so the card still renders something honest.
+              let modes = quote.modes ?? WithdrawModes(
+                live: false, sharesAtomic: "0",
+                instant: WithdrawModeInstant(available: false, reason: quote.notLiveReason),
+                standard: WithdrawModeStandard(available: false, reason: quote.notLiveReason))
+              instantCard(modes).padding(.top, 20)
+              standardCard(modes).padding(.top, 12)
               if !quote.live, let reason = quote.notLiveReason {
                 Text(reason).font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted)
                   .lineSpacing(2).padding(.top, 14)
@@ -67,26 +73,26 @@ struct WithdrawView: View {
 
   // MARK: mode cards
 
-  private func instantCard(_ q: WithdrawQuote) -> some View {
+  private func instantCard(_ modes: WithdrawModes) -> some View {
     modeCard(
-      title: "Instant", tag: q.modes.instant.available ? "Available now" : nil,
-      available: q.modes.instant.available, reason: q.modes.instant.reason,
+      title: "Instant", tag: modes.instant.available ? "Available now" : nil,
+      available: modes.instant.available, reason: modes.instant.reason,
       rows: [
-        ("Estimated USDC", q.modes.instant.estimatedUSDCAtomic.map(usd)),
+        ("Estimated USDC", modes.instant.estimatedUSDCAtomic.map(usd)),
         // Fee shown only when observed — never "free" unless the vault says so.
-        ("Vault fee", q.modes.instant.vaultFeeAtomic.map(usd) ?? (q.modes.instant.available ? "-" : nil)),
-        ("Conversion cost", q.modes.instant.conversionCostAtomic.map(usd) ?? (q.modes.instant.available ? "-" : nil))
+        ("Vault fee", modes.instant.vaultFeeAtomic.map(usd) ?? (modes.instant.available ? "-" : nil)),
+        ("Conversion cost", modes.instant.conversionCostAtomic.map(usd) ?? (modes.instant.available ? "-" : nil))
       ],
       cta: "Withdraw now"
     ) { Task { await choose(.instant) } }
   }
 
-  private func standardCard(_ q: WithdrawQuote) -> some View {
+  private func standardCard(_ modes: WithdrawModes) -> some View {
     modeCard(
-      title: "Standard", tag: nil, available: q.modes.standard.available, reason: q.modes.standard.reason,
+      title: "Standard", tag: nil, available: modes.standard.available, reason: modes.standard.reason,
       rows: [
-        ("Expected processing", q.modes.standard.processingWindow ?? (q.modes.standard.available ? "Up to 72 hours" : nil)),
-        ("Estimated USDC", q.modes.standard.estimatedUSDCAtomic.map(usd))
+        ("Expected processing", modes.standard.processingWindow ?? (modes.standard.available ? "Up to 72 hours" : nil)),
+        ("Estimated USDC", modes.standard.estimatedUSDCAtomic.map(usd))
       ],
       cta: "Request withdrawal"
     ) { Task { await choose(.standard) } }
