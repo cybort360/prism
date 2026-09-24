@@ -27,13 +27,14 @@ const ZERO32 = `0x${'00'.repeat(32)}`;
  * comes only from a reconciled on-chain receipt.
  */
 export class PaymentService {
-  constructor({ store, config, identityService, claimService, resolverService, requestService }) {
+  constructor({ store, config, identityService, claimService, resolverService, requestService, onRequestPaid = null }) {
     this.store = store;
     this.config = config;
     this.identityService = identityService;
     this.claimService = claimService;
     this.resolverService = resolverService;
     this.requestService = requestService;
+    this.onRequestPaid = onRequestPaid ?? null;
   }
 
   assertResolution(resolution, requesterPrismId) {
@@ -147,7 +148,7 @@ export class PaymentService {
    * covers the real destination and not merely the address the funds pass through. Callers are
    * responsible for that binding; this method deliberately has no opinion about its contents.
    */
-  async prepareExternalSend({ senderPrismId, recipientAddress, amountAtomic, boundHash, kind, intent = {} }) {
+  async prepareExternalSend({ senderPrismId, recipientAddress, amountAtomic, boundHash, kind, intent = {}, validBefore = null }) {
     if (!this.config.chain.paymentRouter) throw httpError(503, 'PRISM_PAYMENT_ROUTER not configured');
     const stablecoin = usdcAsset(this.config);
     amountAtomic = this._paymentAmount(amountAtomic);
@@ -159,7 +160,7 @@ export class PaymentService {
 
     const paymentId = randomHex(32);
     const nonce = randomHex(32);
-    const validBefore = Math.floor(Date.now() / 1000) + AUTH_WINDOW_SECONDS;
+    const authValidBefore = validBefore ?? (Math.floor(Date.now() / 1000) + AUTH_WINDOW_SECONDS);
     const env = {
       paymentId,
       payer: checksum(sender.accountAddress),
@@ -167,7 +168,7 @@ export class PaymentService {
       amount: amountAtomic,
       requestId: ZERO32,
       resolutionHash: boundHash,
-      validBefore,
+      validBefore: authValidBefore,
       nonce
     };
 
@@ -184,7 +185,7 @@ export class PaymentService {
       events: [],
       createdAt: new Date().toISOString(),
       preparedAtMs: Date.now(),
-      expiresAt: new Date(validBefore * 1000).toISOString(),
+      expiresAt: new Date(authValidBefore * 1000).toISOString(),
       effectsApplied: false
     };
     appendEvent(record, { state: 'created', source: 'app', title: 'Payment created' });
@@ -201,7 +202,7 @@ export class PaymentService {
         envelope: serialize(paymentEnvelopeTypedData(env)),
         tokenAuthorization: serialize(receiveAuthorizationTypedData({
           from: env.payer, to: checksum(this.config.chain.paymentRouter), value: env.amount,
-          validAfter: 0, validBefore, nonce
+          validAfter: 0, validBefore: authValidBefore, nonce
         }))
       }
     };
@@ -593,6 +594,9 @@ export class PaymentService {
   _applySuccess(record) {
     const tx = record.transactionHash;
     if (record.kind === 'payment' && record.intent.requestId) this.requestService.markPaid(record.intent.requestId, record.operationId, tx);
+    // Second hop: if this request was tagged into a Circle/Savings, sweep it now. Best-effort —
+    // a sweep failure must never affect the payer's settlement (the money is already delivered).
+    if (record.kind === 'payment' && record.intent.requestId && this.onRequestPaid) { try { const p = this.onRequestPaid(record.intent.requestId); if (p && typeof p.then === 'function') p.catch(() => {}); } catch { /* swallow */ } }
     if (record.kind === 'claim-funding') this.claimService.markFunded(record.intent.claimId, record.txHash, tx);
     if (record.kind === 'claim-collection') this.claimService.markClaimed(record.intent.claimId, tx);
     if (record.kind === 'claim-refund') this.claimService.markRefunded(record.intent.claimId, tx);

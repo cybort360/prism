@@ -6,6 +6,7 @@ struct RequestDetailView: View {
   let request: PaymentRequestRecord
   @State private var error: String?
   @State private var busy = false
+  @State private var sweepStatus: RequestStatusResponse?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -39,6 +40,13 @@ struct RequestDetailView: View {
       PrismStatusPill(text: request.status.capitalized, tone: request.status == "OPEN" ? .pending : .positive)
         .padding(.top, 16)
 
+      if let destination = sweepStatus?.destination,
+         destination == "CIRCLE" || destination == "SAVINGS",
+         let sweep = sweepStatus?.sweep {
+        SweepIntentCard(destination: destination, sweep: sweep)
+          .padding(.top, 14)
+      }
+
       Spacer()
 
       if request.status == "OPEN", let me = model.identity?.prismId {
@@ -65,6 +73,24 @@ struct RequestDetailView: View {
       Button("OK") { error = nil }
     } message: {
       Text(error ?? "")
+    }
+    .task { await loadSweepStatus() }
+  }
+
+  /// Loads the requester's sweep view once, then polls a few times while a sweep is in flight —
+  /// each read also nudges the backend to retry a stuck PENDING sweep, so this both reflects and
+  /// helps drive the request toward SWEPT/FAILED.
+  private func loadSweepStatus() async {
+    sweepStatus = try? await PrismAPI.shared.requestStatus(request.requestId)
+    var attempts = 0
+    while attempts < 5,
+          let state = sweepStatus?.sweep?.state,
+          state == "PENDING" || state == "SUBMITTED" {
+      attempts += 1
+      try? await Task.sleep(nanoseconds: 2_000_000_000)
+      if let updated = try? await PrismAPI.shared.requestStatus(request.requestId) {
+        sweepStatus = updated
+      }
     }
   }
 
@@ -101,5 +127,71 @@ struct RequestDetailView: View {
     } catch {
       self.error = error.localizedDescription
     }
+  }
+}
+
+/// Honest sweep state for a CIRCLE/SAVINGS request. Never claims "deposited" outside SWEPT —
+/// a FAILED sweep still means the money is safe (received into the balance), just not moved yet.
+private struct SweepIntentCard: View {
+  let destination: String
+  let sweep: RequestSweepState
+
+  private var destinationLabel: String { destination == "SAVINGS" ? "Savings" : "your Circle" }
+
+  private var icon: String {
+    switch sweep.state {
+    case "SWEPT": "checkmark.circle.fill"
+    case "FAILED": "exclamationmark.circle.fill"
+    case "SUBMITTED": "arrow.triangle.2.circlepath"
+    default: "clock.fill"
+    }
+  }
+
+  private var tint: Color {
+    switch sweep.state {
+    case "SWEPT": PrismTheme.positive
+    case "FAILED": PrismTheme.amber
+    default: PrismTheme.muted
+    }
+  }
+
+  private var message: String {
+    switch sweep.state {
+    case "PREPARING", "PENDING":
+      "Auto-deposits into \(destinationLabel) when it's paid."
+    case "SUBMITTED":
+      "Depositing into \(destinationLabel)…"
+    case "SWEPT":
+      "Deposited into \(destinationLabel)."
+    case "FAILED":
+      "Received in your balance — couldn't auto-move to \(destinationLabel)."
+    default:
+      "Auto-deposits into \(destinationLabel) when it's paid."
+    }
+  }
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 8) {
+      Image(systemName: icon)
+        .font(.system(size: 12.5, weight: .semibold))
+        .foregroundStyle(tint)
+      Text(message)
+        .font(PrismTheme.body(12))
+        .foregroundStyle(PrismTheme.muted)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      if destination == "SAVINGS" {
+        Text("DEMO")
+          .font(PrismTheme.body(9, weight: .bold))
+          .tracking(0.6)
+          .foregroundStyle(PrismTheme.amber)
+          .padding(.horizontal, 7)
+          .padding(.vertical, 3)
+          .background(PrismTheme.amber.opacity(0.12))
+          .clipShape(Capsule())
+      }
+    }
+    .padding(12)
+    .background(tint.opacity(0.07))
+    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
   }
 }

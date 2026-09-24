@@ -23,8 +23,12 @@ final class PrismAPI: @unchecked Sendable {
   struct ResolvePrismBody: Encodable { let prismId: String }
   struct PreparePaymentBody: Encodable { let resolution: ResolutionResponse; let amountAtomic: String; let requestId: String?; let memo: String; let entryMethod: String? }
   struct SubmitPaymentBody: Encodable { let paymentId: String; let prismSignature: String; let tokenSignature: String }
-  struct DraftRequestBody: Encodable { let payerPrismId: String; let amountAtomic: String; let memo: String }
-  struct CommitRequestBody: Encodable { let requestId: String; let signature: String }
+  struct DraftRequestBody: Encodable { let payerPrismId: String; let amountAtomic: String; let memo: String; var destination: String? = nil; var circleId: String? = nil }
+  struct CommitRequestBody: Encodable { let requestId: String; let signature: String; var sweepSignatures: SweepSignaturesBody? = nil }
+  /// Second-hop sweep signatures, attached at commit. CIRCLE fills `prismSignature`+`tokenSignature`
+  /// (the Circle contribution's envelope + token authorization); SAVINGS fills `signature` (a single
+  /// EIP-712 authorization). These exact key names are the backend contract.
+  struct SweepSignaturesBody: Encodable { var prismSignature: String? = nil; var tokenSignature: String? = nil; var signature: String? = nil }
   struct RequestStatusBody: Encodable { let requestId: String; let status: String }
   struct PrepareClaimBody: Encodable { let recipientPhone: String; let amountAtomic: String; let expirySeconds: Int; let memo: String }
   struct FundClaimBody: Encodable { let signature: String }
@@ -269,16 +273,21 @@ final class PrismAPI: @unchecked Sendable {
   }
   func requests() async throws -> [PaymentRequestRecord] { try await api.request("/v1/requests") }
 
-  func draftRequest(payerPrismId: String, amountAtomic: String, memo: String) async throws -> RequestDraftResponse {
-    try await api.send("/v1/requests/draft", body: DraftRequestBody(payerPrismId: payerPrismId, amountAtomic: amountAtomic, memo: memo))
+  func draftRequest(payerPrismId: String, amountAtomic: String, memo: String, destination: String? = nil, circleId: String? = nil) async throws -> RequestDraftResponse {
+    try await api.send("/v1/requests/draft", body: DraftRequestBody(payerPrismId: payerPrismId, amountAtomic: amountAtomic, memo: memo, destination: destination, circleId: circleId))
   }
   @MainActor
-  func commitRequest(_ draft: RequestDraftResponse) async throws -> PaymentRequestRecord {
+  func commitRequest(_ draft: RequestDraftResponse, sweepSignatures: SweepSignaturesBody? = nil) async throws -> PaymentRequestRecord {
     let signature = try await mera.signMessageHex(draft.signable)
-    return try await api.send("/v1/requests/commit", body: CommitRequestBody(requestId: draft.request.requestId, signature: signature))
+    return try await api.send("/v1/requests/commit", body: CommitRequestBody(requestId: draft.request.requestId, signature: signature, sweepSignatures: sweepSignatures))
   }
   func setRequestStatus(_ id: String, status: String) async throws -> PaymentRequestRecord {
     try await api.send("/v1/requests/status", body: RequestStatusBody(requestId: id, status: status))
+  }
+  /// The requester's own view of a request, including its sweep state. A `PENDING` sweep is
+  /// retried server-side on this read, so a sweep missed at settlement self-heals here.
+  func requestStatus(_ requestId: String) async throws -> RequestStatusResponse {
+    try await api.request("/v1/requests/\(requestId)")
   }
 
   // MARK: claims (send before signup)

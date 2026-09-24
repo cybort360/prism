@@ -158,6 +158,13 @@ struct OperationStatus: Codable {
 extension JSONValue {
   /// Re-encode a typed-data payload as JSON bytes for the Mera signing bridge.
   func jsonData() throws -> Data { try JSONEncoder().encode(self) }
+
+  /// Keyed access into a raw `.object` payload, so callers can pull sub-objects (e.g. a sweep
+  /// authorization's `envelope` / `tokenAuthorization`) without decoding into a typed struct.
+  subscript(key: String) -> JSONValue? {
+    if case .object(let m) = self { return m[key] }
+    return nil
+  }
 }
 
 // MARK: developer/judge proof surface (DEBUG-only UI)
@@ -268,6 +275,35 @@ struct PaymentRequestRecord: Codable, Identifiable, Equatable {
 struct RequestDraftResponse: Codable {
   let request: PaymentRequestRecord
   let signable: String
+  /// Present when the draft's destination is CIRCLE/SAVINGS: a pre-signable second-hop
+  /// authorization the requester signs now, so settlement can relay it later without a second
+  /// round trip. Nil for the default PRIMARY destination.
+  let sweep: RequestSweepAuthorization?
+}
+
+/// A CIRCLE/SAVINGS request's pre-signed sweep authorization. `authorization` is kept as raw
+/// `JSONValue` — for CIRCLE it is `{ envelope, tokenAuthorization }`; for SAVINGS it is a single
+/// EIP-712 typed-data object. The picker/signing flow (Task 9) pulls sub-objects out via the
+/// `JSONValue` keyed subscript.
+struct RequestSweepAuthorization: Codable {
+  let destination: String
+  let preparedId: String
+  let authorization: JSONValue
+}
+
+/// The requester's own view of a request's settlement/sweep state, from `GET /v1/requests/:id`.
+struct RequestStatusResponse: Codable {
+  let requestId: String
+  let status: String
+  let destination: String?
+  let sweep: RequestSweepState?
+}
+
+struct RequestSweepState: Codable {
+  let state: String
+  let destination: String?
+  let transactionHash: String?
+  let failure: String?
 }
 
 struct ClaimRecord: Codable, Identifiable, Equatable {
