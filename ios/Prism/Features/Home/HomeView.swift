@@ -57,6 +57,11 @@ struct HomeView: View {
     .onChange(of: model.presentClaim) { old, new in
       if old != nil && new == nil { Task { await reload() } }
     }
+    // A Save deposit/withdraw moves real USDC in or out of the balance, so refetch when the Save
+    // sheet closes — otherwise Home keeps showing the amount from before the save.
+    .onChange(of: model.savePresented) { old, new in
+      if old && !new { Task { await reload() } }
+    }
     .prismScreen()
   }
 
