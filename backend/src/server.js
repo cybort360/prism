@@ -308,6 +308,10 @@ route('GET', '/v1/aurora/deposits', async ({ user }) => auroraService.listDeposi
 route('GET', '/v1/aurora/arrivals', async ({ user }) => auroraService.arrivals(user.prismId), true);
 route('GET', '/v1/aurora/deposits/:address', async ({ user, params }) =>
   auroraService.refreshDeposit({ prismId: user.prismId, depositAddress: params.address }), true);
+route('POST', '/v1/aurora/demo/deposit', async ({ user, body }) => {
+  rateLimit(`aurora-demo:${user.prismId}`, 30);
+  return auroraService.simulateInboundDeposit({ prismId: user.prismId, depositAddress: body.depositAddress, sourceChain: body.sourceChain, amountAtomic: body.amountAtomic });
+}, true);
 
 // --- Aurora Intents: send / spend to any chain -------------------------------
 // USDC on Monad out to any asset on any chain. The Monad leg is an ordinary router settlement whose
