@@ -33,7 +33,8 @@ import { runContinuityLab } from './lab/continuityLab.js';
 import { usdcBalanceOf, claimAuthorizerAddress, relayerAccount, verifyChainId, verifyUsdcDomain } from './chain/eth.js';
 import { chainProvider } from './providers/index.js';
 import { envioIndexer } from './indexers/index.js';
-import { auroraClient } from './aurora/index.js';
+import { auroraClient, setAuroraClient } from './aurora/index.js';
+import { makeDemoAuroraClient } from './aurora/demoAuroraClient.js';
 import { verifyAlchemySignature, extractTxHashes } from './providers/alchemyWebhook.js';
 import { snapshot as metricsSnapshot } from './lib/metrics.js';
 
@@ -84,6 +85,10 @@ const intentDispatcherService = new IntentDispatcherService({
   identityService,
   config
 });
+
+// Demo mode swaps the Aurora client for one that makes no network calls: real testnet USDC still
+// moves (via simulateInboundDeposit), but every Aurora-facing address/status/quote call is inert.
+if (config.aurora.mode === 'demo') setAuroraClient(makeDemoAuroraClient());
 
 // Replay/idempotency guard for webhook event ids.
 
@@ -350,6 +355,10 @@ route('GET', '/v1/aurora/deposits', async ({ user }) => auroraService.listDeposi
 route('GET', '/v1/aurora/arrivals', async ({ user }) => auroraService.arrivals(user.prismId), true);
 route('GET', '/v1/aurora/deposits/:address', async ({ user, params }) =>
   auroraService.refreshDeposit({ prismId: user.prismId, depositAddress: params.address }), true);
+route('POST', '/v1/aurora/demo/deposit', async ({ user, body }) => {
+  rateLimit(`aurora-demo:${user.prismId}`, 30);
+  return auroraService.simulateInboundDeposit({ prismId: user.prismId, depositAddress: body.depositAddress, sourceChain: body.sourceChain, amountAtomic: body.amountAtomic });
+}, true);
 
 // --- Aurora Intents: send / spend to any chain -------------------------------
 // USDC on Monad out to any asset on any chain. The Monad leg is an ordinary router settlement whose

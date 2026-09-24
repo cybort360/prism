@@ -175,6 +175,7 @@ export const config = {
     // cannot actually settle against this deployment. preview keeps that honest instead of implying
     // a delivery that never happens. See docs/AURORA_INTENTS.md.
     mode: auroraMode(),
+    demo: env('AURORA_MODE', 'preview') === 'demo',
     // Integrator fee in basis points, 0-100. Aurora takes max(2bps, 40% of this) on top.
     integratorFeeBps: Number(env('AURORA_INTEGRATOR_FEE_BPS', '0')),
     // Chain that inbound deposits are routed to, and that outbound routes are funded from.
@@ -184,7 +185,7 @@ export const config = {
 
 function auroraMode() {
   const mode = env('AURORA_MODE', 'preview');
-  if (mode !== 'preview' && mode !== 'live') throw new Error("AURORA_MODE must be 'preview' or 'live'");
+  if (!['preview', 'demo', 'live'].includes(mode)) throw new Error("AURORA_MODE must be 'preview', 'demo', or 'live'");
   return mode;
 }
 

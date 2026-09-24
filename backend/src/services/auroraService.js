@@ -5,6 +5,7 @@ import { routeHash } from '../chain/eth.js';
 import { randomHex } from '../lib/crypto.js';
 import { logger } from '../lib/logger.js';
 import { envioIndexer } from '../indexers/index.js';
+import { chainProvider } from '../providers/index.js';
 
 // How long a quote stays good. Aurora prices a route for a short window; long enough for a person to
 // read the numbers and approve with Face ID, short enough that they are never funding a stale price.
@@ -29,17 +30,18 @@ const SLIPPAGE_BPS = 100;
  *      balance this app reads. Both facts are surfaced to the client, not smoothed over.
  */
 export class AuroraService {
-  constructor({ store, config, identityService, paymentService }) {
+  constructor({ store, config, identityService, paymentService, chain = null }) {
     this.store = store;
     this.config = config;
     this.identityService = identityService;
     this.paymentService = paymentService;
+    this.chain = chain ?? chainProvider();
   }
 
   get mode() { return this.config.aurora.mode; }
 
   /** Whether the routed leg can actually settle against this deployment's chain. */
-  get settlementAvailable() { return this.mode === 'live'; }
+  get settlementAvailable() { return this.mode === 'live' || this.mode === 'demo'; }
 
   _assertAvailable() {
     if (!auroraClient().available()) {
@@ -54,11 +56,17 @@ export class AuroraService {
   }
 
   /**
-   * A preview-mode notice the client renders verbatim next to any address or route. Kept here rather
+   * A mode-aware notice the client renders verbatim next to any address or route. Kept here rather
    * than in the app so the reason can never drift from the configuration that caused it.
    */
-  _previewNotice() {
-    if (this.settlementAvailable) return null;
+  _modeNotice() {
+    if (this.mode === 'live') return null;
+    if (this.mode === 'demo') return {
+      mode: 'demo',
+      headline: 'Demo — cross-chain receive is simulated',
+      detail: 'The deposit event is simulated; the USDC credited to your balance is real testnet USDC.'
+    };
+    // preview (unchanged copy):
     return {
       mode: this.mode,
       headline: 'Preview — routes are quoted, not settled',
@@ -76,7 +84,7 @@ export class AuroraService {
     return {
       mode: this.mode,
       settlementAvailable: this.settlementAvailable,
-      notice: this._previewNotice(),
+      notice: this._modeNotice(),
       destinationChain: this.config.aurora.destinationChain,
       chains
     };
@@ -159,7 +167,7 @@ export class AuroraService {
     return {
       mode: this.mode,
       settlementAvailable: this.settlementAvailable,
-      notice: this._previewNotice(),
+      notice: this._modeNotice(),
       deposits: mine.map((d) => this._publicDeposit(d))
     };
   }
@@ -185,7 +193,7 @@ export class AuroraService {
       indexed: true,
       account,
       settlementAvailable: this.settlementAvailable,
-      notice: this._previewNotice(),
+      notice: this._modeNotice(),
       arrivals: inbound.map((t) => ({
         from: t.from,
         amountAtomic: String(t.value),
@@ -221,6 +229,40 @@ export class AuroraService {
 
     const updated = this._applyStatus(key, status);
     return { ...this._publicDeposit(updated), statusKnown: true };
+  }
+
+  // Minimal MockUSDC mint ABI — demo delivery credits real testnet USDC to the user's own account.
+  static get MINT_ABI() {
+    return [{ type: 'function', name: 'mint', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [] }];
+  }
+
+  /**
+   * Demo-only: simulate an inbound cross-chain deposit. The relayer mints real testnet USDC to the
+   * caller's own account (a genuine on-chain credit — money-truth holds) and the deposit advances to
+   * `delivered`. Only the "a deposit arrived on chain X" event is simulated; the money is real.
+   */
+  async simulateInboundDeposit({ prismId, depositAddress, sourceChain, amountAtomic }) {
+    if (this.mode !== 'demo') throw httpError(409, 'demo deposits are only available in AURORA_MODE=demo');
+    if (!/^\d+$/.test(String(amountAtomic)) || BigInt(amountAtomic) <= 0n) throw httpError(400, 'amount must be a positive integer');
+    const key = String(depositAddress ?? '').toLowerCase();
+    const existing = (this.store.read().auroraDeposits ?? {})[key];
+    if (!existing) throw httpError(404, 'deposit address not found');
+    if (existing.prismId !== prismId) throw httpError(403, 'deposit address belongs to another account');
+    const account = this._account(prismId);
+
+    // Real on-chain credit: mint testnet USDC to the user. (If this deployment's USDC is not the
+    // mintable mock, replace with a transfer from a funded relayer balance — same shape.)
+    const { getAddress } = await import('viem');
+    const txHash = await this.chain.writeContract({
+      address: getAddress(this.config.chain.usdc), abi: AuroraService.MINT_ABI, functionName: 'mint',
+      args: [getAddress(account), BigInt(amountAtomic)]
+    });
+    await this.chain.getTransactionReceipt(txHash).catch(() => null);
+
+    // Advance the deposit to delivered through the existing status machine ('SUCCESS' -> 'delivered').
+    const updated = this._applyStatus(key, { status: 'SUCCESS', swapDetails: { sourceChain, amountAtomic, demo: true, txHash } });
+    logger.info('aurora.demo.deposit', { prismId, sourceChain, amountAtomic });
+    return { txHash, deposit: this._publicDeposit(updated) };
   }
 
   /**
@@ -456,7 +498,7 @@ export class AuroraService {
     return {
       mode: this.mode,
       settlementAvailable: this.settlementAvailable,
-      notice: this._previewNotice(),
+      notice: this._modeNotice(),
       routes: mine.map((r) => this._publicRoute(r))
     };
   }
@@ -521,7 +563,7 @@ export class AuroraService {
       // cannot be funded against this deployment.
       fundable: Boolean(route.depositAddress),
       settlementAvailable: this.settlementAvailable,
-      notice: this._previewNotice()
+      notice: this._modeNotice()
     };
   }
 
@@ -541,7 +583,7 @@ export class AuroraService {
       createdAt: record.createdAt,
       history: record.history ?? [],
       settlementAvailable: this.settlementAvailable,
-      notice: this._previewNotice()
+      notice: this._modeNotice()
     };
   }
 }

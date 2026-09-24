@@ -22,6 +22,13 @@ struct AuroraDepositSection: View {
   @State private var errorMessage: String?
   @State private var copied = false
   @State private var arrivals: AuroraArrivalsDisplay?
+  /// True when the backend is running `AURORA_MODE=demo`, i.e. `/v1/aurora/chains` reported
+  /// `mode == "demo"`. Only then does simulating an inbound deposit make sense — it mints real
+  /// testnet USDC to this account so the receive flow can be watched end to end without a real
+  /// cross-chain sender.
+  @State private var isDemo = false
+  @State private var simulateAmountText = "10"
+  @State private var simulating = false
 
   private var display: AuroraDepositDisplay? { deposit.map(AuroraDepositDisplay.init) }
 
@@ -42,6 +49,9 @@ struct AuroraDepositSection: View {
         } else if let display {
           addressCard(display)
           timeline(display)
+          // Only in a demo build, and only once there is an address to deposit against — this is
+          // never shown against a real/preview backend, where a "delivery" here would be a lie.
+          if isDemo, let deposit { simulateCard(deposit) }
         }
 
         if let arrivals { arrivalsList(arrivals) }
@@ -172,6 +182,41 @@ struct AuroraDepositSection: View {
     }
   }
 
+  /// Demo-only affordance: fires a synthetic inbound deposit at the address already on screen. The
+  /// on-chain credit this produces is real (the relayer mints real testnet USDC to the caller's own
+  /// account) — only the "a deposit arrived on chain X" event is synthesized, so there is no need for
+  /// a real cross-chain sender to watch the receive flow complete.
+  private func simulateCard(_ deposit: AuroraDeposit) -> some View {
+    let atomic = Money.atomic(fromDollars: simulateAmountText)
+    return PrismCard(padding: 18) {
+      VStack(alignment: .leading, spacing: 14) {
+        PrismSectionLabel(text: "Simulate incoming deposit")
+        Text("Demo build. This mints real testnet USDC to your account against the address above, so you can watch the receive flow complete.")
+          .font(PrismTheme.body(12.5))
+          .foregroundStyle(PrismTheme.muted)
+          .lineSpacing(2)
+          .fixedSize(horizontal: false, vertical: true)
+
+        TextField("$0.00", text: $simulateAmountText)
+          .font(PrismTheme.display(30))
+          .keyboardType(.decimalPad)
+          .disabled(simulating)
+          .padding(14)
+          .background(PrismTheme.sand)
+          .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+          .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(PrismTheme.line, lineWidth: 0.6))
+
+        if simulating {
+          PrismLoadingRow()
+        } else {
+          PrismPrimaryButton(title: "Simulate incoming deposit", enabled: atomic != nil) {
+            Task { await simulateDeposit(deposit, amountAtomic: atomic) }
+          }
+        }
+      }
+    }
+  }
+
   /// What has actually landed in the account, from the activity index. Shown regardless of which
   /// chain is selected: money that arrived is money that arrived, whatever route brought it.
   private func arrivalsList(_ display: AuroraArrivalsDisplay) -> some View {
@@ -247,6 +292,7 @@ struct AuroraDepositSection: View {
       // validation, so offering it would be offering something Prism cannot check.
       chains = response.chains.filter(\.known).filter { $0.chain != response.destinationChain }
       notice = response.notice
+      isDemo = response.mode == "demo"
     } catch {
       unavailableReason = (error as? APIError)?.errorDescription
         ?? "Adding money from another network isn't available in this build."
@@ -284,6 +330,32 @@ struct AuroraDepositSection: View {
       await loadArrivals()
     } catch {
       errorMessage = (error as? APIError)?.errorDescription ?? "Couldn't refresh."
+    }
+  }
+
+  /// Fires the demo-only simulated deposit, then refreshes every source of truth about what
+  /// actually landed: the deposit record's own state, the arrivals index, and a fresh on-chain
+  /// balance read. Nothing here claims delivery — the timeline only advances because `deposit` is
+  /// replaced with what the server returned, and a failure leaves it untouched.
+  private func simulateDeposit(_ deposit: AuroraDeposit, amountAtomic: String?) async {
+    guard let amountAtomic else {
+      errorMessage = "Enter an amount to simulate."
+      return
+    }
+    errorMessage = nil
+    simulating = true
+    defer { simulating = false }
+    do {
+      let updated = try await PrismAPI.shared.simulateAuroraDeposit(
+        depositAddress: deposit.depositAddress,
+        sourceChain: selectedChain ?? deposit.depositChain,
+        amountAtomic: amountAtomic)
+      self.deposit = updated
+      PrismHaptics.success()
+      arrivals = (try? await PrismAPI.shared.auroraArrivals()).map(AuroraArrivalsDisplay.init)
+      _ = try? await PrismAPI.shared.balance()
+    } catch {
+      errorMessage = (error as? APIError)?.errorDescription ?? "Couldn't simulate the deposit."
     }
   }
 }
