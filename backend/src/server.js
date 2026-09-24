@@ -6,6 +6,7 @@ import { issueSession, verifySession, normalizeE164, sha256, hex } from './lib/c
 // Request fingerprint: same Idempotency-Key + different request body is rejected, not replayed.
 const fingerprint = (...parts) => hex(sha256(Buffer.from(parts.join('|'))));
 import { consumeRateLimit } from './lib/rateLimit.js';
+import { jsonBody } from './lib/jsonBody.js';
 import { withIdempotency } from './lib/idempotency.js';
 import { logger } from './lib/logger.js';
 import { KeyService } from './services/keyService.js';
@@ -743,8 +744,19 @@ function requireHex(v, name) { if (!/^0x[0-9a-fA-F]{64}$/.test(v ?? '')) throw h
 function safe(fn) { try { return fn(); } catch { return null; } }
 function httpError(statusCode, message) { const error = new Error(message); error.statusCode = statusCode; return error; }
 function send(res, status, object) {
+  // Serialize BEFORE writing headers so a serialization failure yields a clean 500 instead of a
+  // double-send crash (writeHead already sent, then the catch tries to send again → ERR_HTTP_HEADERS_SENT
+  // → the whole process exits). BigInt is coerced to a decimal string — the same wire shape payments
+  // already use for uint256 typed-data fields, so signed authorizations stay byte-compatible.
+  let body;
+  try {
+    body = jsonBody(object);
+  } catch {
+    status = 500;
+    body = '{"error":"response serialization failed"}';
+  }
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
-  res.end(JSON.stringify(object));
+  res.end(body);
 }
 async function readJson(req) {
   let raw = '';
