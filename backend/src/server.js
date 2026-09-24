@@ -199,7 +199,7 @@ route('POST', '/v1/requests/status', async ({ user, body }) => requestService.se
 // mid-relay) is not permanently stuck — the next status check repairs it.
 route('GET', '/v1/requests/:requestId', async ({ user, params }) => {
   const view = requestService.getOwn(params.requestId, user.prismId);
-  if (view.sweep?.state === 'PENDING') { await sweepService.executeFor(params.requestId).catch(() => {}); return requestService.getOwn(params.requestId, user.prismId); }
+  if (view.sweep?.state === 'PENDING' || view.sweep?.state === 'SUBMITTED') { await sweepService.executeFor(params.requestId).catch(() => {}); return requestService.getOwn(params.requestId, user.prismId); }
   return view;
 }, true);
 

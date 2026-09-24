@@ -90,7 +90,11 @@ test('executeFor submits a PENDING CIRCLE sweep exactly once (idempotent)', asyn
   const store = tmpStore();
   store.mutate((d) => { d.requests = { req_1: { requestId: 'req_1', requesterPrismId: 'p1', circleId: 'circle_1', sweep: { destination: 'CIRCLE', circleId: 'circle_1', preparedId: 'ctb_1', state: 'PENDING', signatures: { prismSignature: '0xaa', tokenSignature: '0xbb' } } } }; });
   let calls = 0;
-  const circleService = { submitContribution: async () => { calls++; return { state: 'confirming', txHash: '0xctb' }; } };
+  // SWEPT now requires on-chain confirmation, so the fake reconciles the broadcast to COMPLETED.
+  const circleService = {
+    submitContribution: async () => { calls++; return { state: 'confirming', txHash: '0xctb' }; },
+    reconcileContribution: async () => ({ contribution: { status: 'COMPLETED', transactionHash: '0xctb' } })
+  };
   const svc = new SweepService({ store, circleService, saveService: null, config: { save: { mode: 'demo' } } });
   const r1 = await svc.executeFor('req_1');
   const r2 = await svc.executeFor('req_1'); // second call must NOT resubmit
@@ -146,16 +150,95 @@ test('getOwn retries a PENDING sweep on read and reflects the fresh SWEPT state 
   assert.equal(before.sweep.state, 'PENDING');
 
   let calls = 0;
-  const circleService = { submitContribution: async () => { calls++; return { state: 'confirming', txHash: '0xctb' }; } };
+  const circleService = {
+    submitContribution: async () => { calls++; return { state: 'confirming', txHash: '0xctb' }; },
+    reconcileContribution: async () => ({ contribution: { status: 'COMPLETED', transactionHash: '0xctb' } })
+  };
   const sweepService = new SweepService({ store, circleService, saveService: null, config: { save: { mode: 'demo' } } });
 
-  // Route-equivalent logic: a PENDING sweep is retried on read, not just at settlement.
-  if (before.sweep?.state === 'PENDING') { await sweepService.executeFor('req_1').catch(() => {}); }
+  // Route-equivalent logic: a PENDING/SUBMITTED sweep is retried on read, not just at settlement.
+  if (before.sweep?.state === 'PENDING' || before.sweep?.state === 'SUBMITTED') { await sweepService.executeFor('req_1').catch(() => {}); }
   const after = requestService.getOwn('req_1', 'p1');
 
   assert.equal(calls, 1);
   assert.ok(['SUBMITTED', 'SWEPT'].includes(after.sweep.state));
   assert.equal(after.sweep.transactionHash, '0xctb');
+});
+
+// --- money-truth: SWEPT means the second hop CONFIRMED on-chain (INV-M1/M2) --------------------
+
+test('SAVINGS sweep: a REVERTED deposit (state FAILED) settles FAILED, never SWEPT', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const store = tmpStore();
+  store.mutate((d) => { d.requests = { req_f: { requestId: 'req_f', requesterPrismId: 'p1', sweep: { destination: 'SAVINGS', preparedId: 'q', state: 'PENDING', signatures: { signature: '0xcc' } } } }; });
+  // submitDeposit RESOLVES on revert (does not throw) — the old code recorded this SWEPT.
+  const demoSaveExecutor = { submitDeposit: async () => ({ txHash: '0xrevert', state: 'FAILED', operationId: 'op1' }) };
+  const svc = new SweepService({ store, circleService: null, saveService: null, demoSaveExecutor, config: { save: { mode: 'demo' } } });
+  const res = await svc.executeFor('req_f');
+  assert.equal(res.state, 'FAILED');
+  assert.equal(store.read().requests.req_f.sweep.state, 'FAILED');
+  assert.notEqual(store.read().requests.req_f.sweep.state, 'SWEPT');
+});
+
+test('SAVINGS sweep: a CONFIRMED deposit (state SAVED) settles SWEPT with the tx hash', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const store = tmpStore();
+  store.mutate((d) => { d.requests = { req_s: { requestId: 'req_s', requesterPrismId: 'p1', sweep: { destination: 'SAVINGS', preparedId: 'q', state: 'PENDING', signatures: { signature: '0xcc' } } } }; });
+  const demoSaveExecutor = { submitDeposit: async () => ({ txHash: '0xsaved', state: 'SAVED', operationId: 'op1' }) };
+  const svc = new SweepService({ store, circleService: null, saveService: null, demoSaveExecutor, config: { save: { mode: 'demo' } } });
+  const res = await svc.executeFor('req_s');
+  assert.equal(res.state, 'SWEPT');
+  assert.equal(store.read().requests.req_s.sweep.transactionHash, '0xsaved');
+});
+
+test('SAVINGS sweep: an unmined deposit (state CONFIRMING) stays SUBMITTED, never SWEPT', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const store = tmpStore();
+  store.mutate((d) => { d.requests = { req_c: { requestId: 'req_c', requesterPrismId: 'p1', sweep: { destination: 'SAVINGS', preparedId: 'q', state: 'PENDING', signatures: { signature: '0xcc' } } } }; });
+  const demoSaveExecutor = { submitDeposit: async () => ({ txHash: '0xpending', state: 'CONFIRMING', operationId: 'op1' }) };
+  const svc = new SweepService({ store, circleService: null, saveService: null, demoSaveExecutor, config: { save: { mode: 'demo' } } });
+  const res = await svc.executeFor('req_c');
+  assert.equal(res.state, 'SUBMITTED');
+  assert.equal(store.read().requests.req_c.sweep.state, 'SUBMITTED');
+});
+
+test('CIRCLE sweep: reconcile COMPLETED settles SWEPT with the confirmed tx hash', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const store = tmpStore();
+  store.mutate((d) => { d.requests = { req_cc: { requestId: 'req_cc', requesterPrismId: 'p1', circleId: 'circle_1', sweep: { destination: 'CIRCLE', circleId: 'circle_1', preparedId: 'ctb_1', state: 'PENDING', signatures: { prismSignature: '0xaa', tokenSignature: '0xbb' } } } }; });
+  let submits = 0;
+  const circleService = {
+    submitContribution: async () => { submits++; return { state: 'confirming', txHash: '0xbroadcast' }; },
+    reconcileContribution: async () => ({ contribution: { status: 'COMPLETED', transactionHash: '0xconfirmed' } })
+  };
+  const svc = new SweepService({ store, circleService, saveService: null, config: { save: { mode: 'demo' } } });
+  const res = await svc.executeFor('req_cc');
+  assert.equal(submits, 1);
+  assert.equal(res.state, 'SWEPT');
+  assert.equal(store.read().requests.req_cc.sweep.transactionHash, '0xconfirmed');
+});
+
+test('CIRCLE sweep: a non-terminal reconcile stays SUBMITTED, then a SUBMITTED re-entry reconciles to SWEPT (read-retry recovery)', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const store = tmpStore();
+  store.mutate((d) => { d.requests = { req_re: { requestId: 'req_re', requesterPrismId: 'p1', circleId: 'circle_1', sweep: { destination: 'CIRCLE', circleId: 'circle_1', preparedId: 'ctb_1', state: 'PENDING', signatures: { prismSignature: '0xaa', tokenSignature: '0xbb' } } } }; });
+  let submits = 0;
+  let contributionStatus = 'CONFIRMING'; // not yet terminal on first pass
+  const circleService = {
+    submitContribution: async () => { submits++; return { state: 'confirming', txHash: '0xbroadcast' }; },
+    reconcileContribution: async () => ({ contribution: { status: contributionStatus, transactionHash: contributionStatus === 'COMPLETED' ? '0xconfirmed' : null } })
+  };
+  const svc = new SweepService({ store, circleService, saveService: null, config: { save: { mode: 'demo' } } });
+
+  const first = await svc.executeFor('req_re'); // PENDING -> submit + reconcile(CONFIRMING) -> SUBMITTED
+  assert.equal(first.state, 'SUBMITTED');
+  assert.equal(store.read().requests.req_re.sweep.state, 'SUBMITTED');
+
+  contributionStatus = 'COMPLETED'; // chain confirms before the next read
+  const second = await svc.executeFor('req_re'); // SUBMITTED re-entry: reconcile only, NO resubmit
+  assert.equal(submits, 1, 'the re-entry must not resubmit the contribution');
+  assert.equal(second.state, 'SWEPT');
+  assert.equal(store.read().requests.req_re.sweep.transactionHash, '0xconfirmed');
 });
 
 test('PaymentService calls onRequestPaid after markPaid on a completed request payment', async () => {
