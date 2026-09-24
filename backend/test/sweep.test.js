@@ -241,6 +241,39 @@ test('CIRCLE sweep: a non-terminal reconcile stays SUBMITTED, then a SUBMITTED r
   assert.equal(store.read().requests.req_re.sweep.transactionHash, '0xconfirmed');
 });
 
+test('CIRCLE sweep: a REVERTED contribution (status FAILED) settles FAILED, never SWEPT', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const store = tmpStore();
+  store.mutate((d) => { d.requests = { req_cf: { requestId: 'req_cf', requesterPrismId: 'p1', circleId: 'circle_1', sweep: { destination: 'CIRCLE', circleId: 'circle_1', preparedId: 'ctb_1', state: 'PENDING', signatures: { prismSignature: '0xaa', tokenSignature: '0xbb' } } } }; });
+  let submits = 0;
+  const circleService = {
+    submitContribution: async () => { submits++; return { state: 'confirming', txHash: '0xbroadcast' }; },
+    reconcileContribution: async () => ({ contribution: { status: 'FAILED', transactionHash: '0xrevert' } })
+  };
+  const svc = new SweepService({ store, circleService, saveService: null, config: { save: { mode: 'demo' } } });
+  const res = await svc.executeFor('req_cf');
+  assert.equal(submits, 1);
+  assert.equal(res.state, 'FAILED');
+  assert.equal(store.read().requests.req_cf.sweep.state, 'FAILED');
+  assert.notEqual(store.read().requests.req_cf.sweep.state, 'SWEPT');
+});
+
+test('CIRCLE sweep: an unmined contribution (status CONFIRMING) stays SUBMITTED, never SWEPT', async () => {
+  const { SweepService } = await import('../src/services/sweepService.js');
+  const store = tmpStore();
+  store.mutate((d) => { d.requests = { req_cc2: { requestId: 'req_cc2', requesterPrismId: 'p1', circleId: 'circle_1', sweep: { destination: 'CIRCLE', circleId: 'circle_1', preparedId: 'ctb_1', state: 'PENDING', signatures: { prismSignature: '0xaa', tokenSignature: '0xbb' } } } }; });
+  let submits = 0;
+  const circleService = {
+    submitContribution: async () => { submits++; return { state: 'confirming', txHash: '0xbroadcast' }; },
+    reconcileContribution: async () => ({ contribution: { status: 'CONFIRMING', transactionHash: null } })
+  };
+  const svc = new SweepService({ store, circleService, saveService: null, config: { save: { mode: 'demo' } } });
+  const res = await svc.executeFor('req_cc2');
+  assert.equal(submits, 1);
+  assert.equal(res.state, 'SUBMITTED');
+  assert.equal(store.read().requests.req_cc2.sweep.state, 'SUBMITTED');
+});
+
 test('PaymentService calls onRequestPaid after markPaid on a completed request payment', async () => {
   const { PaymentService } = await import('../src/services/paymentService.js');
   const store = tmpStore();
