@@ -49,6 +49,17 @@ final class PrismAPI: @unchecked Sendable {
   }
   func runtimeConfig() async throws -> PrismNetworkConfig { try await config() }
 
+  // MARK: Save demo mode — a real testnet MockVault deposit/redeem, signed as an EIP-712 authorization.
+  struct SaveSubmitBody: Encodable { let quoteId: String; let signature: String }
+  struct SaveSubmitResult: Decodable { let operationId: String; let txHash: String?; let state: String }
+
+  func saveSubmit(quoteId: String, signature: String) async throws -> SaveSubmitResult {
+    try await api.send("/v1/save/submit", body: SaveSubmitBody(quoteId: quoteId, signature: signature))
+  }
+  func saveWithdrawSubmit(quoteId: String, signature: String) async throws -> SaveSubmitResult {
+    try await api.send("/v1/save/withdraw", body: SaveSubmitBody(quoteId: quoteId, signature: signature))
+  }
+
   // MARK: onboarding
 
   /// Fetch a single-use binding challenge and sign it, so the account-control proof can't be replayed.

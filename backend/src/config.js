@@ -133,6 +133,12 @@ export const config = {
   // route provider return an executable plan.
   save: {
     enabled: env('SAVE_ENABLED', 'true') === 'true',
+    // Demo mode runs Save end-to-end on TESTNET against MockVault with real USDC + real shares.
+    // 'preview' (default) = quotes only, no execution; 'demo' = MockVault on testnet; 'live' = real
+    // mainnet earnAUSD (future). Only 'live' is real money on mainnet.
+    mode: (() => { const m = env('SAVE_MODE', 'preview'); if (!['preview', 'demo', 'live'].includes(m)) throw new Error("SAVE_MODE must be 'preview', 'demo', or 'live'"); return m; })(),
+    demo: env('SAVE_MODE', 'preview') === 'demo',
+    mockVault: env('SAVE_MOCK_VAULT', ''),
     substrateVerified: env('SAVE_SUBSTRATE_VERIFIED') === 'true',
     substrateChainId: Number(env('SAVE_SUBSTRATE_CHAIN_ID', '143')),
     inputToken: usdc.address,                 // Save's input is the user's Prism USDC (unchanged asset)

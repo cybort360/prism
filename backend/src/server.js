@@ -22,6 +22,7 @@ import { ProofService } from './services/proofService.js';
 import { P256AccountService } from './services/p256AccountService.js';
 import { SaveService } from './services/saveService.js';
 import { SavePositionService } from './services/savePositionService.js';
+import { DemoSaveExecutor } from './services/demoSaveExecutor.js';
 import { CircleService } from './services/circleService.js';
 import { CircleMessageService } from './services/circleMessageService.js';
 import { CircleActivityService } from './services/circleActivityService.js';
@@ -61,6 +62,7 @@ const circleMessageService = new CircleMessageService({ store, config, circleSer
 // is the balance authority, the backend only projects).
 const saveService = new SaveService({ store, config, identityService });
 const savePositionService = new SavePositionService({ store, config, identityService });
+const demoSaveExecutor = new DemoSaveExecutor({ store, config, identityService });
 // Unified prepare-only facade over spend / receive / cross-chain / save. Delegates to the
 // audited services; never submits, never transitions, never completes.
 const intentDispatcherService = new IntentDispatcherService({
@@ -246,11 +248,23 @@ route('GET', '/v1/save/withdrawals', async ({ user }) => ({ pending: savePositio
 route('GET', '/v1/save/operations/:id/proof', async ({ user, params }) => savePositionService.saveProof(user.prismId, params.id), true);
 route('POST', '/v1/save/quote', async ({ user, body }) => {
   rateLimit(`save-quote:${user.prismId}`, 60);
-  return saveService.quote({ prismId: user.prismId, amountAtomic: String(body.amountAtomic) });
+  return await saveService.quote({ prismId: user.prismId, amountAtomic: String(body.amountAtomic) });
 }, true);
 route('POST', '/v1/save/withdraw/quote', async ({ user, body }) => {
   rateLimit(`save-wd-quote:${user.prismId}`, 60);
-  return saveService.withdrawQuote({ prismId: user.prismId, sharesAtomic: String(body.sharesAtomic) });
+  return await saveService.withdrawQuote({ prismId: user.prismId, sharesAtomic: String(body.sharesAtomic) });
+}, true);
+route('POST', '/v1/save/submit', async ({ user, body, idempotencyKey }) => {
+  rateLimit(`save-submit:${user.prismId}`, 30);
+  requireSig(body.signature, 'signature');
+  return withIdempotency(store, { scope: 'save-submit', key: idempotencyKey, actor: user.prismId, fingerprint: fingerprint(body.quoteId, body.signature) }, () =>
+    demoSaveExecutor.submitDeposit({ prismId: user.prismId, quoteId: body.quoteId, signature: body.signature }));
+}, true);
+route('POST', '/v1/save/withdraw', async ({ user, body, idempotencyKey }) => {
+  rateLimit(`save-withdraw:${user.prismId}`, 30);
+  requireSig(body.signature, 'signature');
+  return withIdempotency(store, { scope: 'save-withdraw', key: idempotencyKey, actor: user.prismId, fingerprint: fingerprint(body.quoteId, body.signature) }, () =>
+    demoSaveExecutor.submitWithdraw({ prismId: user.prismId, quoteId: body.quoteId, signature: body.signature }));
 }, true);
 
 // Canonical Payment Proof: typed, evidence-backed inspectability for one operation the caller owns.

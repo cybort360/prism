@@ -61,6 +61,7 @@ struct SaveState: Codable, Equatable {
   let notLiveReason: String?
   let position: SavePosition
   let rate: SaveRate
+  var demo: Bool? = nil
 }
 
 struct SaveCall: Codable, Equatable {
@@ -87,22 +88,36 @@ struct SaveExecutionPlan: Codable, Equatable {
   let executable: Bool?
 }
 
+/// The backend hands back one of two shapes under this same type: the PREVIEW quote (substrate
+/// unverified — carries `transactionPlan` for independent client verification) or the DEMO quote (from
+/// DemoVaultSaveRouteProvider — carries `authorization`/`nonce`/`deadline` for a real testnet signature).
+/// Fields unique to one shape are optional so both decode into `SaveQuote`.
 struct SaveQuote: Codable, Equatable {
   let quoteId: String
   let provider: String
   let live: Bool
-  let substrateVerified: Bool
   let notLiveReason: String?
   let expiresAt: String
   let inputAsset: String
   let inputAmount: String
-  let intermediateAsset: String
-  let estimatedAUSD: String
   let vault: String
   let networkFeeSponsored: Bool
   let rate: SaveRate
-  let transactionPlan: SaveExecutionPlan
   let planExecutable: Bool
+
+  // Preview-only (substrate unverified path)
+  var substrateVerified: Bool? = nil
+  var intermediateAsset: String? = nil
+  var estimatedAUSD: String? = nil
+  var transactionPlan: SaveExecutionPlan? = nil
+
+  // Demo-only (DemoVaultSaveRouteProvider — real testnet MockVault shares)
+  var demo: Bool? = nil
+  var estimatedShares: String? = nil
+  var minimumShares: String? = nil
+  var nonce: String? = nil
+  var deadline: Int? = nil
+  var authorization: JSONValue? = nil
 }
 
 /// The explicit thing the user authorizes — not "arbitrary DeFi calls". Every protected field is bound
@@ -234,12 +249,23 @@ struct WithdrawModes: Codable, Equatable {
   let instant: WithdrawModeInstant
   let standard: WithdrawModeStandard
 }
+/// Same dual-shape story as SaveQuote: PREVIEW carries `modes` (instant/standard breakdown); DEMO carries
+/// `authorization`/`nonce`/`deadline` for a real testnet redeem signature. Optional fields let both decode.
 struct WithdrawQuote: Codable, Equatable {
   let quoteId: String
   let live: Bool
   let notLiveReason: String?
   let returnsTo: String   // "USDC" — a withdrawal returns to spendable USDC, not AUSD
-  let modes: WithdrawModes
+
+  // Preview-only
+  var modes: WithdrawModes? = nil
+
+  // Demo-only (DemoVaultSaveRouteProvider)
+  var demo: Bool? = nil
+  var estimatedUSDC: String? = nil
+  var nonce: String? = nil
+  var deadline: Int? = nil
+  var authorization: JSONValue? = nil
 }
 struct WithdrawQuoteBody: Encodable { let sharesAtomic: String }
 

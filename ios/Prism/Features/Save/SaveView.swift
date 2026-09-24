@@ -12,6 +12,7 @@ struct SaveView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   @State private var display: SaveDisplay?
+  @State private var state: SaveState?
   @State private var balanceAtomic: String?
   @State private var loading = true
   @State private var path: [Step] = []
@@ -58,6 +59,7 @@ struct SaveView: View {
   private var amountScreen: some View {
     VStack(spacing: 0) {
       Spacer().frame(height: 6)
+      if state?.demo == true { demoBanner.padding(.horizontal, 24).padding(.bottom, 14) }
       Text("How much do you want to save?")
         .font(PrismTheme.display(28)).tracking(-0.4).multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 24)
@@ -72,6 +74,19 @@ struct SaveView: View {
       }.padding(24)
     }
     .prismScreen().navigationTitle("").navigationBarTitleDisplayMode(.inline)
+  }
+
+  private var demoBanner: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "flask.fill").foregroundStyle(PrismTheme.mintDeep)
+      Text("Demo — simulated yield on testnet, not real earnAUSD")
+        .font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(PrismTheme.surface)
+    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
   }
 
   private var availableLine: some View {
@@ -158,7 +173,9 @@ struct SaveView: View {
     async let bal = try? await PrismAPI.shared.balance()
     async let wd = try? await PrismAPI.shared.saveWithdrawals()
     let position = await pos
-    display = SaveDisplay(position: position, stateRate: (await st)?.rate, pending: (await wd)?.pending ?? [])
+    let st2 = await st
+    state = st2
+    display = SaveDisplay(position: position, stateRate: st2?.rate, pending: (await wd)?.pending ?? [])
     balanceAtomic = await bal?.amountAtomic
     loading = false
   }
@@ -170,8 +187,36 @@ struct SaveView: View {
       if face { try await BiometricService().authenticate() }
       else { guard let pin, try PINService.shared.verify(pin) else { throw PaymentError.badPIN } }
       let quote = try await PrismAPI.shared.saveQuote(amountAtomic: atomic)
+
+      if quote.demo == true {
+        // Demo Save: a real testnet MockVault deposit. Sign the server-issued EIP-712 authorization on
+        // the Mera account (same signer payments use) and relay it — never fabricate success.
+        guard let auth = quote.authorization else { throw PaymentError.saveQuoteInvalid }
+        let mera = MeraAccountManager.shared
+        try await mera.beginSession(.payments)
+        let authData = try auth.jsonData()
+        let signature = try await mera.signTypedDataHex(authData)
+        let result = try await PrismAPI.shared.saveSubmit(quoteId: quote.quoteId, signature: signature)
+        // Money-truth: honor the backend's confirmed state — never claim "saved" off an unconfirmed submit.
+        switch result.state {
+        case "SAVED":
+          PrismHaptics.success()
+          terminal = .saved(amount: amountDollars)
+        case "FAILED":
+          PrismHaptics.warning()
+          terminal = .failed(message: "That didn't go through — check Activity before trying again.")
+        default: // CONFIRMING or any non-success — honest pending, not success
+          PrismHaptics.warning()
+          terminal = .pending(amount: amountDollars)
+        }
+        // result.txHash is the on-chain proof; the receipt sheet reads it back from the operation itself.
+        model.presentSaveReceipt = SaveReceiptPresentation(operationId: result.operationId)
+        await load()
+        return
+      }
+
       let account = model.identity?.accountAddress ?? ""
-      let ok = SavePlan.verify(quote.transactionPlan, expectedInputAmount: atomic, account: account).isEmpty
+      let ok = quote.transactionPlan.map { SavePlan.verify($0, expectedInputAmount: atomic, account: account).isEmpty } ?? false
       PrismHaptics.warning()
       // Live + verified would show the real success copy; today the substrate is gated, so an honest preview.
       terminal = (quote.live && quote.planExecutable && ok)
@@ -386,7 +431,8 @@ private struct FirstSaveDisclosure: View {
 // MARK: - Terminal
 
 enum SaveTerminal: Equatable {
-  case saved(amount: String)                    // live success
+  case saved(amount: String)                    // confirmed success (backend state SAVED)
+  case pending(amount: String)                  // submitted but not yet confirmed (state CONFIRMING) — honest, not success
   case preview(amount: String, reason: String)  // gated preview
   case failed(message: String)
 }
@@ -415,6 +461,7 @@ private struct SaveSuccessTerminal: View {
     let (s, t): (String, Color) = {
       switch terminal {
       case .saved: return ("checkmark", PrismTheme.mintDeep)
+      case .pending: return ("clock.badge.checkmark", PrismTheme.amber)
       case .preview: return ("clock.badge.checkmark", PrismTheme.amber)
       case .failed: return ("exclamationmark", PrismTheme.danger)
       }
@@ -424,6 +471,7 @@ private struct SaveSuccessTerminal: View {
   private var title: String {
     switch terminal {
     case .saved(let a): return "\(a) saved"
+    case .pending: return "Save is confirming"
     case .preview: return "Save is almost ready"
     case .failed: return "That didn't go through"
     }
@@ -431,6 +479,7 @@ private struct SaveSuccessTerminal: View {
   private var message: String {
     switch terminal {
     case .saved: return "Your savings are now earning at the current variable rate."
+    case .pending: return "Your save is confirming. It'll show in Activity once it settles. Don't submit it again."
     case .preview(let a, let reason): return "This is a preview. \(reason) Your \(a) wasn't moved."
     case .failed(let m): return m
     }

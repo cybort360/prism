@@ -4,6 +4,8 @@ import { withdrawModes } from '../lib/saveWithdraw.js';
 import { SaveStrategyRegistry } from '../lib/saveStrategy.js';
 import { SaveEligibilityService, realSaveEnabled } from './saveEligibilityService.js';
 import { logger } from '../lib/logger.js';
+import { DemoVaultSaveRouteProvider } from '../lib/demoSaveProviders.js';
+import { mockVault } from '../chain/mockVault.js';
 
 // V1 "optimized yield" — the ONLY promise Prism makes about where savings go. Deposits land in the one
 // approved strategy (earnAUSD), whose curator reallocates within its own policy. Prism never chases the
@@ -84,7 +86,9 @@ export class SaveService {
     this.store = store;
     this.config = config;
     this.identityService = identityService;
-    this.routeProvider = routeProvider ?? new DevSaveRouteProvider(config);
+    this.routeProvider = routeProvider ?? (config.save.mode === 'demo'
+      ? new DemoVaultSaveRouteProvider(config, mockVault)
+      : new DevSaveRouteProvider(config));
     this.eligibility = eligibilityService ?? new SaveEligibilityService({ config });
     // Only the approved earnAUSD strategy is registered and enabled in V1.
     this.strategies = strategyRegistry ?? new SaveStrategyRegistry();
@@ -103,10 +107,13 @@ export class SaveService {
     return {
       enabled: s.enabled,
       live: s.substrateVerified,
+      demo: s.mode === 'demo',
       substrateVerified: s.substrateVerified,
       // Real-money Save requires BOTH a verified substrate AND an ELIGIBLE determination.
       realMoneyEnabled: realSaveEnabled({ substrateVerified: s.substrateVerified, eligibility: eligibility.status }),
-      notLiveReason: s.substrateVerified ? null : 'Save is a preview — it goes live once earnAUSD is connected',
+      notLiveReason: s.substrateVerified ? null : (s.mode === 'demo'
+        ? 'Demo — simulated yield on testnet, not real earnAUSD'
+        : 'Save is a preview — it goes live once earnAUSD is connected'),
       // How savings are managed. Verbatim consumer copy — never "highest yield" or "guaranteed".
       managed: SAVE_MANAGED_COPY,
       strategy: this.activeStrategy(),
@@ -124,7 +131,7 @@ export class SaveService {
 
   /** Quote a Save. Validates the amount, resolves the user's own account as the share receiver, and
    *  returns a money-safe SaveQuote. Writes NOTHING. */
-  quote({ prismId, amountAtomic }) {
+  async quote({ prismId, amountAtomic }) {
     if (!this.config.save.enabled) throw httpError(404, 'Save is not enabled on this deployment');
     if (!/^[0-9]+$/.test(String(amountAtomic))) throw httpError(400, 'amount must be an integer base-unit string');
     const amount = BigInt(amountAtomic);
@@ -134,26 +141,63 @@ export class SaveService {
     const identity = this.identityService.get(prismId);
     if (!identity?.accountAddress) throw httpError(409, 'no Prism account for this user');
 
-    const quote = this.routeProvider.quoteSaveRoute({ account: identity.accountAddress, amountAtomic: String(amount) });
-    // Self-check the plan against the same verifier the client runs — a preview plan is expected to fail
-    // executability (no share floor), which is the honest not-live signal, never a silent pass.
-    const verification = verifySaveExecutionPlan(quote.transactionPlan, {
-      chainId: this.config.save.substrateChainId, account: identity.accountAddress,
-      usdc: this.config.save.substrateUsdc, ausd: this.config.save.ausd,
-      earnAusdVault: this.config.save.earnAusdVault, swapRouter: this.config.save.swapRouter,
-      inputAmount: String(amount)
-    });
-    logger.info('save.quote', { prismId, provider: quote.provider, live: quote.live, executable: verification.ok });
-    return { ...quote, managed: SAVE_MANAGED_COPY, strategy: this.activeStrategy(), planExecutable: verification.ok };
+    const quote = await this.routeProvider.quoteSaveRoute({ account: identity.accountAddress, amountAtomic: String(amount) });
+
+    let planExecutable = true;
+    if (this.config.save.mode !== 'demo') {
+      // Self-check the plan against the same verifier the client runs — a preview plan is expected to fail
+      // executability (no share floor), which is the honest not-live signal, never a silent pass.
+      const verification = verifySaveExecutionPlan(quote.transactionPlan, {
+        chainId: this.config.save.substrateChainId, account: identity.accountAddress,
+        usdc: this.config.save.substrateUsdc, ausd: this.config.save.ausd,
+        earnAusdVault: this.config.save.earnAusdVault, swapRouter: this.config.save.swapRouter,
+        inputAmount: String(amount)
+      });
+      planExecutable = verification.ok;
+    }
+
+    if (this.config.save.mode === 'demo') {
+      this.store.mutate((data) => {
+        data.saveQuotes ??= {};
+        data.saveQuotes[quote.quoteId] = {
+          quoteId: quote.quoteId, kind: 'SAVE', prismId, account: identity.accountAddress,
+          amountAtomic: String(amount), vault: quote.vault, nonce: quote.nonce, deadline: quote.deadline,
+          minimumShares: quote.minimumShares, estimatedShares: quote.estimatedShares, createdAt: new Date().toISOString()
+        };
+      });
+    }
+
+    logger.info('save.quote', { prismId, provider: quote.provider, live: quote.live, executable: planExecutable });
+    return { ...quote, managed: SAVE_MANAGED_COPY, strategy: this.activeStrategy(), planExecutable };
   }
 
   /** Withdraw-mode quote: earnAUSD → AUSD → USDC, back to the user's spendable balance. In preview neither
    *  mode's economics are observable, so both are unavailable (fees are never invented as "free"). */
-  withdrawQuote({ prismId, sharesAtomic }) {
+  async withdrawQuote({ prismId, sharesAtomic }) {
     if (!this.config.save.enabled) throw httpError(404, 'Save is not enabled on this deployment');
     if (!/^[0-9]+$/.test(String(sharesAtomic ?? ''))) throw httpError(400, 'shares must be an integer base-unit string');
     const identity = this.identityService.get(prismId);
     if (!identity?.accountAddress) throw httpError(409, 'no Prism account for this user');
+
+    if (this.config.save.mode === 'demo') {
+      const { redeemAuthorizationTypedData } = await import('../lib/redeemAuthorization.js');
+      const vault = this.config.save.mockVault;
+      const estimatedUSDC = await mockVault.convertToAssets(String(sharesAtomic));
+      const nonce = randomHex(32);
+      const deadline = Math.floor(Date.now() / 1000) + 300;
+      const quoteId = `wd_${randomHex(16).slice(2)}`;
+      this.store.mutate((data) => {
+        data.saveQuotes ??= {};
+        data.saveQuotes[quoteId] = { quoteId, kind: 'WITHDRAW_INSTANT', prismId, account: identity.accountAddress, sharesAtomic: String(sharesAtomic), vault, nonce, deadline, estimatedUSDC };
+      });
+      return {
+        quoteId, demo: true, live: false, returnsTo: 'USDC', estimatedUSDC,
+        notLiveReason: 'Demo — simulated yield on testnet, not real earnAUSD',
+        authorization: redeemAuthorizationTypedData({ owner: identity.accountAddress, shares: String(sharesAtomic), validAfter: 0, validBefore: deadline, nonce, vault, chainId: Number(this.config.chain.chainId) }),
+        nonce, deadline
+      };
+    }
+
     const live = this.config.save.substrateVerified === true;
     return {
       quoteId: `wd_${randomHex(16).slice(2)}`,

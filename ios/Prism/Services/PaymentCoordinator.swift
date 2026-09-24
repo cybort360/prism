@@ -191,11 +191,12 @@ final class PaymentCoordinator: ObservableObject {
 }
 
 enum PaymentError: LocalizedError {
-  case badPIN, failed
+  case badPIN, failed, saveQuoteInvalid
   var errorDescription: String? {
     switch self {
     case .badPIN: "That PIN doesn't match. Try again."
     case .failed: "The payment couldn't be completed."
+    case .saveQuoteInvalid: "That savings quote wasn't valid. Try again."
     }
   }
 }

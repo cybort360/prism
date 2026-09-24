@@ -1,6 +1,8 @@
 import { reconstructPosition } from '../domain/savePosition.js';
 import { isTerminal, consumerPhase } from '../lib/saveLifecycle.js';
 import { buildSaveProof } from '../lib/saveProof.js';
+import { DemoVaultReader } from '../lib/demoSaveProviders.js';
+import { mockVault } from '../chain/mockVault.js';
 
 function httpError(statusCode, message) { const e = new Error(message); e.statusCode = statusCode; return e; }
 
@@ -34,7 +36,9 @@ export class SavePositionService {
     this.store = store;
     this.config = config;
     this.identityService = identityService;
-    this.vaultReader = vaultReader ?? new PreviewVaultReader(config);
+    this.vaultReader = vaultReader ?? (config.save.mode === 'demo'
+      ? new DemoVaultReader(config, mockVault)
+      : new PreviewVaultReader(config));
   }
 
   async position(prismId) {

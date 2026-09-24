@@ -38,6 +38,7 @@ struct WithdrawView: View {
               .accessibilityElement(children: .combine)
               .padding(.bottom, 18)
             }
+            if quote?.demo == true { demoBanner.padding(.bottom, 14) }
             PrismSectionLabel(text: "Amount to withdraw")
             AmountText(dollars: displayAmount, size: 60).padding(.top, 6)
             Text("Returns to your USDC balance").font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted).padding(.top, 8)
@@ -47,11 +48,23 @@ struct WithdrawView: View {
             if loading {
               ProgressView().frame(maxWidth: .infinity).padding(.top, 30)
             } else if let quote {
-              instantCard(quote).padding(.top, 20)
-              standardCard(quote).padding(.top, 12)
-              if !quote.live, let reason = quote.notLiveReason {
-                Text(reason).font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted)
-                  .lineSpacing(2).padding(.top, 14)
+              if quote.demo == true {
+                // Demo Save: the quote carries a real testnet redeem authorization instead of a
+                // mode breakdown. One card, one CTA — no fabricated instant/standard split.
+                demoCard(quote).padding(.top, 20)
+              } else {
+                // Preview quotes carry a `modes` breakdown; fall back to an "unavailable" breakdown
+                // so the card still renders something honest if the field is somehow missing.
+                let modes = quote.modes ?? WithdrawModes(
+                  live: false, sharesAtomic: "0",
+                  instant: WithdrawModeInstant(available: false, reason: quote.notLiveReason),
+                  standard: WithdrawModeStandard(available: false, reason: quote.notLiveReason))
+                instantCard(modes).padding(.top, 20)
+                standardCard(modes).padding(.top, 12)
+                if !quote.live, let reason = quote.notLiveReason {
+                  Text(reason).font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted)
+                    .lineSpacing(2).padding(.top, 14)
+                }
               }
             }
             MoneyKeypad(value: $amount).padding(.top, 20)
@@ -65,28 +78,94 @@ struct WithdrawView: View {
     .task { await load() }
   }
 
+  // MARK: demo
+
+  private var demoBanner: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "flask.fill").foregroundStyle(PrismTheme.mintDeep)
+      Text("Demo — simulated yield on testnet, not real earnAUSD")
+        .font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(PrismTheme.surface)
+    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+  }
+
+  private func demoCard(_ quote: WithdrawQuote) -> some View {
+    PrismCard {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          Text("Available").font(PrismTheme.body(15, weight: .semibold)).foregroundStyle(PrismTheme.ink)
+          Text("Available now").font(PrismTheme.body(10, weight: .semibold)).foregroundStyle(PrismTheme.mintDeep)
+            .padding(.horizontal, 8).padding(.vertical, 3).background(PrismTheme.mintSoft).clipShape(Capsule())
+          Spacer()
+        }
+        HStack {
+          Text("Estimated USDC").font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted)
+          Spacer()
+          Text(quote.estimatedUSDC.map(usd) ?? "-").font(PrismTheme.body(12.5, weight: .semibold))
+        }
+        PrismPrimaryButton(title: "Withdraw now", enabled: quote.authorization != nil, icon: "arrow.down.circle") {
+          Task { await withdrawDemo() }
+        }.padding(.top, 2)
+      }
+    }
+  }
+
+  private func withdrawDemo() async {
+    // Demo Save: a real testnet MockVault redeem. Sign the server-issued EIP-712 authorization on the
+    // Mera account (same signer payments use) and relay it — success is only reported once the backend
+    // confirms the submit; a thrown error surfaces as a real error, never a faked terminal.
+    guard let quote, let auth = quote.authorization else { error = "That withdrawal wasn't valid."; return }
+    PrismHaptics.warning()
+    do {
+      let mera = MeraAccountManager.shared
+      try await mera.beginSession(.payments)
+      let authData = try auth.jsonData()
+      let signature = try await mera.signTypedDataHex(authData)
+      let result = try await PrismAPI.shared.saveWithdrawSubmit(quoteId: quote.quoteId, signature: signature)
+      let amountText = quote.estimatedUSDC.map { Money.dollars(fromAtomic: $0) } ?? displayAmount
+      // Money-truth: only claim the money is available when the backend confirms it (state AVAILABLE).
+      switch result.state {
+      case "AVAILABLE":
+        PrismHaptics.success()
+        terminal = .available(amount: amountText)
+      case "FAILED":
+        PrismHaptics.warning()
+        self.error = "That didn't go through — check Activity before trying again."
+      default: // CONFIRMING or any non-success — honest pending, not success
+        PrismHaptics.warning()
+        terminal = .pending(amount: amountText)
+      }
+    } catch {
+      self.error = "That withdrawal didn't go through."
+    }
+  }
+
   // MARK: mode cards
 
-  private func instantCard(_ q: WithdrawQuote) -> some View {
+  private func instantCard(_ modes: WithdrawModes) -> some View {
     modeCard(
-      title: "Instant", tag: q.modes.instant.available ? "Available now" : nil,
-      available: q.modes.instant.available, reason: q.modes.instant.reason,
+      title: "Instant", tag: modes.instant.available ? "Available now" : nil,
+      available: modes.instant.available, reason: modes.instant.reason,
       rows: [
-        ("Estimated USDC", q.modes.instant.estimatedUSDCAtomic.map(usd)),
+        ("Estimated USDC", modes.instant.estimatedUSDCAtomic.map(usd)),
         // Fee shown only when observed — never "free" unless the vault says so.
-        ("Vault fee", q.modes.instant.vaultFeeAtomic.map(usd) ?? (q.modes.instant.available ? "-" : nil)),
-        ("Conversion cost", q.modes.instant.conversionCostAtomic.map(usd) ?? (q.modes.instant.available ? "-" : nil))
+        ("Vault fee", modes.instant.vaultFeeAtomic.map(usd) ?? (modes.instant.available ? "-" : nil)),
+        ("Conversion cost", modes.instant.conversionCostAtomic.map(usd) ?? (modes.instant.available ? "-" : nil))
       ],
       cta: "Withdraw now"
     ) { Task { await choose(.instant) } }
   }
 
-  private func standardCard(_ q: WithdrawQuote) -> some View {
+  private func standardCard(_ modes: WithdrawModes) -> some View {
     modeCard(
-      title: "Standard", tag: nil, available: q.modes.standard.available, reason: q.modes.standard.reason,
+      title: "Standard", tag: nil, available: modes.standard.available, reason: modes.standard.reason,
       rows: [
-        ("Expected processing", q.modes.standard.processingWindow ?? (q.modes.standard.available ? "Up to 72 hours" : nil)),
-        ("Estimated USDC", q.modes.standard.estimatedUSDCAtomic.map(usd))
+        ("Expected processing", modes.standard.processingWindow ?? (modes.standard.available ? "Up to 72 hours" : nil)),
+        ("Estimated USDC", modes.standard.estimatedUSDCAtomic.map(usd))
       ],
       cta: "Request withdrawal"
     ) { Task { await choose(.standard) } }
@@ -155,7 +234,8 @@ struct WithdrawView: View {
 }
 
 enum WithdrawTerminal: Equatable {
-  case available(amount: String)                  // USDC back in the user's balance (instant success)
+  case available(amount: String)                  // confirmed: USDC back in the user's balance (state AVAILABLE)
+  case pending(amount: String)                    // submitted but not yet confirmed (state CONFIRMING) — honest, not success
   case preview(reason: String)
   case requested(amount: String)                  // queued
   case recovery(ausd: String)                     // AUSD safe with the user, USDC conversion pending
@@ -189,6 +269,7 @@ private struct WithdrawTerminalView: View {
     let (symbol, tint): (String, Color) = {
       switch terminal {
       case .available: return ("checkmark", PrismTheme.mintDeep)
+      case .pending: return ("clock.badge.checkmark", PrismTheme.amber)
       case .recovery: return ("shield.fill", PrismTheme.amber)
       case .requested: return ("clock.badge.checkmark", PrismTheme.amber)
       case .preview: return ("clock.badge.checkmark", PrismTheme.amber)
@@ -199,6 +280,7 @@ private struct WithdrawTerminalView: View {
   private var title: String {
     switch terminal {
     case .available(let amount): return "\(amount) available"
+    case .pending: return "Withdrawal is confirming"
     case .preview: return "Withdrawals are almost ready"
     case .requested: return "Withdrawal requested"
     case .recovery: return "Your savings were withdrawn"
@@ -207,6 +289,7 @@ private struct WithdrawTerminalView: View {
   private var message: String {
     switch terminal {
     case .available: return "Your withdrawal is back in your Prism balance."
+    case .pending: return "Your withdrawal is confirming. It'll show in Activity once it settles. Don't submit it again."
     case .preview(let reason): return "This is a preview. \(reason)"
     case .requested(let amount): return "\(amount) is on the way to your USDC balance. Processing can take up to 72 hours; we'll tell you when it's ready."
     case .recovery(let ausd): return "\(ausd) AUSD is safe in your Prism account. We're having trouble converting it to your available USDC balance."
