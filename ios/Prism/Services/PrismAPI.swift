@@ -218,6 +218,18 @@ final class PrismAPI: @unchecked Sendable {
   /// USDC that has landed at the user's account on Monad, from the activity index.
   func auroraArrivals() async throws -> AuroraArrivalsResponse { try await api.request("/v1/aurora/arrivals") }
 
+  struct SimulateAuroraDepositBody: Encodable { let depositAddress: String; let sourceChain: String; let amountAtomic: String }
+  /// Demo-only: simulate an inbound cross-chain deposit against a demo Aurora deployment. The
+  /// on-chain credit is real (the relayer mints real testnet USDC to the caller's own account) —
+  /// only the "a deposit arrived on chain X" event is synthesized. Only available when the backend
+  /// is running `AURORA_MODE=demo`.
+  func simulateAuroraDeposit(depositAddress: String, sourceChain: String, amountAtomic: String) async throws -> AuroraDeposit {
+    let response: SimulateAuroraDepositResponse = try await api.send(
+      "/v1/aurora/demo/deposit",
+      body: SimulateAuroraDepositBody(depositAddress: depositAddress, sourceChain: sourceChain, amountAtomic: amountAtomic))
+    return response.deposit
+  }
+
   /// Price a route out of USDC on Monad. Nothing is committed — this is what the user reads before
   /// they approve anything.
   func quoteAuroraSend(destinationChain: String, destinationAsset: String, destinationAddress: String, amountAtomic: String, contractAddress: String? = nil) async throws -> AuroraRoute {

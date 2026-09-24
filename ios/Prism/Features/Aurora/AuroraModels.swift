@@ -125,6 +125,14 @@ struct AuroraDepositsResponse: Codable, Equatable {
   let deposits: [AuroraDeposit]
 }
 
+/// Demo-only: response from simulating an inbound deposit. `txHash` is the real on-chain mint that
+/// credited the account; `deposit` is the same shape `createAuroraDepositAddress`/`refreshAuroraDeposit`
+/// return, now advanced to `delivered`.
+struct SimulateAuroraDepositResponse: Codable, Equatable {
+  let txHash: String?
+  let deposit: AuroraDeposit
+}
+
 
 // MARK: - Routes (send / spend to anywhere)
 
