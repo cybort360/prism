@@ -84,7 +84,7 @@ struct CircleDetailView: View {
     }
     // Coming back from any of the money sheets refetches, so a balance or an approval count is
     // never left showing the value it had before the thing that just happened.
-    .onChange(of: model.presentCircleAddMoney) { old, new in if old != nil && new == nil { Task { await circle.reload() } } }
+    .onChange(of: model.presentCircleAddMoney) { old, new in if old != nil && new == nil { Task { await circle.reloadAfterContribution() } } }
     .onChange(of: model.presentCirclePay) { old, new in if old != nil && new == nil { Task { await circle.reload() } } }
     .onChange(of: model.presentCircleWithdraw) { old, new in if old != nil && new == nil { Task { await circle.reload() } } }
     .onChange(of: model.presentCircleApproval) { old, new in if old != nil && new == nil { Task { await circle.reload() } } }
