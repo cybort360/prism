@@ -149,6 +149,9 @@ final class PrismAPI: @unchecked Sendable {
 
   func resolve(phone: String) async throws -> ResolutionResponse { try await api.send("/v1/resolve/phone", body: ResolvePhoneBody(phone: phone)) }
   func resolve(handle: String) async throws -> ResolutionResponse { try await api.send("/v1/resolve/handle", body: ResolveHandleBody(handle: handle)) }
+  /// Cheap "is this handle on Prism?" check for as-you-type validation — no attestation, so it never
+  /// spends the strict resolve budget a real payment needs.
+  func handleOnPrism(_ handle: String) async throws -> HandleCheck { try await api.send("/v1/resolve/handle/check", body: ResolveHandleBody(handle: handle)) }
   func resolve(prismId: String) async throws -> ResolutionResponse { try await api.send("/v1/resolve/prism", body: ResolvePrismBody(prismId: prismId)) }
 
   // MARK: direct payments (Prism envelope + ERC-3009 USDC)

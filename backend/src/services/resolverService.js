@@ -35,6 +35,25 @@ export class ResolverService {
     return this._attest(identity, 'handle', requesterPrismId);
   }
 
+  /**
+   * A cheap "is this handle on Prism?" check for as-you-type validation in the recipient picker, so a
+   * user is told a handle is real BEFORE they commit to paying it (and can catch a typo). It issues NO
+   * signed attestation and reveals no account — only existence + the canonical handle — so it can run
+   * on every keystroke without burning the strict `resolve` budget that real payments depend on. It
+   * still respects handle discoverability and carries its own generous rate limit against enumeration.
+   */
+  handleOnPrism(requesterPrismId, rawHandle) {
+    consumeRateLimit(this.store, `handle-check:${requesterPrismId}`, { limit: 300, windowMs: 60 * 60_000 });
+    const handle = String(rawHandle ?? '').trim().replace(/^@/, '').toLowerCase();
+    if (!/^[a-z0-9_]{3,24}$/.test(handle)) return { onPrism: false, handle: null, reason: 'invalid_handle' };
+    const data = this.store.read();
+    const targetId = data.handleIndex[handle];
+    if (!targetId) return { onPrism: false, handle, reason: 'not_found' };
+    const identity = data.identities[targetId];
+    if (identity?.handleSearchable === false) return { onPrism: false, handle, reason: 'not_discoverable' };
+    return { onPrism: true, handle };
+  }
+
   // Direct Prism-ID resolution is used for already-signed payment requests and QR/payment links.
   resolvePrismId(requesterPrismId, prismId) {
     this._consume(requesterPrismId, 'prism');
