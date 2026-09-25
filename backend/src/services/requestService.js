@@ -97,7 +97,36 @@ export class RequestService {
     this._expireOpenRequests();
     return Object.values(this.store.read().requests)
       .filter(r => (r.requesterPrismId === prismId || r.payerPrismId === prismId) && r.status !== 'DRAFT')
-      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+      .map(r => this._record(r));
+  }
+
+  /**
+   * The payer/requester-facing record of a request. Explicit field list (not the raw stored object)
+   * so the requester's second-hop sweep/destination never leaks to the payer, and so both parties'
+   * handles are resolved — a payer must see WHO is asking for money, not "Prism requester".
+   */
+  _record(r) {
+    const requester = this.identityService.get(r.requesterPrismId);
+    const payer = r.payerPrismId ? this.identityService.get(r.payerPrismId) : null;
+    return {
+      requestId: r.requestId,
+      requesterPrismId: r.requesterPrismId,
+      requesterHandle: requester?.handle ?? null,
+      requesterDisplayName: requester?.displayName ?? null,
+      payerPrismId: r.payerPrismId ?? null,
+      payerHandle: payer?.handle ?? null,
+      payerDisplayName: payer?.displayName ?? null,
+      amountAtomic: r.amountAtomic,
+      token: r.token,
+      tokenSymbol: r.tokenSymbol ?? null,
+      memo: r.memo ?? '',
+      createdAt: r.createdAt,
+      expiresAt: r.expiresAt,
+      status: r.status,
+      signature: r.signature ?? null,
+      transactionHash: r.transactionHash ?? null
+    };
   }
 
   assertPayable({ requestId, payerPrismId, recipientPrismId, amountAtomic }) {

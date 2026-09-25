@@ -269,7 +269,11 @@ struct PaymentRequestRecord: Codable, Identifiable, Equatable {
   var id: String { requestId }
   let requestId: String
   let requesterPrismId: String
+  var requesterHandle: String? = nil
+  var requesterDisplayName: String? = nil
   let payerPrismId: String
+  var payerHandle: String? = nil
+  var payerDisplayName: String? = nil
   let amountAtomic: String
   let token: String
   let tokenSymbol: String?
@@ -279,6 +283,11 @@ struct PaymentRequestRecord: Codable, Identifiable, Equatable {
   let status: String
   var signature: String? = nil
   var transactionHash: String? = nil
+
+  /// A human label for the requester: display name, else @handle, else a neutral fallback.
+  var requesterLabel: String {
+    requesterDisplayName ?? requesterHandle.map { "@\($0)" } ?? "Prism requester"
+  }
 }
 struct RequestDraftResponse: Codable {
   let request: PaymentRequestRecord
