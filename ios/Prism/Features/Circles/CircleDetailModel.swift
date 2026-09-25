@@ -46,6 +46,18 @@ final class CircleDetailModel: ObservableObject {
     await reload()
   }
 
+  /// After an "Add money" contribution the sheet closes at broadcast, but the deposit needs a moment to
+  /// reconcile to COMPLETED on-chain before it counts toward `withdrawableAtomic` (and enables Withdraw).
+  /// Reload now, then a couple more times so the balance and the Withdraw action reflect it without the
+  /// user having to pull-to-refresh.
+  func reloadAfterContribution() async {
+    await reload()
+    for seconds in [2.0, 4.0] {
+      try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+      await reload()
+    }
+  }
+
   func reload() async {
     guard let circleId else { return }
     // Seven reads, each allowed to fail on its own. A Circle whose limits could not be read still has
