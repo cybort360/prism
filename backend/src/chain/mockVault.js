@@ -28,20 +28,37 @@ function vaultAddress() {
   return getAddress(config.save.mockVault);
 }
 
+// A vault read with a few backoff retries. Monad's public RPC rate-limits (15 req/sec) and
+// intermittently stalls; the Save screens fire a burst (position + state + withdrawals + quote), so a
+// single 429 must not sink the whole flow ("Couldn't load withdrawal options"). Backoff also spreads
+// the burst out under the limit. Reads are pure, so retrying is always safe.
+async function readVault(functionName, args, { tries = 4, baseMs = 300 } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      const out = await chainProvider().readContract({ address: vaultAddress(), abi: MOCK_VAULT_ABI, functionName, args });
+      return out.toString();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < tries - 1) await new Promise((r) => setTimeout(r, baseMs * (attempt + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 export const mockVault = {
   available() { return config.save.mode === 'demo' && Boolean(config.save.mockVault); },
 
   async previewDeposit(amountAtomic) {
-    const out = await chainProvider().readContract({ address: vaultAddress(), abi: MOCK_VAULT_ABI, functionName: 'previewDeposit', args: [BigInt(amountAtomic)] });
-    return out.toString();
+    if (BigInt(amountAtomic) === 0n) return '0'; // 0 in → 0 shares; never spend a rate-limited read on it
+    return readVault('previewDeposit', [BigInt(amountAtomic)]);
   },
   async convertToAssets(sharesAtomic) {
-    const out = await chainProvider().readContract({ address: vaultAddress(), abi: MOCK_VAULT_ABI, functionName: 'convertToAssets', args: [BigInt(sharesAtomic)] });
-    return out.toString();
+    if (BigInt(sharesAtomic) === 0n) return '0'; // 0 shares are worth 0 assets — no chain call needed
+    return readVault('convertToAssets', [BigInt(sharesAtomic)]);
   },
   async sharesOf(account) {
-    const out = await chainProvider().readContract({ address: vaultAddress(), abi: MOCK_VAULT_ABI, functionName: 'balanceOf', args: [getAddress(account)] });
-    return out.toString();
+    return readVault('balanceOf', [getAddress(account)]);
   },
   async submitDeposit({ from, amount, validAfter, validBefore, nonce, v, r, s }) {
     return chainProvider().writeContract({
