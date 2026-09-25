@@ -302,8 +302,11 @@ struct HomeView: View {
     do {
       let res = try await PrismAPI.shared.resolve(prismId: r.requesterPrismId)
       guard res.found else { throw APIError.server("Requester is unavailable.") }
+      let seed = r.requesterHandle ?? r.requesterDisplayName ?? "PR"
       let contact = ContactPerson(
-        id: "request:\(r.requestId)", name: r.counterpartyNameFallback, phone: nil, initials: "PR",
+        id: "request:\(r.requestId)", name: r.requesterLabel, phone: nil,
+        initials: String(seed.prefix(2)).uppercased(),
+        handle: r.requesterHandle.map { "@\($0)" },
         prismState: .onPrism(res))
       model.presentSend = SendTarget(
         contact: contact,
@@ -360,6 +363,3 @@ struct ActivityMiniRow: View {
   }
 }
 
-extension PaymentRequestRecord {
-  fileprivate var counterpartyNameFallback: String { "Prism requester" }
-}

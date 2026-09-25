@@ -98,11 +98,14 @@ struct RequestDetailView: View {
     do {
       let resolution = try await PrismAPI.shared.resolve(prismId: request.requesterPrismId)
       guard resolution.found else { throw APIError.server("Requester is unavailable.") }
+      let label = request.requesterLabel
+      let seed = request.requesterHandle ?? request.requesterDisplayName ?? "PR"
       let contact = ContactPerson(
         id: "request:\(request.requestId)",
-        name: "Prism requester",
+        name: label,
         phone: nil,
-        initials: "PR",
+        initials: String(seed.prefix(2)).uppercased(),
+        handle: request.requesterHandle.map { "@\($0)" },
         prismState: .onPrism(resolution)
       )
       dismiss()
