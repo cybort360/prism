@@ -63,31 +63,41 @@ export class DemoSaveExecutor {
     });
     this.store.mutate((data) => { data.saveOperations ??= {}; data.saveOperations[op.operationId] = op; });
 
-    const txHash = await this.vault.submitDeposit({
-      from: account, amount: quote.amountAtomic, validAfter: 0, validBefore: quote.deadline, nonce: quote.nonce, v, r, s
-    });
+    try {
+      const txHash = await this.vault.submitDeposit({
+        from: account, amount: quote.amountAtomic, validAfter: 0, validBefore: quote.deadline, nonce: quote.nonce, v, r, s
+      });
 
-    // Wait for the tx to actually mine before deciding state — a single immediate read returns null on
-    // real testnet (op stuck CONFIRMING) and never catches a revert. Only read shares AFTER confirmation.
-    const receipt = await this._awaitReceipt(txHash);
-    const confirmed = isSuccess(receipt);
-    const reverted = isReverted(receipt);
-    const sharesReceived = confirmed ? await this.vault.sharesOf(account) : null; // canonical readback, post-confirmation only
+      // Wait for the tx to actually mine before deciding state — a single immediate read returns null on
+      // real testnet (op stuck CONFIRMING) and never catches a revert. Only read shares AFTER confirmation.
+      const receipt = await this._awaitReceipt(txHash);
+      const confirmed = isSuccess(receipt);
+      const reverted = isReverted(receipt);
+      const sharesReceived = confirmed ? await this.vault.sharesOf(account) : null; // canonical readback, post-confirmation only
 
-    this.store.mutate((data) => {
-      const rec = data.saveOperations[op.operationId];
-      rec.transactionHash = txHash;
-      rec.blockNumber = receipt?.blockNumber ? Number(receipt.blockNumber) : null;
-      rec.sharesReceived = sharesReceived;
-      rec.actualAUSD = confirmed ? quote.amountAtomic : null; // demo: USDC == asset, 1:1 into the vault's unit
-      rec.state = confirmed ? 'SAVED' : (reverted ? 'FAILED' : 'CONFIRMING');
-      rec.failureReason = reverted ? 'deposit transaction reverted on-chain' : null;
-      rec.confirmedAt = confirmed ? new Date().toISOString() : null;
-      rec.completedAt = confirmed ? new Date().toISOString() : null;
-      op = rec;
-    });
+      this.store.mutate((data) => {
+        const rec = data.saveOperations[op.operationId];
+        rec.transactionHash = txHash;
+        rec.blockNumber = receipt?.blockNumber ? Number(receipt.blockNumber) : null;
+        rec.sharesReceived = sharesReceived;
+        rec.actualAUSD = confirmed ? quote.amountAtomic : null; // demo: USDC == asset, 1:1 into the vault's unit
+        rec.state = confirmed ? 'SAVED' : (reverted ? 'FAILED' : 'CONFIRMING');
+        rec.failureReason = reverted ? 'deposit transaction reverted on-chain' : null;
+        rec.confirmedAt = confirmed ? new Date().toISOString() : null;
+        rec.completedAt = confirmed ? new Date().toISOString() : null;
+        op = rec;
+      });
 
-    return { operationId: op.operationId, txHash, state: op.state };
+      return { operationId: op.operationId, txHash, state: op.state };
+    } catch (err) {
+      // The submit reverted before/at broadcast (reused nonce, insufficient funds) — the op was recorded
+      // SUBMITTED before the call, so mark it FAILED rather than leaving it stuck.
+      this.store.mutate((data) => {
+        const rec = data.saveOperations[op.operationId];
+        if (rec && rec.state === 'SUBMITTED') { rec.state = 'FAILED'; rec.failureReason = String(err?.shortMessage ?? err?.message ?? 'deposit failed'); }
+      });
+      throw err;
+    }
   }
 
   async submitWithdraw({ prismId, quoteId, signature }) {
@@ -110,26 +120,37 @@ export class DemoSaveExecutor {
     });
     this.store.mutate((data) => { data.saveOperations ??= {}; data.saveOperations[op.operationId] = op; });
 
-    const txHash = await this.vault.submitRedeem({
-      owner: account, shares: quote.sharesAtomic, validAfter: 0, validBefore: quote.deadline, nonce: quote.nonce, v, r, s
-    });
-    // Wait for the redeem to mine before deciding state — never report AVAILABLE off an unmined/reverted tx.
-    const receipt = await this._awaitReceipt(txHash);
-    const confirmed = isSuccess(receipt);
-    const reverted = isReverted(receipt);
-    const outputUSDC = confirmed ? (quote.estimatedUSDC ?? await this.vault.convertToAssets(quote.sharesAtomic)) : null;
+    try {
+      const txHash = await this.vault.submitRedeem({
+        owner: account, shares: quote.sharesAtomic, validAfter: 0, validBefore: quote.deadline, nonce: quote.nonce, v, r, s
+      });
+      // Wait for the redeem to mine before deciding state — never report AVAILABLE off an unmined/reverted tx.
+      const receipt = await this._awaitReceipt(txHash);
+      const confirmed = isSuccess(receipt);
+      const reverted = isReverted(receipt);
+      const outputUSDC = confirmed ? (quote.estimatedUSDC ?? await this.vault.convertToAssets(quote.sharesAtomic)) : null;
 
-    this.store.mutate((data) => {
-      const rec = data.saveOperations[op.operationId];
-      rec.transactionHash = txHash;
-      rec.blockNumber = receipt?.blockNumber ? Number(receipt.blockNumber) : null;
-      rec.outputUSDC = outputUSDC;
-      rec.state = confirmed ? 'AVAILABLE' : (reverted ? 'FAILED' : 'CONFIRMING');
-      rec.failureReason = reverted ? 'redeem transaction reverted on-chain' : null;
-      rec.confirmedAt = confirmed ? new Date().toISOString() : null;
-      rec.completedAt = confirmed ? new Date().toISOString() : null;
-      op = rec;
-    });
-    return { operationId: op.operationId, txHash, state: op.state };
+      this.store.mutate((data) => {
+        const rec = data.saveOperations[op.operationId];
+        rec.transactionHash = txHash;
+        rec.blockNumber = receipt?.blockNumber ? Number(receipt.blockNumber) : null;
+        rec.outputUSDC = outputUSDC;
+        rec.state = confirmed ? 'AVAILABLE' : (reverted ? 'FAILED' : 'CONFIRMING');
+        rec.failureReason = reverted ? 'redeem transaction reverted on-chain' : null;
+        rec.confirmedAt = confirmed ? new Date().toISOString() : null;
+        rec.completedAt = confirmed ? new Date().toISOString() : null;
+        op = rec;
+      });
+      return { operationId: op.operationId, txHash, state: op.state };
+    } catch (err) {
+      // The submit reverted before/at broadcast (reused nonce, zero shares, insufficient shares) — the
+      // op was recorded REDEEMING before the call, so mark it FAILED instead of leaving it stuck in
+      // "processing" forever.
+      this.store.mutate((data) => {
+        const rec = data.saveOperations[op.operationId];
+        if (rec && rec.state === 'REDEEMING') { rec.state = 'FAILED'; rec.failureReason = String(err?.shortMessage ?? err?.message ?? 'redeem failed'); }
+      });
+      throw err;
+    }
   }
 }
