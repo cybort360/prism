@@ -14,6 +14,7 @@ struct WithdrawView: View {
   @State private var amount = ""
   @State private var quote: WithdrawQuote?
   @State private var savingsAtomic: String?
+  @State private var sharesOwnedAtomic: String?
   @State private var loading = true
   @State private var error: String?
   @State private var terminal: WithdrawTerminal?
@@ -118,15 +119,19 @@ struct WithdrawView: View {
     // Demo Save: a real testnet MockVault redeem. Sign the server-issued EIP-712 authorization on the
     // Mera account (same signer payments use) and relay it — success is only reported once the backend
     // confirms the submit; a thrown error surfaces as a real error, never a faked terminal.
-    guard let quote, let auth = quote.authorization else { error = "That withdrawal wasn't valid."; return }
+    guard let shares = sharesToRedeemAtomic else { error = "Enter an amount to withdraw."; return }
     PrismHaptics.warning()
     do {
+      // Re-quote for the exact shares being redeemed: the load-time quote was for the empty amount, so
+      // signing/submitting it would redeem 0 shares (a revert). This binds the fresh amount instead.
+      let fresh = try await PrismAPI.shared.withdrawQuote(sharesAtomic: shares)
+      guard let auth = fresh.authorization else { error = "That withdrawal wasn't valid."; return }
       let mera = MeraAccountManager.shared
       try await mera.beginSession(.payments)
       let authData = try auth.jsonData()
       let signature = try await mera.signTypedDataHex(authData)
-      let result = try await PrismAPI.shared.saveWithdrawSubmit(quoteId: quote.quoteId, signature: signature)
-      let amountText = quote.estimatedUSDC.map { Money.dollars(fromAtomic: $0) } ?? displayAmount
+      let result = try await PrismAPI.shared.saveWithdrawSubmit(quoteId: fresh.quoteId, signature: signature)
+      let amountText = fresh.estimatedUSDC.map { Money.dollars(fromAtomic: $0) } ?? displayAmount
       // Money-truth: only claim the money is available when the backend confirms it (state AVAILABLE).
       switch result.state {
       case "AVAILABLE":
@@ -195,6 +200,15 @@ struct WithdrawView: View {
   // MARK: logic
 
   private var atomic: String? { guard let a = Money.atomic(fromDollars: amount), a != "0" else { return nil }; return a }
+  /// The entered USD amount converted to vault shares — shares aren't 1:1 with USD once yield accrues,
+  /// and this caps at the shares actually owned so "withdraw everything" can never over-redeem.
+  private var sharesToRedeemAtomic: String? {
+    guard let usd = atomic, let owned = sharesOwnedAtomic, let value = savingsAtomic,
+          let usdN = UInt64(usd), let ownedN = UInt64(owned), let valueN = UInt64(value), valueN > 0 else { return nil }
+    if usdN >= valueN { return owned }              // withdrawing the whole balance → redeem all owned shares
+    let shares = usdN * ownedN / valueN
+    return shares == 0 ? nil : String(shares)
+  }
   private var displayAmount: String {
     amount.isEmpty ? "$0.00" : (Decimal(string: amount) ?? 0).formatted(.currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))
   }
@@ -217,8 +231,11 @@ struct WithdrawView: View {
     async let q = try? await PrismAPI.shared.withdrawQuote(sharesAtomic: atomic ?? "0")
     async let pos = try? await PrismAPI.shared.savePosition()
     quote = await q
-    if savingsAtomic == nil { savingsAtomic = (await pos)?.currentAUSDValue }
-    if quote == nil { error = "Couldn't load withdrawal options." }
+    let position = await pos
+    if savingsAtomic == nil { savingsAtomic = position?.currentAUSDValue }
+    sharesOwnedAtomic = position?.earnAUSDShares ?? sharesOwnedAtomic
+    // Clear a stale error once the quote loads, so an earlier transient failure doesn't linger.
+    error = quote == nil ? "Couldn't load withdrawal options." : nil
     loading = false
   }
 
