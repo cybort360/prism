@@ -504,6 +504,9 @@ struct SaveHomeCard: View {
       .accessibilityHint("Opens Save")
     }
     .task { await load() }
+    // A deposit or withdraw inside the Save sheet moves the position, so refetch when it closes —
+    // otherwise the card keeps showing the balance it had before the thing that just happened.
+    .onChange(of: model.savePresented) { old, new in if old && !new { Task { await load() } } }
   }
 
   @ViewBuilder private var content: some View {
