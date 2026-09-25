@@ -32,3 +32,30 @@ test('phone privacy setting fails closed',()=>{
   store.mutate(d=>{d.identities.target.phoneDiscoverable=false;});
   assert.deepEqual(resolver.resolvePhone('sender',phone),{found:false,reason:'not_discoverable'});
 });
+
+// --- handleOnPrism: cheap as-you-type existence check (no attestation, no account leak) -----------
+test('handleOnPrism confirms a real handle without issuing an attestation', () => {
+  const { store, resolver } = fixture();
+  store.mutate((d) => { d.identities.target.handle = 'tester2'; d.handleIndex ||= {}; d.handleIndex.tester2 = 'target'; });
+
+  const hit = resolver.handleOnPrism('me', '@Tester2'); // @ optional, case-insensitive
+  assert.equal(hit.onPrism, true);
+  assert.equal(hit.handle, 'tester2');
+  assert.equal(hit.attestation, undefined, 'no signed attestation is issued for a check');
+  assert.equal(hit.signature, undefined, 'no account/signature is revealed');
+});
+
+test('handleOnPrism reports a handle that is not on Prism (never a false positive)', () => {
+  const { resolver } = fixture();
+  const miss = resolver.handleOnPrism('me', 'nobody');
+  assert.equal(miss.onPrism, false);
+  assert.equal(miss.reason, 'not_found');
+});
+
+test('handleOnPrism fails closed for a non-discoverable handle', () => {
+  const { store, resolver } = fixture();
+  store.mutate((d) => { d.identities.target.handle = 'ghost'; d.identities.target.handleSearchable = false; d.handleIndex = { ghost: 'target' }; });
+  const res = resolver.handleOnPrism('me', 'ghost');
+  assert.equal(res.onPrism, false);
+  assert.equal(res.reason, 'not_discoverable');
+});

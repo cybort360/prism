@@ -172,6 +172,8 @@ route('POST', '/v1/me/profile', async ({ user, body }) => identityService.public
 // --- protected alias resolution ---------------------------------------------
 route('POST', '/v1/resolve/phone', async ({ user, body }) => resolverService.resolvePhone(user.prismId, body.phone), true);
 route('POST', '/v1/resolve/handle', async ({ user, body }) => resolverService.resolveHandle(user.prismId, body.handle), true);
+// Cheap existence check for as-you-type validation — no attestation, so it never spends the resolve budget.
+route('POST', '/v1/resolve/handle/check', async ({ user, body }) => resolverService.handleOnPrism(user.prismId, body.handle), true);
 route('POST', '/v1/resolve/prism', async ({ user, body }) => resolverService.resolvePrismId(user.prismId, body.prismId), true);
 
 // --- off-chain payment requests ---------------------------------------------

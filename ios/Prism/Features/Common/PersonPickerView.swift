@@ -38,6 +38,10 @@ struct PersonPickerView: View {
   @State private var error: String?
   @State private var contactsBlocked = false
   @State private var loading = true
+  /// Live "is this handle on Prism?" state, so a real handle is confirmed before the user can pay it.
+  @State private var handleLookup: HandleLookupState = .idle
+
+  enum HandleLookupState: Equatable { case idle, checking, onPrism, notFound, unknown }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -47,7 +51,7 @@ struct PersonPickerView: View {
         Image(systemName: "magnifyingglass")
           .font(.system(size: 15, weight: .medium))
           .foregroundStyle(PrismTheme.muted)
-        TextField("Search contacts or @handle", text: $query)
+        TextField("Search name or handle", text: $query)
           .font(PrismTheme.body(14))
           .textInputAutocapitalization(.never)
           .autocorrectionDisabled()
@@ -99,35 +103,38 @@ struct PersonPickerView: View {
             Divider().overlay(PrismTheme.line)
           }
 
-          PrismSectionLabel(text: query.hasPrefix("@") ? "Handle" : "Contacts")
-            .padding(.top, 20)
-            .padding(.bottom, 8)
-
-          if query.hasPrefix("@") && query.count > 1 {
-            Button { Task { await resolveHandle(query) } } label: {
+          // Handle lookup — the "@" is optional ("tester2" == "@tester2"), and we confirm the handle is
+          // really on Prism as you type, so you can't tap-to-pay a handle that doesn't exist.
+          if handleQuery.count >= 2 {
+            PrismSectionLabel(text: "Handle")
+              .padding(.top, 20)
+              .padding(.bottom, 8)
+            Button {
+              guard handleLookup == .onPrism || handleLookup == .unknown else { return }
+              Task { await resolveHandle(handleQuery) }
+            } label: {
               HStack(spacing: 14) {
                 PrismAvatar(initials: "@", size: 46, tone: PrismTheme.mintSoft)
                 VStack(alignment: .leading, spacing: 3) {
-                  Text(query.lowercased())
+                  Text("@\(handleQuery)")
                     .font(PrismTheme.body(15, weight: .semibold))
-                    .foregroundStyle(PrismTheme.ink)
-                  Text("Exact Prism handle")
-                    .font(PrismTheme.body(11.5))
-                    .foregroundStyle(PrismTheme.muted)
+                    .foregroundStyle(handleLookup == .notFound ? PrismTheme.muted : PrismTheme.ink)
+                  handleStatusLine
                 }
                 Spacer()
-                if busyId == "handle" {
-                  ProgressView().controlSize(.small).tint(PrismTheme.mintDeep)
-                } else {
-                  Image(systemName: "arrow.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(PrismTheme.muted)
-                }
+                handleTrailing
               }
               .padding(.vertical, 13)
             }
             .buttonStyle(.plain)
+            .disabled(handleLookup == .checking || handleLookup == .notFound)
             Divider().overlay(PrismTheme.line)
+          }
+
+          if !filteredContacts.isEmpty {
+            PrismSectionLabel(text: "Contacts")
+              .padding(.top, 20)
+              .padding(.bottom, 8)
           }
 
           ForEach(filteredContacts) { contact in
@@ -157,9 +164,9 @@ struct PersonPickerView: View {
             Divider().overlay(PrismTheme.line)
           }
 
-          if loading && contacts.isEmpty && !query.hasPrefix("@") {
+          if loading && contacts.isEmpty && handleQuery.count < 2 {
             ProgressView().tint(PrismTheme.mintDeep).frame(maxWidth: .infinity).padding(.top, 30)
-          } else if !loading && filteredContacts.isEmpty && !query.hasPrefix("@") {
+          } else if !loading && filteredContacts.isEmpty && handleQuery.count < 2 {
             contactsFallback.padding(.top, 18)
           }
         }
@@ -169,6 +176,7 @@ struct PersonPickerView: View {
     }
     .prismScreen()
     .task { await loadContacts() }
+    .task(id: handleQuery) { await lookupHandle() }
     .alert("Prism", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
       Button("OK") { error = nil }
     } message: {
@@ -205,10 +213,63 @@ struct PersonPickerView: View {
     .padding(.vertical, 22)
   }
 
+  /// The query as a bare Prism handle: a leading "@" is optional, so "tester2" and "@tester2" look up
+  /// the same handle. Whitespace-trimmed and lowercased to match how handles are stored.
+  private var handleQuery: String {
+    String(query.trimmingCharacters(in: .whitespaces).drop(while: { $0 == "@" })).lowercased()
+  }
+
+  @ViewBuilder private var handleStatusLine: some View {
+    switch handleLookup {
+    case .onPrism:
+      HStack(spacing: 4) {
+        Image(systemName: "checkmark.seal.fill").font(.system(size: 11, weight: .semibold)).foregroundStyle(PrismTheme.positive)
+        Text("On Prism").font(PrismTheme.body(11.5, weight: .semibold)).foregroundStyle(PrismTheme.positive)
+      }
+    case .notFound:
+      Text("Not on Prism — check the spelling").font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted)
+    case .unknown:
+      Text("Tap to look up").font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted)
+    case .checking, .idle:
+      Text("Checking Prism…").font(PrismTheme.body(11.5)).foregroundStyle(PrismTheme.muted)
+    }
+  }
+
+  @ViewBuilder private var handleTrailing: some View {
+    if busyId == "handle" || handleLookup == .checking {
+      ProgressView().controlSize(.small).tint(PrismTheme.mintDeep)
+    } else if handleLookup == .notFound {
+      Image(systemName: "exclamationmark.circle").font(.system(size: 13, weight: .semibold)).foregroundStyle(PrismTheme.muted)
+    } else {
+      Image(systemName: "arrow.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(PrismTheme.muted)
+    }
+  }
+
+  /// Confirms, as the user types, whether the handle is a real Prism account — debounced so keystrokes
+  /// don't spam the backend, and guarded so a stale in-flight check can't overwrite a newer query.
+  private func lookupHandle() async {
+    let q = handleQuery
+    guard q.count >= 2 else { handleLookup = .idle; return }
+    handleLookup = .checking
+    try? await Task.sleep(nanoseconds: 350_000_000)
+    guard !Task.isCancelled, q == handleQuery else { return }
+    do {
+      let result = try await PrismAPI.shared.handleOnPrism(q)
+      guard q == handleQuery else { return }
+      handleLookup = result.onPrism ? .onPrism : .notFound
+    } catch {
+      // A failed check must not claim the handle is missing — fall back to tap-to-resolve.
+      guard q == handleQuery else { return }
+      handleLookup = .unknown
+    }
+  }
+
   private var filteredContacts: [ContactPerson] {
-    guard !query.isEmpty, !query.hasPrefix("@") else { return contacts }
+    let q = handleQuery
+    guard !q.isEmpty else { return contacts }
     return contacts.filter {
-      $0.name.localizedCaseInsensitiveContains(query)
+      $0.name.localizedCaseInsensitiveContains(q)
+        || ($0.handle?.localizedCaseInsensitiveContains(q) ?? false)
         || ($0.phone?.contains(query.filter(\.isNumber)) ?? false)
     }
   }

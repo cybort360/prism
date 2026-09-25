@@ -79,6 +79,14 @@ struct PrismNetworkConfig: Codable {
   let allowanceModule: String?
 }
 
+/// The lightweight handle existence check (POST /v1/resolve/handle/check): whether a handle is a real
+/// Prism account, plus its canonical spelling — never an account or attestation.
+struct HandleCheck: Codable, Equatable {
+  let onPrism: Bool
+  let handle: String?
+  let reason: String?
+}
+
 struct ResolutionResponse: Codable, Equatable, Hashable {
   let found: Bool
   let reason: String?
