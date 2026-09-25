@@ -1086,6 +1086,37 @@ export class CircleService {
    * Monad. The balance is always a live chain read — never the stored ledger — so this can never
    * promise more than the Circle could really pay out.
    */
+  /**
+   * The Circle's live Safe balance, read with a few short-bounded retries.
+   *
+   * Monad's public RPC intermittently stalls for tens of seconds or drops a read. This method backs
+   * `withdrawablePreview`, which decides whether a member may take their money out — so a failed read
+   * must NOT be reported as a $0 balance. Doing that (the old `.catch(() => 0n)`) silently disabled a
+   * member's Withdraw of real funds while claiming, falsely, that there was nothing to withdraw.
+   * INV-M1: a value that cannot be read is unknown, never invented. So we retry briefly, bound each
+   * attempt so a stalled RPC can't hang the request past the client's timeout, and if every attempt
+   * fails we throw (503) rather than fabricate a zero — the same "unavailable, not stale/zero" stance
+   * the detail read takes for its balance.
+   */
+  async _liveSafeBalance(safeAddress, { tries = 3, perAttemptMs = 6000, gapMs = 250 } = {}) {
+    let lastErr;
+    for (let attempt = 0; attempt < tries; attempt++) {
+      try {
+        return await Promise.race([
+          this.safe.getUsdcBalance(safeAddress),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('balance read timed out')), perAttemptMs))
+        ]);
+      } catch (err) {
+        lastErr = err;
+        if (attempt < tries - 1) await new Promise((r) => setTimeout(r, gapMs));
+      }
+    }
+    const e = new Error("Prism couldn't read this Circle's balance from Monad just now — pull down to try again.");
+    e.statusCode = 503;
+    e.cause = lastErr;
+    throw e;
+  }
+
   async withdrawablePreview({ circleId, memberPrismId }) {
     const circle = this._circle(circleId);
     this._activeMember(circleId, memberPrismId);
@@ -1095,7 +1126,7 @@ export class CircleService {
     const withdrawals = Object.values(data.circleWithdrawals ?? {}).filter((w) => w.circleId === circleId);
     const net = netContributions(contributions, withdrawals);
 
-    const balance = await this.safe.getUsdcBalance(circle.safeAddress).catch(() => 0n);
+    const balance = await this._liveSafeBalance(circle.safeAddress);
     const withdrawable = withdrawableFor(memberPrismId, net, balance);
 
     return {

@@ -98,15 +98,19 @@ test('a non-member is rejected', async (t) => {
   );
 });
 
-test('a live balance read failure is treated as zero, never thrown', async (t) => {
+test('a live balance read failure is surfaced as unavailable, never fabricated as zero', async (t) => {
   const s = await circleWithMembers();
   t.after(s.restoreProvider);
   seedContribution(s.store, { id: 'ctr_a1', circleId: s.circle.circleId, contributorPrismId: s.octane.prismId, amount: 100000000n });
   s.circles.safe.getUsdcBalance = async () => { throw new Error('rpc unavailable'); };
 
-  const preview = await s.circles.withdrawablePreview({ circleId: s.circle.circleId, memberPrismId: s.octane.prismId });
-  assert.equal(preview.balanceAtomic, '0');
-  assert.equal(preview.withdrawableAtomic, '0');
+  // A member holding $100 whose balance read fails must NOT be told they can withdraw $0 — that
+  // silently disables their Withdraw of real funds. The read is surfaced as unavailable (503) so the
+  // client can retry, exactly as the detail read reports an unreadable balance as unknown.
+  await assert.rejects(
+    () => s.circles.withdrawablePreview({ circleId: s.circle.circleId, memberPrismId: s.octane.prismId }),
+    (e) => statusOf(e) === 503
+  );
 });
 
 // ===========================================================================
@@ -474,4 +478,40 @@ test('reconcilePendingFor settles a delivered-but-still-CONFIRMING withdrawal th
 
   assert.equal(s.store.read().circleProposals[proposal.proposalId].lifecycle, 'COMPLETED');
   assert.equal(s.store.read().circleWithdrawals[withdrawalId].status, 'COMPLETED');
+});
+
+// --- Regression: a flaky Safe balance read must never be reported as a $0 withdrawable ----------
+// Monad's public RPC intermittently stalls for tens of seconds or drops a read. The withdrawable
+// preview used to `.catch(() => 0n)` that failure, which silently disabled a member's Withdraw
+// button while they genuinely held funds (INV-M1: a value that cannot be read is unknown, never
+// invented). It must retry the read, and if every attempt fails, surface an error — not a false 0.
+
+test('withdrawablePreview retries a flaky Safe balance read instead of reporting $0', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+  seedContribution(s.store, { id: 'ctr_flaky', circleId: s.circle.circleId, contributorPrismId: s.octane.prismId, amount: 35000000n });
+
+  let calls = 0;
+  s.circles.safe.getUsdcBalance = async () => {
+    calls += 1;
+    if (calls < 3) throw new Error('request timed out');
+    return 35000000n;
+  };
+
+  const preview = await s.circles.withdrawablePreview({ circleId: s.circle.circleId, memberPrismId: s.octane.prismId });
+  assert.equal(preview.withdrawableAtomic, '35000000'); // the real balance, not a fabricated 0
+  assert.ok(calls >= 3, 'the flaky read is retried before giving up');
+});
+
+test('withdrawablePreview throws rather than fabricating $0 when the balance read keeps failing', async (t) => {
+  const s = await circleWithMembers();
+  t.after(s.restoreProvider);
+  seedContribution(s.store, { id: 'ctr_down', circleId: s.circle.circleId, contributorPrismId: s.octane.prismId, amount: 35000000n });
+
+  s.circles.safe.getUsdcBalance = async () => { throw new Error('request timed out'); };
+
+  await assert.rejects(
+    () => s.circles.withdrawablePreview({ circleId: s.circle.circleId, memberPrismId: s.octane.prismId }),
+    (err) => err.statusCode === 503
+  );
 });
