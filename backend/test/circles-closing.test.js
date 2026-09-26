@@ -116,6 +116,9 @@ test('closing: the money leaves by a decision the Circle made, and then the Circ
 
   const closed = await closeWith(stack, preflight);
   assert.equal(closed.status, 'CLOSED');
+  // The CLOSED/finalize response keeps the same shape as the open preflight — including
+  // `requirements` — so the client can decode it (a missing key fails a non-optional decode).
+  assert.deepEqual(closed.requirements, ['OPEN_PROPOSALS', 'SPENDING_ACCESS', 'REMAINING_FUNDS', 'CHAIN_RECONCILED']);
 
   // The closure kept evidence of what the Circle was at the moment it ended.
   const record = circles.getCircleRecord(circle.circleId);
