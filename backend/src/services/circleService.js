@@ -3519,9 +3519,11 @@ export class CircleService {
     const circle = this._circle(circleId);
     this._assertAdmin(circleId, prismId);
     if (circle.status === CircleStatus.CLOSED) {
+      // Same shape as the open-circle preflight below — `requirements` included — so the client can
+      // decode a finalize response (which returns this once the Circle is CLOSED) without failing.
       return {
         circleId, status: circle.status, canClose: false, alreadyClosed: true,
-        blockers: [], checks: [], closing: circle.closing ?? null
+        requirements: CLOSE_REQUIREMENTS, blockers: [], checks: [], closing: circle.closing ?? null
       };
     }
 
