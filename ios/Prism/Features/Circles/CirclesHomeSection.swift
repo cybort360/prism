@@ -34,6 +34,8 @@ struct CirclesHomeSection: View {
   /// The Circles tab supplies its own screen title, so it hides this inline "Circles" label to avoid
   /// showing the word twice.
   var showsHeader = true
+  /// Closed Circles are archived into a section that starts collapsed, so they're out of the way.
+  @State private var showClosed = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
@@ -65,7 +67,7 @@ struct CirclesHomeSection: View {
         }
       } else {
         VStack(spacing: 9) {
-          ForEach(circles.summaries) { summary in
+          ForEach(circles.activeSummaries) { summary in
             Button {
               model.presentCircleDetail = summary
             } label: {
@@ -74,6 +76,7 @@ struct CirclesHomeSection: View {
             .buttonStyle(.plain)
           }
         }
+        if !circles.closedSummaries.isEmpty { closedSection }
       }
 
       // The persistent "New Circle" button is the create affordance only when a list is shown; the
@@ -96,6 +99,44 @@ struct CirclesHomeSection: View {
         .accessibilityLabel("Create a new Circle")
       }
     }
+  }
+
+  /// Closed Circles, archived into a section that starts collapsed. Tapping the header reveals them,
+  /// and each still opens its kept record — archived, never deleted.
+  private var closedSection: some View {
+    VStack(alignment: .leading, spacing: 9) {
+      Button {
+        withAnimation(.easeInOut(duration: 0.2)) { showClosed.toggle() }
+      } label: {
+        HStack(spacing: 7) {
+          Text("Closed")
+            .font(PrismTheme.body(12, weight: .semibold)).tracking(0.4).foregroundStyle(PrismTheme.muted)
+          Text("\(circles.closedSummaries.count)")
+            .font(PrismTheme.body(12, weight: .semibold)).foregroundStyle(PrismTheme.faint)
+          Spacer()
+          Image(systemName: "chevron.right")
+            .font(.system(size: 11, weight: .semibold)).foregroundStyle(PrismTheme.faint)
+            .rotationEffect(.degrees(showClosed ? 90 : 0))
+        }
+        .padding(.horizontal, 4)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("\(circles.closedSummaries.count) closed \(circles.closedSummaries.count == 1 ? "Circle" : "Circles")")
+      .accessibilityHint(showClosed ? "Hides closed Circles" : "Shows closed Circles")
+
+      if showClosed {
+        ForEach(circles.closedSummaries) { summary in
+          Button {
+            model.presentCircleDetail = summary
+          } label: {
+            CircleRow(summary: summary, detail: circles.details[summary.circleId])
+          }
+          .buttonStyle(.plain)
+        }
+      }
+    }
+    .padding(.top, 6)
   }
 }
 
@@ -274,6 +315,12 @@ final class CirclesHomeModel: ObservableObject {
   @Published private(set) var invitations: [CircleInvitation] = []
   @Published private(set) var loading = false
   @Published private(set) var unavailable: String?
+
+  /// Live Circles the list leads with. A CLOSING Circle stays here — money can still leave it.
+  var activeSummaries: [CircleSummary] { summaries.filter { !$0.isClosed } }
+  /// Closed Circles. Archived, not deleted — the record is kept (Prism never erases a Circle's past),
+  /// just tucked into a collapsed section so the live list stays uncluttered.
+  var closedSummaries: [CircleSummary] { summaries.filter { $0.isClosed } }
 
   /// How many Circles get a live chain read on a Home refresh. Beyond this the rows still appear —
   /// with an honest dash — and fill in when the Circle is opened.
