@@ -21,9 +21,7 @@ struct HomeView: View {
         AmountText(
           dollars: totalBalance, size: 70
         ).padding(.top, 6)
-        if let metric = weeklyMetric {
-          PrismMetricPill(text: metric.text, positive: metric.positive).padding(.top, 11)
-        } else if loading {
+        if loading {
           ProgressView().controlSize(.small).padding(.top, 8)
         }
         actions.padding(.top, 32).padding(.bottom, 34)
@@ -242,27 +240,6 @@ struct HomeView: View {
       }
     }
   }
-  private var weeklyMetric: (text: String, positive: Bool)? {
-    let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
-    var net = Decimal.zero
-    var found = false
-    for item in activity {
-      guard let atomic = item.amountAtomic,
-            let date = Date.prismParse(item.createdAt), date >= cutoff,
-            let raw = Decimal(string: atomic) else { continue }
-      found = true
-      var divisor = Decimal(1)
-      for _ in 0..<6 { divisor *= 10 }
-      let amount = raw / divisor
-      net += item.direction == "incoming" ? amount : -amount
-    }
-    guard found else { return nil }
-    let magnitude = net < 0 ? -net : net
-    let rendered = NSDecimalNumber(decimal: magnitude).doubleValue.formatted(
-      .currency(code: "USD").precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))
-    return ((net >= 0 ? "+" : "−") + rendered + " this week", net >= 0)
-  }
-
   private var totalBalance: String {
     guard let balance, let raw = Decimal(string: balance.amountAtomic) else { return "$0.00" }
     var divisor = Decimal(1)
