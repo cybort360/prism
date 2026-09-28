@@ -229,12 +229,28 @@ export function splitSignature(signature) {
 
 export async function usdcBalanceOf(address) {
   const definition = usdcToken();
-  return chainProvider().readContract({
+  const args = {
     address: getAddress(definition.address),
     abi: [{ name: 'balanceOf', type: 'function', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'uint256' }] }],
     functionName: 'balanceOf',
     args: [getAddress(address)]
-  });
+  };
+  // Monad's public RPC intermittently stalls/times out; a single failed read must not surface a raw
+  // viem dump as the user's balance. Retry with a short backoff, and on genuine failure throw a clean
+  // 503 the app can render as "balance unavailable" (never a fabricated number — INV-M1).
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await chainProvider().readContract(args);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+    }
+  }
+  const e = new Error("Prism couldn't read your balance from Monad just now — pull down to try again.");
+  e.statusCode = 503;
+  e.cause = lastErr;
+  throw e;
 }
 
 /**
