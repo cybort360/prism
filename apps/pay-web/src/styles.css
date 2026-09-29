@@ -1,0 +1,72 @@
+:root {
+  --ink: #0f1a17;
+  --muted: #6b7a74;
+  --mint-deep: #0f5c4a;
+  --mint-soft: #e6f4ee;
+  --canvas: #f4f6f5;
+  --paper: #ffffff;
+  --line: #e3e8e6;
+  --danger: #b4291f;
+  --positive: #0f7a53;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  justify-content: center;
+  padding: 24px 18px;
+  min-height: 100vh;
+}
+
+.card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 28px 24px;
+  width: 100%;
+  max-width: 420px;
+  align-self: flex-start;
+  margin-top: max(24px, 6vh);
+}
+
+.eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+h1 { font-size: 27px; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 6px; }
+.lead { font-size: 15px; color: var(--ink); margin: 4px 0 0; }
+.memo { font-size: 14px; color: var(--muted); margin: 8px 0 0; }
+.dest { display: inline-block; font-size: 12.5px; font-weight: 600; color: var(--mint-deep); background: var(--mint-soft); padding: 5px 11px; border-radius: 999px; margin: 12px 0 0; }
+.muted { color: var(--muted); font-size: 13.5px; margin: 4px 0 0; }
+.addr { font-size: 13px; color: var(--muted); margin: 0; }
+
+.stack { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
+.route { display: flex; flex-direction: column; gap: 6px; margin-top: 22px; }
+.route p { margin: 0; font-size: 15px; }
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 14px 16px;
+  border-radius: 15px;
+  cursor: pointer;
+}
+.btn:hover { border-color: var(--mint-deep); }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btn.primary { background: var(--mint-deep); color: #fff; border-color: var(--mint-deep); margin-top: 8px; }
+
+.notice { font-size: 12px; color: var(--muted); margin: 22px 0 0; line-height: 1.45; }
+.error { font-size: 13.5px; color: var(--danger); margin: 16px 0 0; }
+
+.check { width: 52px; height: 52px; border-radius: 50%; background: var(--mint-soft); color: var(--mint-deep); font-size: 26px; display: flex; align-items: center; justify-content: center; margin-bottom: 14px; }
+
+@media (prefers-color-scheme: dark) {
+  :root { --ink: #eef2f0; --muted: #9aa8a2; --canvas: #0c1310; --paper: #131c18; --line: #223029; --mint-soft: #16281f; }
+}
