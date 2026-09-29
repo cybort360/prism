@@ -43,3 +43,31 @@ test('quote rejects a request that is not open', async () => {
   const { svc } = fixture({ request: { status: 'PAID' } });
   await assert.rejects(() => svc.quote({ requestId: 'req_x', payerAddress: '0xABC0000000000000000000000000000000000001', sourceChain: 'base', sourceAsset: 'USDC' }), /not open/);
 });
+
+test('fulfill verifies the payer signature, mints to the requester, marks PAID, fires the sweep', async (t) => {
+  const { svc, store, requestService } = fixture();
+  // stub signature verification via the injectable seam
+  svc._verify = async () => true;
+  let minted;
+  svc.mint = async (to, amt) => { minted = { to, amt }; return '0xdeliver'; };
+  const res = await svc.fulfill({ requestId: 'req_x', payerAddress: '0xAbc0000000000000000000000000000000000001', sourceChain: 'base', signature: '0xsig' });
+  assert.equal(res.status, 'PAID');
+  assert.equal(res.deliveryTxHash, '0xdeliver');
+  assert.equal(minted.to, '0x9226D56F93A3Fe4E78795BBaC1aecfF61E6A28F1');
+  assert.equal(minted.amt, '20000000');
+  assert.equal(store.read().requests.req_x.status, 'PAID');
+});
+
+test('fulfill rejects a bad signature', async () => {
+  const { svc } = fixture();
+  svc._verify = async () => false;
+  await assert.rejects(() => svc.fulfill({ requestId: 'req_x', payerAddress: '0xAbc0000000000000000000000000000000000001', sourceChain: 'base', signature: '0xbad' }), /signature/);
+});
+
+test('fulfill is a no-op mint when not in demo mode (quote-only / preview)', async () => {
+  const { svc } = fixture({ mode: 'preview' });
+  svc._verify = async () => true;
+  let minted = false; svc.mint = async () => { minted = true; return '0x'; };
+  await assert.rejects(() => svc.fulfill({ requestId: 'req_x', payerAddress: '0xAbc0000000000000000000000000000000000001', sourceChain: 'base', signature: '0xsig' }), /not available/);
+  assert.equal(minted, false);
+});

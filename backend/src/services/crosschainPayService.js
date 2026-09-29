@@ -1,7 +1,7 @@
 import { getAddress, isAddress } from 'viem';
 import { auroraApiClient } from '../aurora/index.js';
 import { knownChain, resolveAsset } from '../aurora/assets.js';
-import { mintUsdcTo } from '../chain/eth.js';
+import { verifyAccountMessage, mintUsdcTo } from '../chain/eth.js';
 
 function httpError(statusCode, message) { const e = new Error(message); e.statusCode = statusCode; return e; }
 
@@ -47,5 +47,39 @@ export class CrossChainPayService {
       route: quoted.quote,
       preview: this.config.aurora.mode !== 'demo' // demo → will settle (mint); else quote-only
     };
+  }
+
+  paymentMessage(view, payerAddress) {
+    // Human-readable, and binds the exact request + amount + both parties so a captured signature
+    // cannot be reused for another request (and the OPEN→PAID transition blocks re-use of this one).
+    return `Prism cross-chain payment\nRequest: ${view.requestId}\nAmount: ${view.amountAtomic} ${view.token}\nTo: ${getAddress(view.requesterAccount)}\nFrom: ${getAddress(payerAddress)}`;
+  }
+
+  async _verify(payerAddress, message, signature) {
+    return verifyAccountMessage(payerAddress, message, signature);
+  }
+
+  async fulfill({ requestId, payerAddress, sourceChain, signature }) {
+    const view = this._openRequest(requestId);
+    // strict:false — well-formed hex address only; we don't require EIP-55 checksum casing from callers.
+    if (!isAddress(String(payerAddress ?? ''), { strict: false })) throw httpError(400, 'a valid payer address is required');
+    const chain = String(sourceChain ?? '').trim().toLowerCase();
+    if (!knownChain(chain)) throw httpError(400, `unsupported source chain '${chain}'`);
+
+    const ok = await this._verify(payerAddress, this.paymentMessage(view, payerAddress), signature);
+    if (!ok) throw httpError(400, 'payment signature does not match the connected wallet');
+
+    if (this.config.aurora.mode !== 'demo') {
+      // preview: real quote shown, but this build cannot settle (Aurora carries Monad mainnet only).
+      throw httpError(409, 'settlement is not available on this deployment (AURORA_MODE must be demo)');
+    }
+
+    // Simulated Aurora delivery = a real on-chain USDC mint to the requester (money-truth credit).
+    const deliveryTxHash = await this.mint(view.requesterAccount, view.amountAtomic);
+    // Mark PAID with the cross-chain payer, then relay the requester's pre-signed sweep (if any).
+    this.requests.markPaid(requestId, null, deliveryTxHash, { payerAddress: getAddress(payerAddress), sourceChain: chain });
+    const sweep = await this.sweeps.executeFor(requestId).catch(() => ({ state: 'FAILED' }));
+
+    return { status: 'PAID', deliveryTxHash, destination: view.destination, sweep };
   }
 }
