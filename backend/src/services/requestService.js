@@ -204,7 +204,7 @@ export class RequestService {
     });
   }
 
-  markPaid(requestId, operationId, transactionHash) {
+  markPaid(requestId, operationId, transactionHash, crossChainPayer = null) {
     if (!requestId) return;
     this.store.mutate(data => {
       const r = data.requests[requestId];
@@ -212,6 +212,9 @@ export class RequestService {
       r.status = 'PAID';
       r.paymentOperationId = operationId;
       r.transactionHash = transactionHash ?? null;
+      if (crossChainPayer) {
+        r.crossChainPayer = { payerAddress: crossChainPayer.payerAddress, sourceChain: crossChainPayer.sourceChain, viaAurora: true };
+      }
       r.paidAt = new Date().toISOString();
     });
   }

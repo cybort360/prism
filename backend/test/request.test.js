@@ -55,3 +55,15 @@ test('request is stored with canonical USDC metadata', async () => {
   assert.equal(draft.request.tokenSymbol, 'USDC');
   await service.commit({ requesterPrismId: 'a', requestId: draft.request.requestId, signature: await a.signMessage(draft.signable) });
 });
+
+test('markPaid records a cross-chain payer when given one', async () => {
+  const { a, store, service } = fixture();
+  const draft = service.draft({ requesterPrismId: 'a', amountAtomic: '20000000', destination: 'PRIMARY' });
+  await service.commit({ requesterPrismId: 'a', requestId: draft.request.requestId, signature: await a.signMessage(draft.signable) });
+  service.markPaid(draft.request.requestId, null, '0xdeliver', { payerAddress: '0xAbc0000000000000000000000000000000000001', sourceChain: 'base' });
+  const stored = store.read().requests[draft.request.requestId];
+  assert.equal(stored.status, 'PAID');
+  assert.equal(stored.crossChainPayer.payerAddress, '0xAbc0000000000000000000000000000000000001');
+  assert.equal(stored.crossChainPayer.sourceChain, 'base');
+  assert.equal(stored.crossChainPayer.viaAurora, true);
+});
