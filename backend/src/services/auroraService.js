@@ -231,11 +231,6 @@ export class AuroraService {
     return { ...this._publicDeposit(updated), statusKnown: true };
   }
 
-  // Minimal MockUSDC mint ABI — demo delivery credits real testnet USDC to the user's own account.
-  static get MINT_ABI() {
-    return [{ type: 'function', name: 'mint', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [] }];
-  }
-
   /**
    * Demo-only: simulate an inbound cross-chain deposit. The relayer mints real testnet USDC to the
    * caller's own account (a genuine on-chain credit — money-truth holds) and the deposit advances to
@@ -252,11 +247,8 @@ export class AuroraService {
 
     // Real on-chain credit: mint testnet USDC to the user. (If this deployment's USDC is not the
     // mintable mock, replace with a transfer from a funded relayer balance — same shape.)
-    const { getAddress } = await import('viem');
-    const txHash = await this.chain.writeContract({
-      address: getAddress(this.config.chain.usdc), abi: AuroraService.MINT_ABI, functionName: 'mint',
-      args: [getAddress(account), BigInt(amountAtomic)]
-    });
+    const { mintUsdcTo } = await import('../chain/eth.js');
+    const txHash = await mintUsdcTo(account, amountAtomic);
     await this.chain.getTransactionReceipt(txHash).catch(() => null);
 
     // Advance the deposit to delivered through the existing status machine ('SUCCESS' -> 'delivered').

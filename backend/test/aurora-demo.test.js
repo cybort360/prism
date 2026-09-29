@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { meraAccount, PK_A } from './helpers.js';
 import { JsonStore } from '../src/lib/jsonStore.js';
+import { setChainProvider, resetChainProvider } from '../src/providers/index.js';
 function tmpStore() { return new JsonStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prism-aurora-')), 'store.json')); }
 
 test('config: AURORA_MODE defaults to preview; demo flag derived', async () => {
@@ -64,7 +65,7 @@ test('demo mode: createDepositAddress resolves Monad USDC and returns an address
   }
 });
 
-test('simulateInboundDeposit credits the caller and delivers the deposit', async () => {
+test('simulateInboundDeposit credits the caller and delivers the deposit', async (t) => {
   const { AuroraService } = await import('../src/services/auroraService.js');
   const store = tmpStore();
   const account = '0x00000000000000000000000000000000000000A1';
@@ -73,7 +74,12 @@ test('simulateInboundDeposit credits the caller and delivers the deposit', async
   const config = { aurora: { mode: 'demo', destinationChain: 'monad' }, chain: { usdc: '0x534b2f3A21130d7a60830c2Df862319e593943A3' } };
   const identityService = { get: () => ({ prismId: 'p1', accountAddress: account }) };
   let minted = null;
-  const chain = { writeContract: async (args) => { minted = args; return '0xmint'; }, getTransactionReceipt: async () => ({ status: 'success', blockNumber: 1n }) };
+  // mintUsdcTo (backend/src/chain/eth.js) goes through the shared chainProvider() registry, not the
+  // service's injected `chain` — so the mint itself is mocked via setChainProvider; the injected
+  // `chain` still backs the post-mint getTransactionReceipt call.
+  setChainProvider({ writeContract: async (args) => { minted = args; return '0xmint'; } });
+  t.after(resetChainProvider);
+  const chain = { getTransactionReceipt: async () => ({ status: 'success', blockNumber: 1n }) };
   const svc = new AuroraService({ store, config, identityService, paymentService: null, chain });
   const res = await svc.simulateInboundDeposit({ prismId: 'p1', depositAddress: addr, sourceChain: 'base', amountAtomic: '50000000' });
   assert.equal(res.txHash, '0xmint');
