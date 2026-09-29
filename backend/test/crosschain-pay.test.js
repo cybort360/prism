@@ -18,9 +18,19 @@ function fixture(overrides = {}) {
     ...overrides.request };
   const store = { _d: { requests: { req_x: request } }, read() { return this._d; }, mutate(fn) { fn(this._d); return this._d.requests.req_x; } };
   const requester = { accountAddress: '0x9226D56F93A3Fe4E78795BBaC1aecfF61E6A28F1', handle: 'tester1' };
+  // Stub requestService modelling the REAL single-flight contract: claim is a synchronous OPEN→settling
+  // transition (throws 409 if already claimed / not open), markPaid flips to PAID and clears the claim,
+  // release clears it. This lets the concurrency test below genuinely exercise the guard.
   const requestService = {
-    getPublicView: (id) => ({ requestId: id, requesterAccount: requester.accountAddress, requesterHandle: requester.handle, amountAtomic: request.amountAtomic, token: 'USDC', destination: request.destination, status: request.status }),
-    markPaid: (...a) => { store._d.requests.req_x.status = 'PAID'; store._d.requests.req_x._markPaidArgs = a; }
+    getPublicView: (id) => { const r = store._d.requests[id]; return { requestId: id, requesterAccount: requester.accountAddress, requesterHandle: requester.handle, amountAtomic: r.amountAtomic, token: 'USDC', destination: r.destination, status: r.status }; },
+    claimForCrossChainSettlement: (id) => store.mutate((d) => {
+      const r = d.requests[id];
+      if (!r || r.status !== 'OPEN') { const e = new Error('this request is not open'); e.statusCode = 409; throw e; }
+      if (r.settling) { const e = new Error('this request is already being paid'); e.statusCode = 409; throw e; }
+      r.settling = true; return r;
+    }),
+    releaseCrossChainSettlement: (id) => store.mutate((d) => { const r = d.requests[id]; if (r && r.settling && r.status === 'OPEN') r.settling = false; }),
+    markPaid: (...a) => { const r = store._d.requests.req_x; r.status = 'PAID'; r.settling = false; r._markPaidArgs = a; }
   };
   const sweepService = { executeFor: async () => ({ state: 'SWEPT' }) };
   const auroraClient = { quote: async (req) => ({ quote: { amountIn: '20020000', amountInFormatted: '20.02', timeEstimate: 30, dry: req.dry } }) };
@@ -70,4 +80,31 @@ test('fulfill is a no-op mint when not in demo mode (quote-only / preview)', asy
   let minted = false; svc.mint = async () => { minted = true; return '0x'; };
   await assert.rejects(() => svc.fulfill({ requestId: 'req_x', payerAddress: '0xAbc0000000000000000000000000000000000001', sourceChain: 'base', signature: '0xsig' }), /not available/);
   assert.equal(minted, false);
+});
+
+test('two concurrent fulfillments mint exactly once (single-flight, no double-credit)', async () => {
+  const { svc, store } = fixture();
+  svc._verify = async () => true;
+  let mintCalls = 0;
+  // A mint that yields to the event loop, so both fulfillments are in-flight at once if the claim
+  // did not guard them. Without the claim, both would pass the OPEN check and both would mint.
+  svc.mint = async () => { mintCalls += 1; await new Promise((r) => setTimeout(r, 5)); return '0xdeliver'; };
+  const call = () => svc.fulfill({ requestId: 'req_x', payerAddress: '0xAbc0000000000000000000000000000000000001', sourceChain: 'base', signature: '0xsig' });
+  const results = await Promise.allSettled([call(), call()]);
+  const ok = results.filter((r) => r.status === 'fulfilled');
+  const rejected = results.filter((r) => r.status === 'rejected');
+  assert.equal(mintCalls, 1, 'the requester is credited exactly once for one request');
+  assert.equal(ok.length, 1, 'exactly one fulfillment succeeds');
+  assert.equal(rejected.length, 1, 'the concurrent one is rejected');
+  assert.equal(rejected[0].reason.statusCode, 409);
+  assert.equal(store.read().requests.req_x.status, 'PAID');
+});
+
+test('fulfill releases the claim if the mint throws, leaving the request payable', async () => {
+  const { svc, store } = fixture();
+  svc._verify = async () => true;
+  svc.mint = async () => { throw new Error('mint reverted'); };
+  await assert.rejects(() => svc.fulfill({ requestId: 'req_x', payerAddress: '0xAbc0000000000000000000000000000000000001', sourceChain: 'base', signature: '0xsig' }), /mint reverted/);
+  assert.equal(store.read().requests.req_x.status, 'OPEN', 'still open — the credit never happened');
+  assert.equal(store.read().requests.req_x.settling, false, 'claim released');
 });

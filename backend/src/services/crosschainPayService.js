@@ -74,9 +74,24 @@ export class CrossChainPayService {
       throw httpError(409, 'settlement is not available on this deployment (AURORA_MODE must be demo)');
     }
 
-    // Simulated Aurora delivery = a real on-chain USDC mint to the requester (money-truth credit).
-    const deliveryTxHash = await this.mint(view.requesterAccount, view.amountAtomic);
-    // Mark PAID with the cross-chain payer, then relay the requester's pre-signed sweep (if any).
+    // Single-flight claim BEFORE the mint: a synchronous OPEN→settling transition so two concurrent
+    // fulfillments of the same request can't both pass the OPEN check and both credit the requester
+    // (TOCTOU double-spend). The claim throws 409 if another fulfillment already holds it or the
+    // request is no longer OPEN — the authoritative check, re-validated atomically here rather than at
+    // the earlier _openRequest read (which is only an early-out and the source of `view`).
+    this.requests.claimForCrossChainSettlement(requestId);
+
+    let deliveryTxHash;
+    try {
+      // Simulated Aurora delivery = a real on-chain USDC mint to the requester (money-truth credit).
+      deliveryTxHash = await this.mint(view.requesterAccount, view.amountAtomic);
+    } catch (err) {
+      // The credit never happened — release the claim so the request is payable again, never stuck.
+      this.requests.releaseCrossChainSettlement(requestId);
+      throw err;
+    }
+
+    // Mark PAID with the cross-chain payer (also clears the claim), then relay the pre-signed sweep.
     this.requests.markPaid(requestId, null, deliveryTxHash, { payerAddress: getAddress(payerAddress), sourceChain: chain });
     const sweep = await this.sweeps.executeFor(requestId).catch(() => ({ state: 'FAILED' }));
 
