@@ -22,9 +22,11 @@ So on this build:
 ## Run (demo)
 
 ```bash
-# 1. backend in demo mode, allowing this app's origin:
+# 1. backend: demo settlement + a real Aurora quote + this app's origin allowed.
+#    AURORA_APP_KEY is the free, public studio.aurora.dev key — the quote genuinely hits Aurora, so
+#    it is required for a real route (without it the quote 502s). AURORA_MODE=demo makes fulfill mint.
 cd ../../backend
-AURORA_MODE=demo PAY_WEB_ORIGIN=http://localhost:5173 node src/server.js   # (with your .env)
+AURORA_MODE=demo AURORA_APP_KEY=<free-public-key> PAY_WEB_ORIGIN=http://localhost:5173 node src/server.js  # (with your .env)
 
 # 2. this app:
 cd ../apps/pay-web

@@ -20,10 +20,11 @@ export const wagmiConfig = createConfig({
   }
 });
 
-// Aurora chain slugs keyed by wagmi chain id — the source chain the backend quote expects.
+// Aurora chain slugs keyed by wagmi chain id — the source chain the backend quote expects. These MUST
+// match the backend's CHAINS keys in src/aurora/assets.js (eth/arb/base/op), NOT the long chain names.
 export const CHAIN_SLUG: Record<number, string> = {
   [base.id]: 'base',
-  [arbitrum.id]: 'arbitrum',
-  [optimism.id]: 'optimism',
-  [mainnet.id]: 'ethereum'
+  [arbitrum.id]: 'arb',
+  [optimism.id]: 'op',
+  [mainnet.id]: 'eth'
 };
