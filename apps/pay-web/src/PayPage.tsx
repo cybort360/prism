@@ -41,7 +41,7 @@ export function PayPage() {
     setBusy(true);
     try {
       const slug = CHAIN_SLUG[chainId];
-      if (!slug) { setActionError('Switch your wallet to Base, Arbitrum, Optimism, or Ethereum.'); return; }
+      if (!slug) { setActionError('Switch your wallet to Base, Arbitrum, or Ethereum.'); return; }
       setRoute(await quoteApi(requestId, { payerAddress: address!, sourceChain: slug, sourceAsset: 'USDC' }));
     } catch (e) {
       setActionError((e as Error).message);

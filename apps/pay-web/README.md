@@ -36,8 +36,8 @@ npm run dev                 # http://localhost:5173
 ```
 
 Create a **universal** payment request in the Prism iOS app (optionally with a Savings/Circle
-destination), open `http://localhost:5173/pay/<requestId>`, connect a wallet (Base/Arbitrum/Optimism/
-Ethereum), get the real Aurora quote, and pay. The payer signs a message; the backend verifies it,
+destination), open `http://localhost:5173/pay/<requestId>`, connect a wallet (Base/Arbitrum/Ethereum),
+get the real Aurora quote, and pay. The payer signs a message; the backend verifies it,
 mints to the requester, marks the request PAID, and relays the sweep.
 
 ## Config

@@ -30,7 +30,8 @@ export class CrossChainPayService {
     const destination = await resolveAsset(destChain, 'USDC');
     if (!destination.ok) throw httpError(503, `cannot resolve USDC on ${destChain}: ${destination.reason}`);
 
-    // Always a real DRY quote — the active client is the demo stub in demo mode and returns null.
+    // Always a real DRY quote. `this.aurora` is the real auroraApiClient (even in demo mode) — demo
+    // only simulates settlement, not routing — so this genuinely hits Aurora for real pricing.
     const quoted = await this.aurora.quote({
       dry: true, swapType: 'EXACT_OUTPUT', depositType: 'ORIGIN_CHAIN',
       amount: String(view.amountAtomic),
