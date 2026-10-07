@@ -8,7 +8,12 @@ settings:
     SWIFT_VERSION: "6.0"
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
+    # Debug (simulator / local dev) talks to the local backend.
     PRISM_API_BASE_URL: "http://127.0.0.1:8787"
+  configs:
+    # Release (what Archive / TestFlight builds use) talks to the deployed backend.
+    Release:
+      PRISM_API_BASE_URL: "https://app.getprism.xyz"
 targets:
   Prism:
     type: application
@@ -46,12 +51,17 @@ targets:
         # which APIClient treats as unset and falls back to http://127.0.0.1:8787. A device/TestFlight
         # build MUST set PRISM_API_BASE_URL to a reachable https backend — see docs/TESTFLIGHT.md.
         PRISM_API_BASE_URL: "$(PRISM_API_BASE_URL)"
-    # Associated Domains (Mera passkey webcredentials + universal-link applinks) are intentionally
-    # OMITTED so the first TestFlight build signs and uploads with zero domain setup. Passkey autofill
-    # and universal links stay off until a real deployment domain is wired. To re-enable, add back an
-    # `entitlements:` block here pointing at your domain and host the AASA file with your real Team ID
-    # at https://<domain>/.well-known/apple-app-site-association — see docs/TESTFLIGHT.md §"Passkeys"
-    # and docs/PASSKEY_SETUP.md.
+    # Associated Domains: Mera passkey webcredentials + universal-link applinks, on the app's
+    # relying-party subdomain. The backend serves the matching AASA at
+    # https://app.getprism.xyz/.well-known/apple-app-site-association when APPLE_APP_ID is set (see
+    # backend/DEPLOY.md). Required for device passkeys and external Beta App Review. To change the
+    # domain, update it here AND in PRISM_API_BASE_URL + the backend's APPLE_APP_ID host.
+    entitlements:
+      path: Prism/Prism.entitlements
+      properties:
+        com.apple.developer.associated-domains:
+          - webcredentials:app.getprism.xyz
+          - applinks:app.getprism.xyz
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.prism.mobile

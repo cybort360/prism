@@ -52,21 +52,17 @@ Nothing team-specific is committed, so you point the app at **your** Apple team:
 ## 4. Point the app at a reachable backend (important)
 
 Prism is a thin client; it talks to the Node backend in `backend/`. The app reads its base URL from
-the `PRISM_API_BASE_URL` build setting (wired through `Info.plist`). **If you leave it unset, the app
-falls back to `http://127.0.0.1:8787`, which a tester's device cannot reach** — the UI launches but
-every network call fails.
+the `PRISM_API_BASE_URL` build setting (wired through `Info.plist`). It is already configured:
 
-Before archiving, set it to a backend your testers can hit over **https**:
+- **Debug** (simulator / local dev) → `http://127.0.0.1:8787`
+- **Release** (Archive / TestFlight) → `https://app.getprism.xyz`
 
-- Edit `ios/project.yml` → `settings.base.PRISM_API_BASE_URL: "https://your-backend.example"`, then
-  re-run `./bootstrap.sh`.
-- Host the backend somewhere public (the demo backend is HTTP/loopback only; a TestFlight build needs
-  a real https deployment). App Transport Security requires https for any non-local host — the local
-  networking exception in `Info.plist` does **not** relax TLS for remote hosts.
-
-> First upload just to confirm the pipeline? You can ship with the localhost fallback — the app
-> installs and launches, backend-dependent screens just won't load. Set a real URL before giving it to
-> anyone who will actually use it.
+So an archive automatically targets the deployed backend — **you just have to deploy it there**. Follow
+[`../backend/DEPLOY.md`](../backend/DEPLOY.md) to put the backend on `app.getprism.xyz` (Fly.io), then
+`fly certs add app.getprism.xyz`. App Transport Security requires https for any non-local host (the
+local-networking exception in `Info.plist` does not relax TLS for remote hosts), which `app.getprism.xyz`
+satisfies once its cert is issued. To use a different domain, change it in `ios/project.yml`
+(`settings.configs.Release.PRISM_API_BASE_URL` **and** the associated-domains), then re-run `./bootstrap.sh`.
 
 ## 5. Archive and upload
 
@@ -101,20 +97,24 @@ App Review). Testers install the **TestFlight** app and redeem your invite.
 
 ---
 
-## Passkeys and universal links (deferred — off in the first build)
+## Passkeys and universal links (required for external review)
 
-To keep the first upload frictionless, **Associated Domains are intentionally omitted** (see the note
-in `ios/project.yml` and the commented template in `ios/Prism/Prism.entitlements`). The app works
-without them; Mera passkey autofill and `prism.app/pay/...` universal links stay off until you wire a
-real domain. To enable later:
+The app is configured for the relying-party domain **`app.getprism.xyz`**: `ios/project.yml` declares
+the Associated Domains entitlement (`webcredentials:` + `applinks:`), and the backend serves the
+matching AASA. **External Beta App Review needs device passkeys to work**, so all of this must be live
+before you submit to external testers:
 
-1. Re-add an `entitlements:` block to the Prism target in `ios/project.yml` pointing at
-   `Prism/Prism.entitlements`, and put your domain in the `associated-domains` array
-   (`webcredentials:<domain>` + `applinks:<domain>`).
-2. Host the AASA file with your **real 10-character Team ID** at
-   `https://<domain>/.well-known/apple-app-site-association` (the repo's `web/.well-known/...` still
-   has a `TEAMID` placeholder — replace it). See [`PASSKEY_SETUP.md`](PASSKEY_SETUP.md).
-3. Re-run `./bootstrap.sh`, re-archive, re-upload.
+1. **Deploy the backend** to `app.getprism.xyz` with `APPLE_APP_ID=<TeamID>.com.prism.mobile` set —
+   the backend then serves `https://app.getprism.xyz/.well-known/apple-app-site-association` with your
+   Team ID baked in. See [`../backend/DEPLOY.md`](../backend/DEPLOY.md).
+2. **Enable the Associated Domains capability** on the App ID in the Apple Developer portal
+   (Certificates, Identifiers & Profiles → your App ID). With Automatic signing, Xcode syncs it.
+3. **Verify** `curl https://app.getprism.xyz/.well-known/apple-app-site-association` returns your
+   `APPLE_APP_ID` in `webcredentials.apps` and `applinks…appIDs`.
+
+To use a different domain, change it in `ios/project.yml` (associated-domains **and** the Release
+`PRISM_API_BASE_URL`) and in the backend's `APPLE_APP_ID` host, then re-run `./bootstrap.sh`.
+Remember: a passkey is bound to the domain it was created on — pick one and keep it.
 
 ## Troubleshooting
 
