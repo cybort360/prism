@@ -60,6 +60,10 @@ export const config = {
   port: Number(env('PORT', '8787')),
   nodeEnv: env('NODE_ENV', 'development'),
   storePath: path.resolve(env('STORE_PATH', './data/store.json')),
+  // Apple App ID (<TeamID>.<bundleId>, e.g. "ABCDE12345.com.prism.mobile"). When set, the backend
+  // serves the Apple App Site Association at /.well-known/apple-app-site-association so this host can
+  // be the relying-party domain for device passkeys and /pay/* universal links. Empty → not served.
+  appleAppId: env('APPLE_APP_ID', ''),
   sessionSecret: env('SESSION_SECRET', 'dev-session-secret-change-me'),
   resolverPepper: env('RESOLVER_PEPPER', 'dev-resolver-pepper-change-me'),
   // Origin allowed to call the unauthenticated cross-chain pay + public-request routes (the pay-web app).

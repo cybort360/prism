@@ -122,6 +122,18 @@ function match(method, pathname) {
 
 // --- health + config ---------------------------------------------------------
 route('GET', '/health', async () => ({ ok: true, chainId: config.chain.chainId.toString() }));
+
+// Apple App Site Association — served only when APPLE_APP_ID is configured, so this host can be the
+// relying-party domain for device passkeys (webcredentials) and /pay/* universal links (applinks).
+// Served as application/json, which modern iOS accepts. Unauthenticated by design (public file).
+route('GET', '/.well-known/apple-app-site-association', async () => {
+  if (!config.appleAppId) { const e = new Error('not found'); e.statusCode = 404; throw e; }
+  return {
+    webcredentials: { apps: [config.appleAppId] },
+    applinks: { details: [{ appIDs: [config.appleAppId], components: [{ '/': '/pay/*', comment: 'Prism payment links resolve to a Prism identity, never a raw address' }] }] },
+    appclips: { apps: [] }
+  };
+});
 route('GET', '/v1/config', async () => ({
   chainId: config.chain.chainId.toString(),
   usdc: config.chain.usdc,
