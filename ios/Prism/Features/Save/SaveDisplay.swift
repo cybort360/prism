@@ -51,7 +51,9 @@ struct SaveDisplay: Equatable {
   // MARK: formatting
 
   private func dollars(_ atomic: String?) -> String {
-    guard let atomic, !atomic.isEmpty, atomic.allSatisfy({ $0.isNumber || $0 == "-" }) else { return "-" }
+    // Em-dash (—) is the "value unknown" placeholder, matching SaveDisplayTests; the "-" inside the
+    // allSatisfy is the hyphen-minus that may legitimately prefix a negative atomic amount.
+    guard let atomic, !atomic.isEmpty, atomic.allSatisfy({ $0.isNumber || $0 == "-" }) else { return "—" }
     return Money.dollars(fromAtomic: atomic)
   }
   private func signedDollars(_ atomic: String?) -> String? {

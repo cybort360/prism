@@ -31,6 +31,13 @@ jobs:
 
       - run: npm ci
 
+      # circles-limits.test.js imports tools/circles/verify-allowance-module.mjs, which depends on
+      # viem from tools/circles/node_modules (a separate package, not installed by backend's npm ci).
+      # Without this the version-floor vector errors with ERR_MODULE_NOT_FOUND 'viem'.
+      - name: Install tools/circles deps
+        working-directory: tools/circles
+        run: npm install --no-audit --no-fund
+
       # The backend reads configuration from process.env only — it never loads a .env file —
       # so the suite runs on config.js defaults with no secrets provisioned.
       - name: Test
