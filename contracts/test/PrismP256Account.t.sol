@@ -76,4 +76,21 @@ contract PrismP256AccountTest is Test {
         vm.expectRevert(PrismP256Account.InvalidPublicKey.selector);
         new PrismP256Account(1, 1); // not on the P-256 curve
     }
+
+    // --- P1.5: explicit scalar-range guard, non-vacuous even when the precompile would accept --------
+    // The precompile double is armed to accept this digest, so these reversions come from the library's
+    // own r, s ∈ [1, n-1] check rather than from the precompile.
+    uint256 internal constant CURVE_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551;
+
+    function testZeroScalarRejected() public {
+        _armPrecompileFor(amount, recipient, nonce, validBefore);
+        vm.expectRevert(PrismP256Account.BadP256Signature.selector);
+        account.pay(token, recipient, amount, nonce, validBefore, 1, 0); // s = 0 ∉ [1, n-1]
+    }
+
+    function testScalarAtCurveOrderRejected() public {
+        _armPrecompileFor(amount, recipient, nonce, validBefore);
+        vm.expectRevert(PrismP256Account.BadP256Signature.selector);
+        account.pay(token, recipient, amount, nonce, validBefore, CURVE_N, 1); // r = n ∉ [1, n-1]
+    }
 }

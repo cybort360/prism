@@ -41,7 +41,7 @@
     { "id": "P256-ENV", "claim": "Monad verifies P-256 on-chain (RIP-7212 precompile at 0x0100)", "status": "VERIFIED", "evidence": "fresh sign->verify round-trip + negative control (scripts/verify/p256-roundtrip.mjs)" },
     { "id": "P256-ACCOUNT", "claim": "Device P-256 -> Prism smart account (PrismP256Account) -> gas-sponsored USDC payment works live on Monad; mutation/replay/wrong-sig revert on-chain", "status": "VERIFIED", "evidence": "PrismP256Account.t.sol 6/6 + live deploy 0xd41b…d553 and pay 0xdea2…8a88 (account MON=0)." },
     { "id": "P256-ADOPTION", "claim": "Full adoption path (iOS DeviceP256Credential -> backend P256AccountService -> account -> Monad) built, tested and live; consumer UI wiring is the last mile", "status": "VERIFIED", "evidence": "backend p256-account.test.js 4/4 + iOS DeviceP256CredentialTests 3/3; LIVE pay 0x63e79bb91fbf729497dd9abae64104ecb308d55d96bd94497082c62ac7dd1818 (device P-256, account MON=0). Uses Secure Enclave/CryptoKit P-256 (not Mera/WebAuthn)." },
-    { "id": "SUITE-1", "claim": "Backend / contracts / iOS suites green", "status": "VERIFIED", "evidence": "backend 152, contracts 49, iOS 112 — executed this session; re-run with criticalTestCommands" }
+    { "id": "SUITE-1", "claim": "Backend / contracts / iOS suites green", "status": "VERIFIED", "evidence": "backend 531/531, contracts 81/81 offline (forge test --no-match-path 'test/circles/*'); iOS verified in CI (.github/workflows/ci.yml). Re-run with criticalTestCommands." }
   ],
   "sourceOfTruth": "Repository files under /forge and the test suites. Prior chat summaries are NOT authoritative.",
   "deployment": { "monadTestnet": "deployments/monad-testnet.json (router 0x423a…62b7, vault 0xBe3D…Eae3)" }

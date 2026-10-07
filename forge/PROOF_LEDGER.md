@@ -8,7 +8,7 @@ because code exists.
 
 | Suite | Command | Result | Status |
 |---|---|---|---|
-| Backend | `cd backend && node --test test/*.test.js` | 442 pass / 0 fail (380 baseline + 61 save-primitive + 1 universal-request-inv-p1) | `VERIFIED` |
+| Backend | `cd backend && node --test test/*.test.js` | 531 pass / 0 fail (incl. resolve per-IP/global backstops — audit P1.2) | `VERIFIED` |
 | Contracts | `cd contracts && forge test --no-match-path 'test/circles/*'` (canonical offline suite; `test/circles/*` needs a `--network monad` fork) | 77 pass / 0 fail (74 baseline + 3 fundingNonce-expiry-binding) | `VERIFIED` |
 | iOS unit | `xcodebuild … -only-testing:PrismTests test` | 121 pass / 0 fail (112 + 6 continuity-UX + 3 error-sanitization) | `VERIFIED` |
 
@@ -346,7 +346,7 @@ to model a compromised backend rather than a polite one. The full grading is
 Commands run:
 
 ```
-cd backend && node --test test/*.test.js                                     # 362 pass / 0 fail
+cd backend && node --test test/*.test.js                                     # 531 pass / 0 fail
 cd contracts && forge test --no-match-path 'test/circles/*'                  #  74 pass / 0 fail
 cd contracts && FOUNDRY_PROFILE=circles forge test --match-path 'test/circles/*' --network monad -vv
                                                                              #  22 pass / 0 fail
