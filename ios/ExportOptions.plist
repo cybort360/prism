@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template for `xcodebuild -exportArchive -exportOptionsPlist ios/ExportOptions.plist`.
+  Replace REPLACE_WITH_TEAM_ID with your 10-character Apple Developer Team ID (App Store Connect >
+  Membership). Most people never need this file — archiving and uploading from the Xcode Organizer
+  GUI is simpler (see docs/TESTFLIGHT.md). This exists only for a scripted/CI upload path.
+  On Xcode < 15.3 use method "app-store" instead of "app-store-connect".
+-->
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>app-store-connect</string>
+  <key>destination</key>
+  <string>export</string>
+  <key>teamID</key>
+  <string>REPLACE_WITH_TEAM_ID</string>
+  <key>signingStyle</key>
+  <string>automatic</string>
+  <key>uploadSymbols</key>
+  <true/>
+  <key>manageAppVersionAndBuildNumber</key>
+  <true/>
+</dict>
+</plist>
