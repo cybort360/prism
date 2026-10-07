@@ -10,8 +10,10 @@ Read [`PRODUCT.md`](PRODUCT.md) and [`INVARIANTS.md`](INVARIANTS.md). The one cl
 ## 1. Run the suites (evidence, not screenshots)
 ```bash
 make test          # or individually:
-cd backend && node --test test/*.test.js        # expect 362 pass
-cd contracts && forge test --no-match-path 'test/circles/*'   # expect 74 pass (invariants ~230s)
+# one-time: the circles allowance-module vectors need their own deps, or circles-limits.test.js errors
+(cd tools/circles && npm install --silent)
+cd backend && node --test test/*.test.js        # expect 531 pass
+cd contracts && forge test --no-match-path 'test/circles/*'   # expect 81 pass (invariants ~60s)
 cd ios && xcodegen generate && \
   xcodebuild -scheme Prism -destination 'platform=iOS Simulator,name=iPhone 17' \
   -only-testing:PrismTests test                  # needs macOS

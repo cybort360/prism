@@ -11,9 +11,9 @@ export class ResolverService {
 
   publicKey() { return { qx: this.key.qx, qy: this.key.qy, keyId: 'resolver-v1' }; }
 
-  resolvePhone(requesterPrismId, phone) {
+  resolvePhone(requesterPrismId, phone, ip = null) {
     phone = normalizeE164(phone);
-    this._consume(requesterPrismId, 'phone');
+    this._consume(requesterPrismId, 'phone', ip);
     const lookup = phoneLookupKey(phone, this.config.resolverPepper);
     const data = this.store.read();
     const targetId = data.phoneIndex[lookup];
@@ -23,8 +23,8 @@ export class ResolverService {
     return this._attest(identity, 'phone', requesterPrismId);
   }
 
-  resolveHandle(requesterPrismId, rawHandle) {
-    this._consume(requesterPrismId, 'handle');
+  resolveHandle(requesterPrismId, rawHandle, ip = null) {
+    this._consume(requesterPrismId, 'handle', ip);
     const handle = String(rawHandle).trim().replace(/^@/, '').toLowerCase();
     if (!/^[a-z0-9_]{3,24}$/.test(handle)) return { found: false, reason: 'invalid_handle' };
     const data = this.store.read();
@@ -42,8 +42,12 @@ export class ResolverService {
    * on every keystroke without burning the strict `resolve` budget that real payments depend on. It
    * still respects handle discoverability and carries its own generous rate limit against enumeration.
    */
-  handleOnPrism(requesterPrismId, rawHandle) {
+  handleOnPrism(requesterPrismId, rawHandle, ip = null) {
     consumeRateLimit(this.store, `handle-check:${requesterPrismId}`, { limit: 300, windowMs: 60 * 60_000 });
+    // Network-wide backstops so cycling identities (each with its own 300/h budget) cannot turn the
+    // cheap existence check into an unbounded enumeration oracle. Coarse on purpose: tune per deploy.
+    if (ip) consumeRateLimit(this.store, `handle-check-ip:${ip}`, { limit: 600, windowMs: 60 * 60_000 });
+    consumeRateLimit(this.store, 'handle-check-global', { limit: 20_000, windowMs: 60 * 60_000 });
     const handle = String(rawHandle ?? '').trim().replace(/^@/, '').toLowerCase();
     if (!/^[a-z0-9_]{3,24}$/.test(handle)) return { onPrism: false, handle: null, reason: 'invalid_handle' };
     const data = this.store.read();
@@ -55,8 +59,8 @@ export class ResolverService {
   }
 
   // Direct Prism-ID resolution is used for already-signed payment requests and QR/payment links.
-  resolvePrismId(requesterPrismId, prismId) {
-    this._consume(requesterPrismId, 'prism');
+  resolvePrismId(requesterPrismId, prismId, ip = null) {
+    this._consume(requesterPrismId, 'prism', ip);
     const identity = this.identityService.get(prismId);
     if (!identity) return { found: false, reason: 'not_found' };
     return this._attest(identity, 'prism', requesterPrismId);
@@ -76,9 +80,16 @@ export class ResolverService {
     return a;
   }
 
-  _consume(requesterPrismId, route) {
+  _consume(requesterPrismId, route, ip = null) {
     consumeRateLimit(this.store, `resolve:${requesterPrismId}`, { limit: 60, windowMs: 60 * 60_000 });
     consumeRateLimit(this.store, `resolve-route:${requesterPrismId}:${route}`, { limit: 40, windowMs: 60 * 60_000 });
+    // Per-identity caps alone let an attacker with N identities buy 60N/h of attested resolves. These
+    // network-wide backstops bound the whole endpoint regardless of how many identities are cycled:
+    // a per-source-IP ceiling, plus a coarse global ceiling for this backend instance. The signed
+    // attestation + OTP/Mera cost still make each resolve expensive; these just remove the ceiling's
+    // dependence on identity count. Limits are intentionally generous — tune per deployment.
+    if (ip) consumeRateLimit(this.store, `resolve-ip:${ip}`, { limit: 120, windowMs: 60 * 60_000 });
+    consumeRateLimit(this.store, 'resolve-global', { limit: 3_000, windowMs: 60 * 60_000 });
   }
 
   _attest(identity, route, requesterPrismId) {

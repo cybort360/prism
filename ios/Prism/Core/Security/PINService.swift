@@ -25,12 +25,12 @@ final class PINService: @unchecked Sendable {
     try KeychainStore.shared.set(digest, for: "pin.digest")
     try KeychainStore.shared.setString(String(iterations), for: "pin.iterations")
     defaults.set(2, forKey: "pin.kdfVersion")
-    defaults.set(0, forKey: "pin.failures")
-    defaults.removeObject(forKey: "pin.lockedUntil")
+    setCounter(0, "pin.failures")
+    setLockedUntil(nil)
   }
 
   func verify(_ pin: String) throws -> Bool {
-    if let until = defaults.object(forKey: "pin.lockedUntil") as? Date, until > Date() {
+    if let until = lockedUntil(), until > Date() {
       throw PINError.locked(until)
     }
     guard pin.count == 6, pin.allSatisfy(\.isNumber) else { return try failedAttempt() }
@@ -50,8 +50,8 @@ final class PINService: @unchecked Sendable {
     }
 
     if constantTimeEqual(actual, expected) {
-      defaults.set(0, forKey: "pin.failures")
-      defaults.removeObject(forKey: "pin.lockedUntil")
+      setCounter(0, "pin.failures")
+      setLockedUntil(nil)
       if version < 2 { try? set(pin) }
       return true
     }
@@ -59,20 +59,37 @@ final class PINService: @unchecked Sendable {
   }
 
   private func failedAttempt() throws -> Bool {
-    let failures = defaults.integer(forKey: "pin.failures") + 1
-    defaults.set(failures, forKey: "pin.failures")
+    let failures = counter("pin.failures") + 1
+    setCounter(failures, "pin.failures")
     if failures >= 5 {
       // Keep increasing the cool-down for repeated lockouts without making an
       // accidental typo permanently destructive.
-      let previousLockouts = defaults.integer(forKey: "pin.lockouts") + 1
-      defaults.set(previousLockouts, forKey: "pin.lockouts")
+      let previousLockouts = counter("pin.lockouts") + 1
+      setCounter(previousLockouts, "pin.lockouts")
       let seconds = min(30 * 60, 5 * 60 * previousLockouts)
       let until = Date().addingTimeInterval(TimeInterval(seconds))
-      defaults.set(until, forKey: "pin.lockedUntil")
-      defaults.set(0, forKey: "pin.failures")
+      setLockedUntil(until)
+      setCounter(0, "pin.failures")
       throw PINError.locked(until)
     }
     return false
+  }
+
+  // Lockout state (failures / lockouts / lockedUntil) lives in the device-bound Keychain, not
+  // UserDefaults: a device backup or a `defaults` wipe must not be able to reset the online-guessing
+  // throttle (audit P1.1). `pin.kdfVersion` deliberately stays in UserDefaults — it is not a lockout
+  // counter, and clearing it only forces a fail-closed KDF mismatch, never a bypass. On upgrade from a
+  // build that stored these in UserDefaults, the counters read as absent once (a one-time throttle
+  // reset); every lockout taken afterwards is backup-durable.
+  private func counter(_ key: String) -> Int { Int((try? KeychainStore.shared.string(for: key)) ?? "") ?? 0 }
+  private func setCounter(_ value: Int, _ key: String) { try? KeychainStore.shared.setString(String(value), for: key) }
+  private func lockedUntil() -> Date? {
+    guard let raw = try? KeychainStore.shared.string(for: "pin.lockedUntil"), let t = TimeInterval(raw) else { return nil }
+    return Date(timeIntervalSince1970: t)
+  }
+  private func setLockedUntil(_ date: Date?) {
+    if let date { try? KeychainStore.shared.setString(String(date.timeIntervalSince1970), for: "pin.lockedUntil") }
+    else { KeychainStore.shared.delete("pin.lockedUntil") }
   }
 
   private func pbkdf2(pin: String, salt: Data, iterations: Int) -> Data {

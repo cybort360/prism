@@ -59,3 +59,25 @@ test('handleOnPrism fails closed for a non-discoverable handle', () => {
   assert.equal(res.onPrism, false);
   assert.equal(res.reason, 'not_discoverable');
 });
+
+// --- P1.2: network-wide backstops so cycling identities cannot bypass the resolve ceiling ----------
+test('resolve is bounded per source IP even when the caller cycles identities', () => {
+  const { resolver } = fixture();
+  const ip = '203.0.113.9';
+  // The per-identity cap is 60/h; a fresh prismId on every call would otherwise be unbounded. The
+  // per-IP cap (120/h) must fire regardless of how many distinct identities are used from one IP.
+  let lastErr = null;
+  for (let i = 0; i < 200; i++) {
+    try { resolver.resolvePrismId(`attacker-${i}`, 'target', ip); }
+    catch (e) { lastErr = e; break; }
+  }
+  assert.ok(lastErr, 'the per-IP backstop should reject before 200 cross-identity resolves');
+  assert.equal(lastErr.statusCode, 429);
+});
+
+test('resolve without an IP still succeeds (backward compatible) and global backstop exists', () => {
+  const { resolver } = fixture();
+  // No ip argument: per-IP cap is skipped, behaviour is unchanged for in-process/trusted callers.
+  const r = resolver.resolvePrismId('sender', 'target');
+  assert.equal(r.found, true);
+});

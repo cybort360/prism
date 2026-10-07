@@ -182,11 +182,11 @@ route('POST', '/v1/me/privacy', async ({ user, body }) => identityService.public
 route('POST', '/v1/me/profile', async ({ user, body }) => identityService.publicView(identityService.setProfile(user.prismId, body)), true);
 
 // --- protected alias resolution ---------------------------------------------
-route('POST', '/v1/resolve/phone', async ({ user, body }) => resolverService.resolvePhone(user.prismId, body.phone), true);
-route('POST', '/v1/resolve/handle', async ({ user, body }) => resolverService.resolveHandle(user.prismId, body.handle), true);
+route('POST', '/v1/resolve/phone', async ({ user, body, ip }) => resolverService.resolvePhone(user.prismId, body.phone, ip), true);
+route('POST', '/v1/resolve/handle', async ({ user, body, ip }) => resolverService.resolveHandle(user.prismId, body.handle, ip), true);
 // Cheap existence check for as-you-type validation — no attestation, so it never spends the resolve budget.
-route('POST', '/v1/resolve/handle/check', async ({ user, body }) => resolverService.handleOnPrism(user.prismId, body.handle), true);
-route('POST', '/v1/resolve/prism', async ({ user, body }) => resolverService.resolvePrismId(user.prismId, body.prismId), true);
+route('POST', '/v1/resolve/handle/check', async ({ user, body, ip }) => resolverService.handleOnPrism(user.prismId, body.handle, ip), true);
+route('POST', '/v1/resolve/prism', async ({ user, body, ip }) => resolverService.resolvePrismId(user.prismId, body.prismId, ip), true);
 
 // --- off-chain payment requests ---------------------------------------------
 // payerPrismId is optional: omitted drafts a universal public request payable by anyone.
