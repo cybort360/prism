@@ -1,0 +1,40 @@
+# Fly.io config for the Prism backend. See DEPLOY.md for the full walkthrough.
+# Rename `app` to something unique before `fly launch` (or let `fly launch` set it).
+app = "prism-backend"
+primary_region = "iad"   # pick one near your testers: fly platform regions
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Non-secret config. Secrets (keys, peppers, router/vault, APPLE_APP_ID) go via `fly secrets set`
+# — see DEPLOY.md. NODE_ENV is intentionally NOT "production": that keeps the dev OTP (123456)
+# working for the App Review reviewer without standing up Twilio. Do not use this config to hold
+# real user money.
+[env]
+  PORT = "8787"
+  STORE_PATH = "/data/store.json"
+  NODE_ENV = "development"
+  MONAD_CHAIN_ID = "10143"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1   # keep one warm during App Review so the reviewer never hits a cold start
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+# Durable JSON store. Create the volume once: `fly volumes create prism_data --size 1 --region iad`.
+[[mounts]]
+  source = "prism_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
