@@ -1,11 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Generated from ios/project.yml (targets.Prism.entitlements.properties) by XcodeGen.
+  Edit the domain in project.yml, not here. The backend serves the matching AASA at
+  https://app.getprism.xyz/.well-known/apple-app-site-association (see backend/DEPLOY.md).
+-->
 <plist version="1.0">
 <dict>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
-		<string>webcredentials:prism.example</string>
-		<string>applinks:prism.example</string>
+		<string>webcredentials:app.getprism.xyz</string>
+		<string>applinks:app.getprism.xyz</string>
 	</array>
 </dict>
 </plist>

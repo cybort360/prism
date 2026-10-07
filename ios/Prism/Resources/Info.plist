@@ -29,6 +29,8 @@
 	<string>Prism uses Contacts so you can pay people you already know. Your address book is never uploaded.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Prism uses Face ID to approve payments on this device.</string>
+	<key>PRISM_API_BASE_URL</key>
+	<string>$(PRISM_API_BASE_URL)</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>
