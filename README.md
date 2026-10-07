@@ -159,22 +159,20 @@ Run tests: `node --test test/*.test.js` (133 tests).
 ### iOS
 
 ```bash
-cd ios/MeraBridge/web
-npm install
-npm run build            # → ios/Prism/Resources/MeraWeb/mera-bridge.js (git-ignored, required)
-
-cd ../..                 # ios/
-brew install xcodegen
-./bootstrap.sh --open    # xcodegen generate + open Prism.xcodeproj
+cd ios
+brew install xcodegen node
+./bootstrap.sh --open    # builds the Mera bridge + generates & opens Prism.xcodeproj
 ```
 
-The Mera bundle is a build artifact and is not committed, so a fresh clone must run the `npm run
-build` step above or the bridge has nothing to load. For real device passkeys also configure the
-relying-party domain and host `web/.well-known/apple-app-site-association` at it, replacing the
-`TEAMID` placeholder with your Apple Team ID — see `ios/MeraBridge/web/BUILD.md` and
-`docs/PASSKEY_SETUP.md`. On the simulator the app uses a clearly-labeled dev bridge. Set
-`PRISM_API_BASE_URL` (default `http://127.0.0.1:8787`). Add the F5.6 font per
-`ios/Prism/Resources/FONT_SETUP.md` (intentionally not bundled).
+Both `Prism.xcodeproj` and the Mera bridge bundle (`ios/Prism/Resources/MeraWeb/mera-bridge.js`) are
+git-ignored build artifacts, so a fresh clone must run `bootstrap.sh` first — it builds both. Set
+`PRISM_API_BASE_URL` (default `http://127.0.0.1:8787`) via the build setting in `ios/project.yml` to
+point at your backend. Add the F5.6 font per `ios/Prism/Resources/FONT_SETUP.md` (not bundled). On the
+simulator the app uses a clearly-labeled dev bridge; real device passkeys need a relying-party domain
+(see `docs/PASSKEY_SETUP.md`).
+
+**Shipping to TestFlight?** Follow [`docs/TESTFLIGHT.md`](docs/TESTFLIGHT.md) — the end-to-end path
+from a clone to a TestFlight build (prerequisites, signing, backend URL, archive + upload).
 
 ### Indexer (Envio)
 
@@ -257,6 +255,8 @@ Keychain write fail. CI is green on all four checks. See `proof/SECURITY_PROOF.m
   `docs/MERA_INTEGRATION.md`, `docs/ENVIO_INTEGRATION.md`, `docs/ALCHEMY_INTEGRATION.md`,
   `docs/PASSKEY_SETUP.md`
 - Operations: `docs/OBSERVABILITY.md`
+- Shipping: [`docs/TESTFLIGHT.md`](docs/TESTFLIGHT.md) — clone → TestFlight build (signing, backend
+  URL, archive + upload)
 
 ## External credentials still required for a live demo
 
