@@ -204,15 +204,48 @@ export class RequestService {
     });
   }
 
-  markPaid(requestId, operationId, transactionHash) {
+  markPaid(requestId, operationId, transactionHash, crossChainPayer = null) {
     if (!requestId) return;
     this.store.mutate(data => {
       const r = data.requests[requestId];
       if (!r || r.status !== 'OPEN') return;
       r.status = 'PAID';
+      r.settling = false; // the settlement finished; clear any single-flight claim
       r.paymentOperationId = operationId;
       r.transactionHash = transactionHash ?? null;
+      if (crossChainPayer) {
+        r.crossChainPayer = { payerAddress: crossChainPayer.payerAddress, sourceChain: crossChainPayer.sourceChain, viaAurora: true };
+      }
       r.paidAt = new Date().toISOString();
+    });
+  }
+
+  /**
+   * Single-flight claim for a cross-chain settlement. Runs synchronously inside `store.mutate` — so it
+   * completes before the caller's first `await` — which makes it atomic against concurrent callers on a
+   * single-threaded runtime. This is what stops two simultaneous cross-chain fulfillments of the same
+   * request from BOTH passing an OPEN check and BOTH minting (a TOCTOU double-credit): the second call's
+   * claim finds `settling === true` and is rejected. Mirrors `sweepService.executeFor`'s claim-before-await.
+   *
+   * The request stays `OPEN` (only a `settling` flag is set) so `markPaid` still applies normally; the
+   * flag is cleared by `markPaid` on success or `releaseCrossChainSettlement` if the credit never happened.
+   */
+  claimForCrossChainSettlement(requestId) {
+    return this.store.mutate(data => {
+      const r = data.requests[requestId];
+      if (!r || r.isPublic !== true) { const e = new Error('request not found'); e.statusCode = 404; throw e; }
+      if (r.status !== 'OPEN') { const e = new Error('this request is not open'); e.statusCode = 409; throw e; }
+      if (r.settling) { const e = new Error('this request is already being paid'); e.statusCode = 409; throw e; }
+      r.settling = true;
+      return r;
+    });
+  }
+
+  /** Release a claim when the credit never happened (e.g. the mint threw), so the request is payable again. */
+  releaseCrossChainSettlement(requestId) {
+    this.store.mutate(data => {
+      const r = data.requests[requestId];
+      if (r && r.settling && r.status === 'OPEN') { r.settling = false; }
     });
   }
 

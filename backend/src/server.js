@@ -25,6 +25,7 @@ import { SaveService } from './services/saveService.js';
 import { SavePositionService } from './services/savePositionService.js';
 import { DemoSaveExecutor } from './services/demoSaveExecutor.js';
 import { SweepService } from './services/sweepService.js';
+import { CrossChainPayService } from './services/crosschainPayService.js';
 import { CircleService } from './services/circleService.js';
 import { CircleMessageService } from './services/circleMessageService.js';
 import { CircleActivityService } from './services/circleActivityService.js';
@@ -76,6 +77,9 @@ const demoSaveExecutor = new DemoSaveExecutor({ store, config, identityService }
 // Second hop of a RECEIVE->Circle/Savings request: builds + stores the sweep authorization the
 // requester pre-signs at draft time, then persists their signature at commit.
 const sweepService = new SweepService({ store, circleService, saveService, config, demoSaveExecutor, identityService });
+// Unauthenticated cross-chain pay: a non-Prism payer fulfills a request link via Aurora (real quote,
+// demo-gated simulated settlement + pre-signed sweep). Depends on requestService + sweepService.
+const crossChainPayService = new CrossChainPayService({ store, config, requestService, sweepService });
 // Unified prepare-only facade over spend / receive / cross-chain / save. Delegates to the
 // audited services; never submits, never transitions, never completes.
 const intentDispatcherService = new IntentDispatcherService({
@@ -222,6 +226,20 @@ route('GET', '/v1/requests/:requestId', async ({ user, params }) => {
   if (view.sweep?.state === 'PENDING' || view.sweep?.state === 'SUBMITTED') { await sweepService.executeFor(params.requestId).catch(() => {}); return requestService.getOwn(params.requestId, user.prismId); }
   return view;
 }, true);
+
+// --- cross-chain pay (unauthenticated: a non-Prism payer fulfills a request link) -----------------
+// The payer has no Prism session; the request is identified by its id and its amount/recipient/
+// destination are read from the stored request, never the body. quote is a real Aurora dry route;
+// fulfill verifies the payer's wallet signature, then (AURORA_MODE=demo) simulates delivery with a
+// real USDC mint + fires the requester's pre-signed sweep. CORS is scoped to these routes above.
+route('POST', '/v1/pay/:requestId/quote', async ({ params, body, ip }) => {
+  rateLimit(`pay-quote:${params.requestId}:${ip}`, 60);
+  return crossChainPayService.quote({ requestId: params.requestId, payerAddress: body.payerAddress, sourceChain: body.sourceChain, sourceAsset: body.sourceAsset });
+});
+route('POST', '/v1/pay/:requestId/fulfill', async ({ params, body, ip }) => {
+  rateLimit(`pay-fulfill:${params.requestId}:${ip}`, 20);
+  return crossChainPayService.fulfill({ requestId: params.requestId, payerAddress: body.payerAddress, sourceChain: body.sourceChain, signature: body.signature });
+});
 
 // --- unified intent prepare ----------------------------------------------------
 // One prepare entry for SPEND / RECEIVE / CROSS_CHAIN. The server binds the
@@ -696,6 +714,19 @@ const server = http.createServer(async (req, res) => {
   let status = 200;
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
+
+    // CORS for the browser-facing pay-web surface only: the unauthenticated cross-chain pay routes and
+    // the public request view. Everything else stays same-origin (no CORS headers). setHeader here
+    // survives send()'s writeHead (which only sets content-type/cache-control). OPTIONS preflight is
+    // answered before match(), since match() only knows GET/POST and would 404 the preflight otherwise.
+    const isPayPublic = url.pathname.startsWith('/v1/pay/') || /^\/v1\/requests\/[^/]+\/public$/.test(url.pathname);
+    if (isPayPublic) {
+      res.setHeader('access-control-allow-origin', config.payWebOrigin);
+      res.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS');
+      res.setHeader('access-control-allow-headers', 'content-type');
+      if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+    }
+
     const found = match(req.method, url.pathname);
     if (!found) { status = 404; return send(res, 404, { error: 'not found' }); }
 

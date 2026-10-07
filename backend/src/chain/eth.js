@@ -275,6 +275,18 @@ export async function usdcAuthorizationUsed(authorizer, nonce) {
   });
 }
 
+const MINT_ABI = [{ type: 'function', name: 'mint', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [] }];
+
+/** Relayer mints MockUSDC to `account`. Demo-only credit path (real on-chain, money-truth holds). */
+export async function mintUsdcTo(account, amountAtomic) {
+  return chainProvider().writeContract({
+    address: getAddress(usdcToken().address),
+    abi: MINT_ABI,
+    functionName: 'mint',
+    args: [getAddress(account), BigInt(amountAtomic)]
+  });
+}
+
 /** Native MON balance — used by the proof surface to show a payer can pay with MON = 0. */
 export async function monBalanceOf(address) { return chainProvider().getBalance(getAddress(address)); }
 

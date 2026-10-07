@@ -55,3 +55,36 @@ test('request is stored with canonical USDC metadata', async () => {
   assert.equal(draft.request.tokenSymbol, 'USDC');
   await service.commit({ requesterPrismId: 'a', requestId: draft.request.requestId, signature: await a.signMessage(draft.signable) });
 });
+
+test('markPaid records a cross-chain payer when given one', async () => {
+  const { a, store, service } = fixture();
+  const draft = service.draft({ requesterPrismId: 'a', amountAtomic: '20000000', destination: 'PRIMARY' });
+  await service.commit({ requesterPrismId: 'a', requestId: draft.request.requestId, signature: await a.signMessage(draft.signable) });
+  service.markPaid(draft.request.requestId, null, '0xdeliver', { payerAddress: '0xAbc0000000000000000000000000000000000001', sourceChain: 'base' });
+  const stored = store.read().requests[draft.request.requestId];
+  assert.equal(stored.status, 'PAID');
+  assert.equal(stored.crossChainPayer.payerAddress, '0xAbc0000000000000000000000000000000000001');
+  assert.equal(stored.crossChainPayer.sourceChain, 'base');
+  assert.equal(stored.crossChainPayer.viaAurora, true);
+});
+
+test('claimForCrossChainSettlement is single-flight: a second claim on an already-claimed request is rejected', async () => {
+  const { a, store, service } = fixture();
+  const draft = service.draft({ requesterPrismId: 'a', amountAtomic: '20000000', destination: 'PRIMARY' });
+  await service.commit({ requesterPrismId: 'a', requestId: draft.request.requestId, signature: await a.signMessage(draft.signable) });
+  const id = draft.request.requestId;
+
+  service.claimForCrossChainSettlement(id); // first claim wins
+  assert.equal(store.read().requests[id].settling, true);
+  assert.equal(store.read().requests[id].status, 'OPEN', 'still OPEN so markPaid still applies');
+  assert.throws(() => service.claimForCrossChainSettlement(id), (e) => e.statusCode === 409); // second is rejected
+
+  service.releaseCrossChainSettlement(id); // release re-opens it for payment
+  assert.equal(store.read().requests[id].settling, false);
+  service.claimForCrossChainSettlement(id); // can claim again after release
+  assert.equal(store.read().requests[id].settling, true);
+
+  service.markPaid(id, null, '0xdeliver', { payerAddress: '0xAbc0000000000000000000000000000000000001', sourceChain: 'base' });
+  assert.equal(store.read().requests[id].status, 'PAID');
+  assert.equal(store.read().requests[id].settling, false, 'markPaid clears the claim');
+});

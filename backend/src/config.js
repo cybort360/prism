@@ -66,6 +66,8 @@ export const config = {
   appleAppId: env('APPLE_APP_ID', ''),
   sessionSecret: env('SESSION_SECRET', 'dev-session-secret-change-me'),
   resolverPepper: env('RESOLVER_PEPPER', 'dev-resolver-pepper-change-me'),
+  // Origin allowed to call the unauthenticated cross-chain pay + public-request routes (the pay-web app).
+  payWebOrigin: env('PAY_WEB_ORIGIN', 'http://localhost:5173'),
   dataEncryptionKeyHex: requiredHex32('DATA_ENCRYPTION_KEY', '11'.repeat(32)),
   // Encrypts the backend-internal resolver attestation signer (not a consumer/spending key).
   serviceKeyEncryptionKeyHex: requiredHex32('SERVICE_KEY_ENCRYPTION_KEY', '22'.repeat(32)),
