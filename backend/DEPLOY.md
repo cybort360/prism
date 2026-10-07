@@ -35,8 +35,19 @@ fly volumes create prism_data --size 1 --region <your-region>   # durable JSON s
 
 ## 3. Set secrets
 
-Non-secret config is already in `fly.toml` (`PORT`, `STORE_PATH`, `NODE_ENV=development`,
-`MONAD_CHAIN_ID`). Everything below is a secret — set with `fly secrets set` (never commit these):
+**Easy path:** if your working `backend/.env` already has the relayer key, authorizer key, and
+router/vault addresses, run the helper — it reads `.env`, generates strong random values for the four
+crypto secrets if they're still dev defaults, requires `APPLE_APP_ID`, and pushes everything to Fly
+(values never printed):
+
+```bash
+APPLE_APP_ID=TEAMID.com.prism.mobile ./deploy-fly.sh --secrets-only   # then `fly deploy`
+# or ./deploy-fly.sh to set secrets AND deploy in one go
+```
+
+**Manual path:** non-secret config is already in `fly.toml` (`PORT`, `STORE_PATH`,
+`NODE_ENV=development`, `MONAD_CHAIN_ID`). Everything below is a secret — set with `fly secrets set`
+(never commit these):
 
 ```bash
 fly secrets set \
