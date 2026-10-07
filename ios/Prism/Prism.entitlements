@@ -1,11 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Intentionally empty for the first TestFlight build (see docs/TESTFLIGHT.md).
+  This file is NOT referenced by ios/project.yml right now, so the app signs with no special
+  capabilities and uploads with zero domain setup. To enable Mera passkeys + universal links,
+  re-add an `entitlements:` block to the Prism target in ios/project.yml pointing here, then put
+  the associated-domains array (shown below) into the <dict>, with your real deployment domain, and
+  host the AASA file (with your real 10-char Team ID) at
+  https://<domain>/.well-known/apple-app-site-association.
+
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+      <string>webcredentials:your-domain.example</string>
+      <string>applinks:your-domain.example</string>
+    </array>
+-->
 <plist version="1.0">
 <dict>
-	<key>com.apple.developer.associated-domains</key>
-	<array>
-		<string>webcredentials:prism.example</string>
-		<string>applinks:prism.example</string>
-	</array>
 </dict>
 </plist>
