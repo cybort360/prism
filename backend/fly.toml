@@ -1,7 +1,6 @@
 # Fly.io config for the Prism backend. See DEPLOY.md for the full walkthrough.
-# Rename `app` to something unique before `fly launch` (or let `fly launch` set it).
-app = "prism-backend"
-primary_region = "iad"   # pick one near your testers: fly platform regions
+app = "prism-backend-humming-shadow-5932"
+primary_region = "lhr"   # London
 
 [build]
   dockerfile = "Dockerfile"
