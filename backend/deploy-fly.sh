@@ -31,11 +31,17 @@ is_dev_or_empty "${SERVICE_KEY_ENCRYPTION_KEY:-}" && SERVICE_KEY_ENCRYPTION_KEY=
 : "${CLAIM_AUTHORIZER_PRIVATE_KEY:?set CLAIM_AUTHORIZER_PRIVATE_KEY in .env}"
 : "${PRISM_PAYMENT_ROUTER:?set PRISM_PAYMENT_ROUTER in .env}"
 : "${PRISM_CLAIM_VAULT:?set PRISM_CLAIM_VAULT in .env}"
-: "${APPLE_APP_ID:?set APPLE_APP_ID=<TeamID>.com.prism.mobile in .env or export it}"
+# APPLE_APP_ID is OPTIONAL: without it the backend simply does not serve the passkey AASA (fine for a
+# backend smoke deploy). Set it (=<TeamID>.com.prism.mobile) once you have an Apple Team ID, so device
+# passkeys and external TestFlight review work.
+if [[ -z "${APPLE_APP_ID:-}" ]]; then
+  echo "note: APPLE_APP_ID unset — deploying without the passkey AASA (set it later for TestFlight)."
+fi
 
 echo "Setting Fly secrets (values hidden):"
 printf '  %s\n' SESSION_SECRET RESOLVER_PEPPER DATA_ENCRYPTION_KEY SERVICE_KEY_ENCRYPTION_KEY \
-  RELAYER_PRIVATE_KEY CLAIM_AUTHORIZER_PRIVATE_KEY PRISM_PAYMENT_ROUTER PRISM_CLAIM_VAULT APPLE_APP_ID
+  RELAYER_PRIVATE_KEY CLAIM_AUTHORIZER_PRIVATE_KEY PRISM_PAYMENT_ROUTER PRISM_CLAIM_VAULT \
+  ${APPLE_APP_ID:+APPLE_APP_ID}
 
 fly secrets set --stage \
   SESSION_SECRET="$SESSION_SECRET" \
@@ -46,7 +52,7 @@ fly secrets set --stage \
   CLAIM_AUTHORIZER_PRIVATE_KEY="$CLAIM_AUTHORIZER_PRIVATE_KEY" \
   PRISM_PAYMENT_ROUTER="$PRISM_PAYMENT_ROUTER" \
   PRISM_CLAIM_VAULT="$PRISM_CLAIM_VAULT" \
-  APPLE_APP_ID="$APPLE_APP_ID" \
+  ${APPLE_APP_ID:+APPLE_APP_ID="$APPLE_APP_ID"} \
   ${MONAD_RPC_URL:+MONAD_RPC_URL="$MONAD_RPC_URL"} \
   ${AURORA_MODE:+AURORA_MODE="$AURORA_MODE"} \
   ${AURORA_APP_KEY:+AURORA_APP_KEY="$AURORA_APP_KEY"}
@@ -56,6 +62,6 @@ if [[ "${1:-}" == "--secrets-only" ]]; then
   exit 0
 fi
 fly deploy
-echo "Deployed. Verify:"
-echo "  curl -s https://app.getprism.xyz/health"
-echo "  curl -s https://app.getprism.xyz/.well-known/apple-app-site-association"
+echo "Deployed. Verify (use your fly.dev host, or app.getprism.xyz once certs are attached):"
+echo "  fly open /health"
+echo "  curl -s https://\$(fly info --json | jq -r .Hostname)/health"
