@@ -31,6 +31,10 @@ final class WKWebViewMeraBridge: NSObject, MeraAccountService {
 
   /// A persisted 32-byte hex seed for the simulator dev signer, so the derived dev account is
   /// identical across every bridge call and page reload (device builds use real passkeys instead).
+  /// WebAuthn relying-party domain. MUST match the app's Associated Domains entitlement
+  /// (webcredentials:app.getprism.xyz) and the AASA served at that host, or passkeys fail to bind.
+  private static let relyingPartyDomain = "app.getprism.xyz"
+
   private static func stableDevSeed() -> String {
     let key = "mera.dev.seed"
     if let existing = try? KeychainStore.shared.string(for: key), existing.hasPrefix("0x"), existing.count == 66 {
@@ -65,13 +69,30 @@ final class WKWebViewMeraBridge: NSObject, MeraAccountService {
     // execution; attaching it keeps the process alive so signing is prompt.
     attachToWindow(view)
 
-    guard let url = Bundle.main.url(forResource: "mera-bridge", withExtension: "html", subdirectory: "MeraWeb")
-        ?? Bundle.main.url(forResource: "mera-bridge", withExtension: "html") else {
+    // Load the bridge under an https origin that matches the app's Associated Domains
+    // (webcredentials:app.getprism.xyz) so WebAuthn passkeys bind to the right relying party. We
+    // inline the esbuild bundle and use loadSimulatedRequest, which sets the document origin WITHOUT
+    // a network request — so `location.hostname` is the RP domain and no sub-resource is fetched.
+    // (A file:// origin, used previously, cannot create a passkey for an associated domain.)
+    guard
+      let htmlURL = Bundle.main.url(forResource: "mera-bridge", withExtension: "html", subdirectory: "MeraWeb")
+        ?? Bundle.main.url(forResource: "mera-bridge", withExtension: "html"),
+      let jsURL = Bundle.main.url(forResource: "mera-bridge", withExtension: "js", subdirectory: "MeraWeb")
+        ?? Bundle.main.url(forResource: "mera-bridge", withExtension: "js"),
+      let htmlTemplate = try? String(contentsOf: htmlURL, encoding: .utf8),
+      let js = try? String(contentsOf: jsURL, encoding: .utf8),
+      let rpURL = URL(string: "https://\(Self.relyingPartyDomain)/")
+    else {
       throw MeraBridgeError.bridge("Mera web bundle missing. Build it: see ios/MeraBridge/web/BUILD.md")
     }
+    // Break any literal `</script` in the bundle so it cannot close the inline tag early.
+    let safeJS = js.replacingOccurrences(of: "</script", with: "<\\/script")
+    let html = htmlTemplate.replacingOccurrences(
+      of: "<script src=\"./mera-bridge.js\"></script>",
+      with: "<script>\n\(safeJS)\n</script>")
     try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
       loadContinuation = cont
-      view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+      view.loadSimulatedRequest(URLRequest(url: rpURL), responseHTML: html)
     }
   }
 
