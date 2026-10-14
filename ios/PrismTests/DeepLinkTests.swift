@@ -8,21 +8,21 @@ final class DeepLinkTests: XCTestCase {
 
   func testOpaquePrismIdForms() {
     XCTAssertEqual(PrismDeepLink.parse("prism://pay/pid_123")?.prismId, "pid_123")
-    XCTAssertEqual(PrismDeepLink.parse("https://prism.app/pay/pid_123")?.prismId, "pid_123")
+    XCTAssertEqual(PrismDeepLink.parse("https://app.getprism.xyz/pay/pid_123")?.prismId, "pid_123")
     // Back-compat accessor.
     XCTAssertEqual(PrismDeepLink.prismId(from: "prism://pay/pid_123"), "pid_123")
   }
 
   func testPrettyHandleForms() {
-    XCTAssertEqual(PrismDeepLink.parse("https://prism.app/octane")?.handle, "octane")
-    XCTAssertEqual(PrismDeepLink.parse("https://prism.app/@octane")?.handle, "octane")
+    XCTAssertEqual(PrismDeepLink.parse("https://app.getprism.xyz/octane")?.handle, "octane")
+    XCTAssertEqual(PrismDeepLink.parse("https://app.getprism.xyz/@octane")?.handle, "octane")
     XCTAssertEqual(PrismDeepLink.parse("prism://u/octane")?.handle, "octane")
     // A handle link carries no prismId; resolution happens through the handle resolver.
-    XCTAssertNil(PrismDeepLink.parse("https://prism.app/octane")?.prismId)
+    XCTAssertNil(PrismDeepLink.parse("https://app.getprism.xyz/octane")?.prismId)
   }
 
   func testAmountAndReferenceAreParsed() {
-    let link = PrismDeepLink.parse("https://prism.app/octane?amount=20&ref=dinner")
+    let link = PrismDeepLink.parse("https://app.getprism.xyz/octane?amount=20&ref=dinner")
     XCTAssertEqual(link?.handle, "octane")
     XCTAssertEqual(link?.amount, "20")
     XCTAssertEqual(link?.reference, "dinner")
@@ -30,8 +30,8 @@ final class DeepLinkTests: XCTestCase {
 
   func testReservedWordsAreNotHandles() {
     // Reserved routes must never be mistaken for a handle.
-    XCTAssertNil(PrismDeepLink.parse("https://prism.app/pay")?.handle)
-    XCTAssertNil(PrismDeepLink.parse("https://prism.app/claim")?.handle)
+    XCTAssertNil(PrismDeepLink.parse("https://app.getprism.xyz/pay")?.handle)
+    XCTAssertNil(PrismDeepLink.parse("https://app.getprism.xyz/claim")?.handle)
   }
 
   func testInvalidInputsReturnNil() {
@@ -42,8 +42,8 @@ final class DeepLinkTests: XCTestCase {
 
   func testNonPositiveAmountIsDropped() {
     // A junk/zero/negative amount is ignored rather than prefilled.
-    XCTAssertNil(PrismDeepLink.parse("https://prism.app/octane?amount=0")?.amount)
-    XCTAssertNil(PrismDeepLink.parse("https://prism.app/octane?amount=-5")?.amount)
-    XCTAssertNil(PrismDeepLink.parse("https://prism.app/octane?amount=abc")?.amount)
+    XCTAssertNil(PrismDeepLink.parse("https://app.getprism.xyz/octane?amount=0")?.amount)
+    XCTAssertNil(PrismDeepLink.parse("https://app.getprism.xyz/octane?amount=-5")?.amount)
+    XCTAssertNil(PrismDeepLink.parse("https://app.getprism.xyz/octane?amount=abc")?.amount)
   }
 }

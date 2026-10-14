@@ -68,6 +68,9 @@ export const config = {
   resolverPepper: env('RESOLVER_PEPPER', 'dev-resolver-pepper-change-me'),
   // Origin allowed to call the unauthenticated cross-chain pay + public-request routes (the pay-web app).
   payWebOrigin: env('PAY_WEB_ORIGIN', 'http://localhost:5173'),
+  // Where the web fallback for a tapped payment link sends someone who does not have the app yet.
+  // Universal Links open the app directly when it is installed; this only shows for everyone else.
+  appInviteUrl: env('APP_INVITE_URL', 'https://testflight.apple.com/join/PqDUKt5Z'),
   dataEncryptionKeyHex: requiredHex32('DATA_ENCRYPTION_KEY', '11'.repeat(32)),
   // Encrypts the backend-internal resolver attestation signer (not a consumer/spending key).
   serviceKeyEncryptionKeyHex: requiredHex32('SERVICE_KEY_ENCRYPTION_KEY', '22'.repeat(32)),
