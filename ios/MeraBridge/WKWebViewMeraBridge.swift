@@ -102,14 +102,23 @@ final class WKWebViewMeraBridge: NSObject, MeraAccountService {
       .first { $0.activationState == .foregroundActive } ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
     guard let window = scene?.windows.first(where: { $0.isKeyWindow }) ?? scene?.windows.first else { return }
     view.alpha = 0.01
-    view.isUserInteractionEnabled = false
+    // WebKit requires document.hasFocus() for BOTH credential creation and assertion.
+    // A non-interactive view never takes first-responder focus, even when attached to a window.
+    view.isUserInteractionEnabled = true
     view.isHidden = false
+    view.accessibilityElementsHidden = true
     window.addSubview(view)
   }
 
   private func call(_ method: String, _ params: [String: Any] = [:]) async throws -> Data? {
     try await ensureLoaded()
     guard let webView else { throw MeraBridgeError.notReady }
+    // Native SwiftUI button taps do not focus the bridge's document. Acquire focus before
+    // dispatching JS, including signing calls which might restore an expired passkey session.
+    attachToWindow(webView)
+    guard webView.window?.isKeyWindow == true, webView.becomeFirstResponder() else {
+      throw MeraBridgeError.bridge("Passkey approval needs Prism in the foreground. Return to Prism and try again. (PASSKEY_FOCUS_UNAVAILABLE)")
+    }
     let id = UUID().uuidString
     var params = params
     #if targetEnvironment(simulator)
@@ -134,6 +143,7 @@ final class WKWebViewMeraBridge: NSObject, MeraAccountService {
 
   private func resume(_ id: String, _ result: Result<Data?, Error>) {
     guard let cont = pending.removeValue(forKey: id) else { return }
+    if pending.isEmpty { webView?.resignFirstResponder() }
     switch result {
     case .success(let value): cont.resume(returning: value)
     case .failure(let error): cont.resume(throwing: error)

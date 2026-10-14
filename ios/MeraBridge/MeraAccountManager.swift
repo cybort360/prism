@@ -17,21 +17,24 @@ final class MeraAccountManager: ObservableObject {
   private var sessionScope: MeraSessionScope?
   private var sessionExpiry: Date?
 
-  private init() {
+  private convenience init() {
     // Both device and simulator run the official Mera library via the WebView bridge. On device
     // this uses real passkeys; on the simulator it uses the dev-seeded signer (real viem secp256k1,
     // see BUILD.md). DevMeraBridge remains only as a no-bundle fallback.
-    service = WKWebViewMeraBridge()
+    self.init(service: WKWebViewMeraBridge())
+  }
+
+  init(service: MeraAccountService) {
+    self.service = service
   }
 
   var accountAddress: String? { account?.address }
 
-  /// Restore the returning user's account, or create one on first run.
+  /// Restore the returning user's account. Creation must be an explicit onboarding action.
   func ensureAccount() async throws -> PrismMeraAccount {
     if let account { return account }
-    let acct: PrismMeraAccount
-    if let restored = try? await service.restoreAccount() { acct = restored }
-    else { acct = try await service.createAccount() }
+    // A dismissal, focus failure or provider failure must never create a different account.
+    let acct = try await service.restoreAccount()
     account = acct
     return acct
   }
