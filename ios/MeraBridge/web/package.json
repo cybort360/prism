@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Builds the offscreen WebView bundle that runs the official @category-labs/mera library for Prism's native iOS app.",
   "scripts": {
+    "test": "node --test test/*.test.js",
     "build": "esbuild src/bridge.js --bundle --format=iife --platform=browser --outfile=../../Prism/Resources/MeraWeb/mera-bridge.js",
     "watch": "npm run build -- --watch"
   },

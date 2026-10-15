@@ -69,7 +69,7 @@ struct ReceiveView: View {
   }
   /// A universal link, encoded in the QR and shared. Opening it (scan or tap) resolves the identity
   /// and opens the Send review — it never carries a wallet address.
-  private var shareLink: String { "https://prism.app/\(publicPath)" }
+  private var shareLink: String { "https://app.getprism.xyz/\(publicPath)" }
   /// The human-readable form shown under the QR.
-  private var displayLink: String { "prism.app/\(publicPath)" }
+  private var displayLink: String { "app.getprism.xyz/\(publicPath)" }
 }

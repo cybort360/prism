@@ -250,7 +250,15 @@ struct HomeView: View {
   }
 
 
+  /// Pull-to-refresh runs its action inside a task that SwiftUI cancels the moment the pull gesture
+  /// settles. That cancellation propagated into the in-flight balance request (NSURLError -999), so
+  /// `try await` threw, the catch swallowed it as a cancellation, and Home kept showing the old
+  /// amount until the view reloaded some other way (a tab toggle). Run the load in an unstructured
+  /// Task, which does not inherit the gesture task's cancellation, so the fetch always completes.
   private func reload() async {
+    await Task { await loadData() }.value
+  }
+  private func loadData() async {
     loading = true
     defer { loading = false }
     do {

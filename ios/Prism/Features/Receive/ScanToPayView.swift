@@ -131,7 +131,7 @@ enum PrismDeepLink {
       if parts.count >= 2, parts[0] == "pay" {
         return PrismLink(prismId: parts[1], amount: amount, reference: ref)
       }
-      // Pretty: https://prism.app/<handle>  (single non-reserved segment)
+      // Pretty: https://app.getprism.xyz/<handle>  (single non-reserved segment)
       if parts.count == 1, let handle = handleIfValid(parts[0]) {
         return PrismLink(handle: handle, amount: amount, reference: ref)
       }

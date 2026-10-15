@@ -53,7 +53,10 @@ struct ActivityView: View {
         .padding(.horizontal, 22)
         .padding(.bottom, 30)
       }
-      .refreshable { await load() }
+      // Pull-to-refresh cancels its task when the gesture settles, which cancelled the in-flight
+      // fetch and left the list stale (see HomeView.reload). Run the load in an unstructured Task so
+      // it survives the gesture task's cancellation.
+      .refreshable { await Task { await load() }.value }
     }
     .task { await load() }
     .prismScreen()
@@ -255,7 +258,8 @@ struct ActivityView: View {
       claims = try await claimRequest
       error = nil
     } catch {
-      self.error = error.localizedDescription
+      // A cancelled/superseded refresh is not a failure; never flash it as an error.
+      if !error.isCancellation { self.error = error.localizedDescription }
     }
   }
 

@@ -130,10 +130,37 @@ route('GET', '/.well-known/apple-app-site-association', async () => {
   if (!config.appleAppId) { const e = new Error('not found'); e.statusCode = 404; throw e; }
   return {
     webcredentials: { apps: [config.appleAppId] },
-    applinks: { details: [{ appIDs: [config.appleAppId], components: [{ '/': '/pay/*', comment: 'Prism payment links resolve to a Prism identity, never a raw address' }] }] },
+    applinks: {
+      details: [{
+        appIDs: [config.appleAppId],
+        // First match wins. Exclude the API, the AASA itself, and the bare origin (the Mera bridge's
+        // relying-party origin) so only payment links open the app. Both the opaque /pay/<id> route
+        // and the pretty /<handle> route resolve through the same identity resolver — never a raw address.
+        components: [
+          { '/': '/v1/*', exclude: true, comment: 'API, not a deep link' },
+          { '/': '/.well-known/*', exclude: true, comment: 'association + well-known, not a deep link' },
+          { '/': '/', exclude: true, comment: 'bare origin is the passkey relying party, not a link' },
+          { '/': '/pay/*', comment: 'opaque prismId payment links resolve to a Prism identity, never a raw address' },
+          { '/': '/*', comment: 'pretty @handle payment links resolve to a Prism identity, never a raw address' }
+        ]
+      }]
+    },
     appclips: { apps: [] }
   };
 });
+
+// Web fallback for a tapped payment link. When the app is installed, iOS intercepts these via the
+// AASA above and this HTML is never seen; it only renders for someone who taps the link without the
+// app. It never exposes a wallet address or resolves the recipient — it just points to the app.
+const LINK_RESERVED = new Set(['pay', 'u', 'claim', 'request', 'r']);
+route('GET', '/pay/:prismId', async ({ params }) => ({ __html: linkLandingHtml(`prism.id ${params.prismId}`) }));
+route('GET', '/:handle', async ({ params }) => {
+  const raw = params.handle.startsWith('@') ? params.handle.slice(1) : params.handle;
+  const valid = raw.length >= 2 && !LINK_RESERVED.has(raw.toLowerCase()) && /^[A-Za-z0-9_.]+$/.test(raw);
+  if (!valid) throw httpError(404, 'not found');
+  return { __html: linkLandingHtml(`@${raw}`) };
+});
+
 route('GET', '/v1/config', async () => ({
   chainId: config.chain.chainId.toString(),
   usdc: config.chain.usdc,
@@ -742,7 +769,8 @@ const server = http.createServer(async (req, res) => {
     }
     const idempotencyKey = typeof req.headers['idempotency-key'] === 'string' ? req.headers['idempotency-key'].slice(0, 200) : null;
     const result = await found.handler({ body: parsed.json ?? {}, rawBody: parsed.raw, headers: req.headers, user, ip: req.socket.remoteAddress, url, params: found.params, idempotencyKey });
-    send(res, 200, result);
+    if (result && typeof result.__html === 'string') { sendHtml(res, 200, result.__html); }
+    else { send(res, 200, result); }
     logger.info('http', { method: req.method, path: url.pathname, status: 200, ms: Date.now() - started, prismId: user?.prismId });
   } catch (error) {
     status = error.statusCode || 400;
@@ -802,6 +830,46 @@ function send(res, status, object) {
   }
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
   res.end(body);
+}
+function sendHtml(res, status, html) {
+  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+  res.end(html);
+}
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Minimal, self-contained landing shown only when the app is not installed (see the /pay + /:handle
+// routes). No external assets, no address, no recipient lookup — just the invite to get Prism.
+function linkLandingHtml(target) {
+  const label = escapeHtml(target);
+  const invite = escapeHtml(config.appInviteUrl);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Prism payment link</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100svh; display: grid; place-items: center; padding: 24px;
+    font: 16px/1.5 -apple-system, system-ui, sans-serif; color: #0B2624; background: #0B2624; }
+  .card { width: 100%; max-width: 420px; background: #F7F8F5; border-radius: 20px; padding: 40px 32px; text-align: center;
+    box-shadow: 0 30px 90px -20px rgba(3,18,17,.55); }
+  .mark { font-size: 12px; letter-spacing: .18em; text-transform: uppercase; color: #3FB69A; font-weight: 600; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 14px 0 6px; }
+  .target { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; color: #3C564F;
+    background: #E9F2EE; border-radius: 999px; display: inline-block; padding: 6px 14px; margin: 6px 0 20px; }
+  p { color: #3C564F; margin: 0 0 24px; }
+  a.cta { display: block; background: #0B2624; color: #F7F8F5; text-decoration: none; font-weight: 600;
+    padding: 15px; border-radius: 12px; }
+  a.cta:hover { background: #163b38; }
+  .foot { margin-top: 18px; font-size: 13px; color: #8aa39b; }
+</style></head>
+<body><main class="card">
+  <div class="mark">Prism</div>
+  <h1>Someone sent you a payment link</h1>
+  <div class="target">${label}</div>
+  <p>Open it in the Prism app to pay or get paid. You pay people, not wallet addresses.</p>
+  <a class="cta" href="${invite}">Get Prism</a>
+  <div class="foot">Already have Prism? Reopen this link from your phone.</div>
+</main></body></html>`;
 }
 async function readJson(req) {
   let raw = '';

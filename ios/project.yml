@@ -1,6 +1,6 @@
 name: Prism
 options:
-  bundleIdPrefix: com.prism
+  bundleIdPrefix: xyz.getprism
   deploymentTarget:
     iOS: "18.0"
 settings:
@@ -32,6 +32,7 @@ targets:
     info:
       path: Prism/Resources/Info.plist
       properties:
+        CFBundleVersion: "6"
         # A launch screen is required for the app to render at native full-screen resolution
         # (without it iOS letterboxes the app in a scaled compatibility window).
         UILaunchScreen: {}
@@ -64,7 +65,7 @@ targets:
           - applinks:app.getprism.xyz
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.prism.mobile
+        PRODUCT_BUNDLE_IDENTIFIER: xyz.getprism.app
         PRODUCT_NAME: Prism
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -77,7 +78,7 @@ targets:
       - target: Prism
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.prism.mobile.tests
+        PRODUCT_BUNDLE_IDENTIFIER: xyz.getprism.app.tests
         GENERATE_INFOPLIST_FILE: YES
   PrismUITests:
     type: bundle.ui-testing
@@ -88,7 +89,7 @@ targets:
       - target: Prism
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.prism.mobile.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: xyz.getprism.app.uitests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: Prism
 schemes:
