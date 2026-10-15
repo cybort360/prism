@@ -85,6 +85,8 @@ struct HandleCheck: Codable, Equatable {
   let onPrism: Bool
   let handle: String?
   let reason: String?
+  /// True when the handle already belongs to the caller (e.g. reserved in an interrupted onboarding).
+  var yours: Bool? = nil
 }
 
 struct ResolutionResponse: Codable, Equatable, Hashable {

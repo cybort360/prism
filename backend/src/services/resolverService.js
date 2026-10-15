@@ -53,9 +53,12 @@ export class ResolverService {
     const data = this.store.read();
     const targetId = data.handleIndex[handle];
     if (!targetId) return { onPrism: false, handle, reason: 'not_found' };
+    // The caller's own handle is theirs, not "taken": a resumed onboarding must be able to keep it.
+    // Tells the caller nothing they don't already know, so it is answered before discoverability.
+    if (targetId === requesterPrismId) return { onPrism: true, handle, yours: true };
     const identity = data.identities[targetId];
     if (identity?.handleSearchable === false) return { onPrism: false, handle, reason: 'not_discoverable' };
-    return { onPrism: true, handle };
+    return { onPrism: true, handle, yours: false };
   }
 
   // Direct Prism-ID resolution is used for already-signed payment requests and QR/payment links.
