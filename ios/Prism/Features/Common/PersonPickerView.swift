@@ -59,7 +59,7 @@ struct PersonPickerView: View {
           Button { query = "" } label: {
             Image(systemName: "xmark.circle.fill").foregroundStyle(PrismTheme.faint)
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.plainHit)
         }
       }
       .padding(.horizontal, 15)
@@ -97,7 +97,7 @@ struct PersonPickerView: View {
               }
               .padding(.vertical, 14)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .padding(.top, 14)
 
             Divider().overlay(PrismTheme.line)
@@ -126,7 +126,7 @@ struct PersonPickerView: View {
               }
               .padding(.vertical, 13)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .disabled(handleLookup == .checking || handleLookup == .notFound)
             Divider().overlay(PrismTheme.line)
           }
@@ -160,7 +160,7 @@ struct PersonPickerView: View {
               }
               .padding(.vertical, 13)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             Divider().overlay(PrismTheme.line)
           }
 

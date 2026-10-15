@@ -91,7 +91,7 @@ struct AuroraDepositSection: View {
                   RoundedRectangle(cornerRadius: 15, style: .continuous)
                     .stroke(selected ? PrismTheme.mint : PrismTheme.line, lineWidth: 0.7))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .accessibilityLabel("Send from \(chain.label)")
             .accessibilityAddTraits(selected ? [.isSelected] : [])
           }

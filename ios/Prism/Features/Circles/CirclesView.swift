@@ -91,7 +91,7 @@ struct CirclesSummaryRow: View {
           }
         }
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.plainHit)
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(accessibilityLine)
       .accessibilityHint("Opens Circles")

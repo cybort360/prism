@@ -28,7 +28,7 @@ struct ScanToPayView: View {
               .background(.black.opacity(0.38))
               .clipShape(Circle())
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.plainHit)
           Spacer()
         }
         .padding(20)

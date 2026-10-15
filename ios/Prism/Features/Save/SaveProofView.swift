@@ -59,7 +59,7 @@ struct SaveReceiptView: View {
     VStack(alignment: .leading, spacing: 0) {
       Button { withAnimation(.easeOut(duration: 0.18)) { showTechnical.toggle() } } label: {
         HStack { Text("Technical details").font(PrismTheme.body(12.5, weight: .semibold)).foregroundStyle(PrismTheme.muted); Spacer(); Image(systemName: showTechnical ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(PrismTheme.faint) }
-      }.buttonStyle(.plain)
+      }.buttonStyle(.plainHit)
       if showTechnical {
         VStack(spacing: 0) {
           tech("Source asset", "USDC")

@@ -50,7 +50,7 @@ struct ReceiveView: View {
           .frame(maxWidth: .infinity)
           .frame(height: 54)
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.plainHit)
       .foregroundStyle(PrismTheme.ink)
       .background(PrismTheme.paper)
       .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))

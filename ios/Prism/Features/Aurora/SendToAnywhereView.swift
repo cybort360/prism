@@ -135,7 +135,7 @@ struct SendToAnywhereView: View {
             .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(PrismTheme.muted)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
       }
       .padding(14)
       .background(PrismTheme.paper)
@@ -226,7 +226,7 @@ struct SendToAnywhereView: View {
           RoundedRectangle(cornerRadius: 15, style: .continuous)
             .stroke(selected ? PrismTheme.mint : PrismTheme.line, lineWidth: 0.7))
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.plainHit)
     .accessibilityAddTraits(selected ? [.isSelected] : [])
   }
 

@@ -233,7 +233,7 @@ struct CircleStateView: View {
             .background(PrismTheme.mintSoft)
             .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .padding(.top, 2)
       }
     }

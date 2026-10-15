@@ -78,7 +78,7 @@ struct ReceiptView: View {
             .foregroundStyle(PrismTheme.ink)
             .padding(.vertical, 15)
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.plainHit)
 
           if showNetwork, let hash = receipt.transactionHash {
             Divider().overlay(PrismTheme.line)

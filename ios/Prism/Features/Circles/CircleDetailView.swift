@@ -106,7 +106,7 @@ struct CircleDetailView: View {
             .clipShape(Circle())
             .overlay(Circle().stroke(PrismTheme.line, lineWidth: 0.6))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .accessibilityLabel("Circle settings")
       }
       .padding(.top, 6)
@@ -241,7 +241,7 @@ struct CircleDetailView: View {
             } label: {
               CircleActivityRow(item: item)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
           } else {
             CircleActivityRow(item: item)
           }
@@ -287,7 +287,7 @@ struct CircleDetailView: View {
           NavigationLink(value: CircleDetailRoute.member(member)) {
             CircleMemberRow(member: member, limit: circle.limit(for: member.prismId), isMe: member.prismId == model.identity?.prismId)
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.plainHit)
           Divider().overlay(PrismTheme.line)
         }
       }
@@ -306,7 +306,7 @@ struct CircleDetailView: View {
       .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
       .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous).stroke(PrismTheme.line, lineWidth: 0.7))
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.plainHit)
   }
 }
 
@@ -341,7 +341,7 @@ private struct CircleAction: View {
       .frame(maxWidth: .infinity)
       .opacity(enabled ? 1 : 0.4)
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.plainHit)
     .disabled(!enabled)
     .accessibilityLabel(title)
     .accessibilityHint(enabled ? "" : "Not available to you in this Circle")

@@ -274,7 +274,7 @@ struct PaymentProofView: View {
         }
         .padding(.vertical, 14)
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.plainHit)
 
       if showTechnical {
         VStack(alignment: .leading, spacing: 12) {

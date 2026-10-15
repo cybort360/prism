@@ -229,7 +229,7 @@ struct RequestMoneyView: View {
           .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
           .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).stroke(PrismTheme.line, lineWidth: 0.6))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
       }
     }
   }

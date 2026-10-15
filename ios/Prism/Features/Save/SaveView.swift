@@ -114,7 +114,7 @@ struct SaveView: View {
         .frame(maxWidth: .infinity).frame(height: 40)
         .background(PrismTheme.paper).clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 13).stroke(PrismTheme.line, lineWidth: 0.7))
-    }.buttonStyle(.plain)
+    }.buttonStyle(.plainHit)
   }
 
   // MARK: review
@@ -324,7 +324,7 @@ private struct SaveHomeContent: View {
         Button { model.savePresented = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { model.saveDetailsPresented = true } } label: {
           HStack { Text("How it works").font(PrismTheme.body(13.5, weight: .semibold)); Spacer(); Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)) }
             .foregroundStyle(PrismTheme.mintDeep)
-        }.buttonStyle(.plain).padding(.top, 22)
+        }.buttonStyle(.plainHit).padding(.top, 22)
       }.padding(.horizontal, 24).padding(.bottom, 20)
     }
   }
@@ -451,7 +451,7 @@ private struct SaveSuccessTerminal: View {
         Button { done() } label: {
           Text("Done").font(PrismTheme.body(15, weight: .semibold)).foregroundStyle(PrismTheme.mintDeep)
             .frame(maxWidth: .infinity).frame(height: 50).background(PrismTheme.mintSoft).clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }.buttonStyle(.plain).padding(.top, 4)
+        }.buttonStyle(.plainHit).padding(.top, 4)
       }
       .padding(.horizontal, 26).padding(.vertical, 28).frame(maxWidth: 330)
       .background(PrismTheme.paper).clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous)).prismCardShadow()
@@ -498,7 +498,7 @@ struct SaveHomeCard: View {
       Button { PrismHaptics.selection(); model.savePresented = true } label: {
         PrismCard(padding: 16) { content }
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.plainHit)
       .accessibilityElement(children: .combine)
       .accessibilityAddTraits(.isButton)
       .accessibilityHint("Opens Save")

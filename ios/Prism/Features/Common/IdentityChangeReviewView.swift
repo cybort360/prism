@@ -272,7 +272,7 @@ struct IdentityChangeReviewView: View {
             .font(.system(size: 11, weight: .semibold)).foregroundStyle(PrismTheme.faint)
         }
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.plainHit)
 
       if showTechnical, let a = candidate.resolution.attestation {
         VStack(alignment: .leading, spacing: 6) {

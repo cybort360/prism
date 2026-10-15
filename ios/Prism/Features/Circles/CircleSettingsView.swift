@@ -226,7 +226,7 @@ struct CircleSettingsView: View {
         .padding(.vertical, 12)
         .contentShape(Rectangle())
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.plainHit)
     }
     .opacity(busy ? 0.55 : 1)
     .disabled(busy)
@@ -251,7 +251,7 @@ struct CircleSettingsView: View {
       .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
       .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous).stroke(PrismTheme.line, lineWidth: 0.7))
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.plainHit)
   }
 
   /// Where this Circle's facts come from. Shown last and plainly, because "Prism cannot move this
@@ -350,7 +350,7 @@ private struct CircleApprovalRuleSheet: View {
                   .stroke(selection == threshold ? PrismTheme.mintDeep : PrismTheme.line,
                           lineWidth: selection == threshold ? 1.4 : 0.7))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(threshold) of \(adminCount). \(CircleVocabulary.approvalRuleConsequence(threshold: threshold, admins: adminCount))")
             .accessibilityValue(selection == threshold ? "Selected" : "Not selected")
