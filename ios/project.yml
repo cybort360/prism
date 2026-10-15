@@ -32,7 +32,7 @@ targets:
     info:
       path: Prism/Resources/Info.plist
       properties:
-        CFBundleVersion: "6"
+        CFBundleVersion: "7"
         # A launch screen is required for the app to render at native full-screen resolution
         # (without it iOS letterboxes the app in a scaled compatibility window).
         UILaunchScreen: {}
