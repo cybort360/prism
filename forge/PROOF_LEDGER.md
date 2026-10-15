@@ -60,6 +60,17 @@ Implemented the PRISM Continuity domain model across backend + iOS (`continuity.
 | CONT-3 | Different-identity alias visibly blocked/reviewed (not redirected) | `VERIFIED` | server 409 (`assertResolution`) + iOS `IdentityContinuityTests` (warns on changed prismId/account; silent on alias-only change) |
 | CONT-4 | End-to-end narrative: pay → rotate (same account) → pay again succeeds → number reassigned → blocked, never redirected | `VERIFIED` | backend `continuity-narrative.test.js` (real resolve→prepare→sign→submit→reconcile; two completed payments to Bob + two stale-resolution rejections) |
 
+## Onboarding resume — own handle is not "taken" (2026-10-15, `fix/signin-continuity`)
+
+A restarted onboarding re-binds the same Mera account to the same identity, which may already hold a
+handle reserved before the phone step was abandoned. The handle screen used the attested resolve
+(no owner check) and told the user their own handle was taken.
+
+| ID | Claim | Status | Evidence |
+|---|---|---|---|
+| ONB-1 | `handleOnPrism` reports `yours: true` to the handle's owner (even when not searchable) and `yours: false` to everyone else | `VERIFIED` | `node --test test/resolver.test.js` 9/9; full backend `npm test` 546/546 |
+| ONB-2 | Onboarding resumes past aliases the identity already holds; the handle screen accepts the user's own handle and uses the cheap check, not the attested resolve | `UNTESTED` | `ios/PrismTests/OnboardingResumeTests.swift` written, not run (no Xcode in this environment) |
+
 ## PRISM Continuity Lab (2026-09-10) — `backend/src/lab/continuityLab.js`, `GET /v1/lab/continuity`
 
 A safe, deterministic, **fixtures-only** comparison harness that makes the continuity invariant

@@ -60,6 +60,20 @@ test('handleOnPrism fails closed for a non-discoverable handle', () => {
   assert.equal(res.reason, 'not_discoverable');
 });
 
+test('handleOnPrism tells the owner their own handle is theirs, not taken', () => {
+  const { store, resolver } = fixture();
+  store.mutate((d) => { d.identities.target.handle = 'tester2'; d.handleIndex = { tester2: 'target' }; });
+  assert.equal(resolver.handleOnPrism('target', '@tester2').yours, true, 'resumed onboarding can keep its own handle');
+  assert.equal(resolver.handleOnPrism('someone_else', 'tester2').yours, false, 'anyone else still sees it as taken');
+});
+
+test('handleOnPrism recognises the owner even when their handle is not searchable', () => {
+  const { store, resolver } = fixture();
+  store.mutate((d) => { d.identities.target.handle = 'ghost'; d.identities.target.handleSearchable = false; d.handleIndex = { ghost: 'target' }; });
+  assert.equal(resolver.handleOnPrism('target', 'ghost').yours, true);
+  assert.equal(resolver.handleOnPrism('someone_else', 'ghost').onPrism, false, 'others still fail closed');
+});
+
 // --- P1.2: network-wide backstops so cycling identities cannot bypass the resolve ceiling ----------
 test('resolve is bounded per source IP even when the caller cycles identities', () => {
   const { resolver } = fixture();

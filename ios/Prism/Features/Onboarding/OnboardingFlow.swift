@@ -5,6 +5,34 @@ enum OnboardingStep {
 }
 enum AliasKind { case phone, handle }
 
+/// Where onboarding picks up for an identity that may already carry aliases from an interrupted run
+/// (e.g. a handle reserved before the phone step was abandoned). Restarting must not re-ask for an
+/// alias the identity already holds — the handle screen would otherwise call the user's own handle taken.
+enum OnboardingResume {
+  struct Plan: Equatable {
+    let step: OnboardingStep
+    let firstAlias: AliasKind?
+    let addingSecond: Bool
+  }
+
+  static func plan(for identity: PrismIdentity?) -> Plan {
+    let hasHandle = !(identity?.handle ?? "").isEmpty
+    let hasPhone = identity?.hasVerifiedPhone == true
+    switch (hasPhone, hasHandle) {
+    case (true, true): return Plan(step: .contacts, firstAlias: .phone, addingSecond: true)
+    case (true, false): return Plan(step: .secondAlias, firstAlias: .phone, addingSecond: false)
+    case (false, true): return Plan(step: .secondAlias, firstAlias: .handle, addingSecond: false)
+    case (false, false): return Plan(step: .reachability, firstAlias: nil, addingSecond: false)
+    }
+  }
+
+  /// The identity's handle without the "@" the API adds, lowercased for comparison.
+  static func ownHandle(_ identity: PrismIdentity?) -> String? {
+    guard let raw = identity?.handle, !raw.isEmpty else { return nil }
+    return raw.replacingOccurrences(of: "@", with: "").lowercased()
+  }
+}
+
 struct OnboardingFlow: View {
   @EnvironmentObject private var model: AppModel
   @State private var step: OnboardingStep
@@ -64,7 +92,9 @@ struct OnboardingFlow: View {
           Task { await verifyPhone() }
         }
       case .handle:
-        HandleStep(handle: $handle, busy: busy, back: { back() }) { Task { await saveHandle() } }
+        HandleStep(handle: $handle, ownHandle: OnboardingResume.ownHandle(model.identity), busy: busy, back: { back() }) {
+          Task { await saveHandle() }
+        }
       case .secondAlias:
         SecondAliasStep(
           firstAlias: firstAlias ?? .phone,
@@ -135,7 +165,11 @@ struct OnboardingFlow: View {
         let auth = try await PrismAPI.shared.createDeviceIdentity()
         model.authenticated(auth)
       }
-      step = .reachability
+      // Resume past any alias an interrupted onboarding already reserved for this identity.
+      let resume = OnboardingResume.plan(for: model.identity)
+      firstAlias = resume.firstAlias
+      addingSecond = resume.addingSecond
+      step = resume.step
     } catch {
       self.error = error.localizedDescription
       step = .story
@@ -171,6 +205,12 @@ struct OnboardingFlow: View {
 
   private func saveHandle() async {
     guard !busy else { return }
+    // Already this identity's handle: nothing to reserve, just continue.
+    if let own = OnboardingResume.ownHandle(model.identity),
+       own == handle.replacingOccurrences(of: "@", with: "").lowercased() {
+      advanceAfterAlias(.handle)
+      return
+    }
     busy = true
     defer { busy = false }
     do {
@@ -668,15 +708,18 @@ private struct OTPCodeStep: View {
 
 private struct HandleStep: View {
   @Binding var handle: String
+  /// The signed-in identity's current handle, if any (normalized, no "@").
+  let ownHandle: String?
   let busy: Bool
   let back: () -> Void
   let save: () -> Void
   @State private var availability: HandleAvailability = .empty
+  private var canContinue: Bool { availability == .available || availability == .yours }
 
   private var normalized: String { handle.replacingOccurrences(of: "@", with: "").lowercased() }
   private var borderColor: Color {
     switch availability {
-    case .available: PrismTheme.mint
+    case .available, .yours: PrismTheme.mint
     case .taken, .invalid: PrismTheme.danger
     default: PrismTheme.line
     }
@@ -712,7 +755,7 @@ private struct HandleStep: View {
 
         PrismPrimaryButton(
           title: busy ? "Reserving…" : (availability == .available ? "Reserve @\(normalized)" : "Continue"),
-          enabled: availability == .available && !busy,
+          enabled: canContinue && !busy,
           icon: "checkmark"
         ) { save() }
       }
@@ -728,6 +771,7 @@ private struct HandleStep: View {
     case .checking:
       HStack(spacing: 7) { ProgressView().scaleEffect(0.7); Text("Checking availability…").font(PrismTheme.body(12)).foregroundStyle(PrismTheme.muted) }
     case .available: hint("@\(normalized) is available", "checkmark.circle.fill", PrismTheme.mintDeep)
+    case .yours: hint("@\(normalized) is already yours", "checkmark.circle.fill", PrismTheme.mintDeep)
     case .taken: hint("@\(normalized) is taken", "xmark.circle.fill", PrismTheme.danger)
     }
   }
@@ -746,13 +790,15 @@ private struct HandleStep: View {
     if h.isEmpty { availability = .empty; return }
     if h.count < 3 { availability = .tooShort; return }
     if h.range(of: "^[a-z0-9_]{3,24}$", options: .regularExpression) == nil { availability = .invalid; return }
+    if h == ownHandle { availability = .yours; return }
     availability = .checking
     try? await Task.sleep(for: .milliseconds(450)) // debounce keystrokes
     if Task.isCancelled { return }
     do {
-      let result = try await PrismAPI.shared.resolve(handle: h)
+      // The cheap existence check — never the attested resolve, whose budget real payments depend on.
+      let result = try await PrismAPI.shared.handleOnPrism(h)
       if Task.isCancelled { return }
-      availability = result.found ? .taken : .available
+      availability = result.yours == true ? .yours : (result.onPrism ? .taken : .available)
     } catch {
       // Not resolvable → available to reserve; the backend still validates on reservation.
       if !Task.isCancelled { availability = .available }
@@ -760,7 +806,7 @@ private struct HandleStep: View {
   }
 }
 
-private enum HandleAvailability: Equatable { case empty, tooShort, invalid, checking, available, taken }
+private enum HandleAvailability: Equatable { case empty, tooShort, invalid, checking, available, yours, taken }
 
 private struct ContactsPermissionStep: View {
   let allow: () -> Void
