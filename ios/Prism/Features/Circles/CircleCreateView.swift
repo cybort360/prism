@@ -117,7 +117,7 @@ struct CircleCreateView: View {
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(PrismTheme.line, lineWidth: 0.7))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .accessibilityLabel("Back")
       }
 
@@ -183,7 +183,7 @@ private struct CircleCreateNameStep: View {
                   RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(selected ? PrismTheme.mintDeep : PrismTheme.line, lineWidth: selected ? 1.4 : 0.7))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .accessibilityLabel(icon.label)
             .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
           }
@@ -212,7 +212,7 @@ private struct CircleCreateNameStep: View {
                   RoundedRectangle(cornerRadius: 15, style: .continuous)
                     .stroke(draft.kind == kind ? Color.clear : PrismTheme.line, lineWidth: 0.7))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .accessibilityAddTraits(draft.kind == kind ? [.isButton, .isSelected] : .isButton)
           }
         }
@@ -263,7 +263,7 @@ private struct CircleCreatePeopleStep: View {
                     .font(.system(size: 19))
                     .foregroundStyle(PrismTheme.faint)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plainHit)
                 .accessibilityLabel("Remove \(person.name)")
               }
               .padding(.vertical, 11)
@@ -331,7 +331,7 @@ private struct CircleCreateAdminsStep: View {
             }
             .padding(.vertical, 12)
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.plainHit)
           .accessibilityLabel(person.name)
           .accessibilityValue(draft.adminIds.contains(person.id) ? "Admin" : "Not an admin")
           .accessibilityAddTraits(.isButton)
@@ -426,7 +426,7 @@ private struct CircleCreateApprovalStep: View {
               .stroke(draft.threshold == choice.threshold ? PrismTheme.mintDeep : PrismTheme.line,
                       lineWidth: draft.threshold == choice.threshold ? 1.4 : 0.7))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel(for: choice))
         .accessibilityValue(draft.threshold == choice.threshold ? "Selected" : "Not selected")
@@ -717,7 +717,7 @@ private struct CirclePersonSearchField: View {
           }
           .padding(.vertical, 8)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
       }
 
       ForEach(matches) { contact in
@@ -733,7 +733,7 @@ private struct CirclePersonSearchField: View {
           }
           .padding(.vertical, 8)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .accessibilityLabel("Add \(contact.name) to this Circle")
       }
 
@@ -912,7 +912,7 @@ struct CircleAuthorizationSheet: View {
             .frame(maxWidth: .infinity)
             .frame(height: 52)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .foregroundStyle(PrismTheme.mintDeep)
         .background(PrismTheme.mintSoft)
         .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))

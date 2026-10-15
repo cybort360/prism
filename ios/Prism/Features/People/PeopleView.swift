@@ -24,7 +24,7 @@ struct PeopleView: View {
           Image(systemName: "magnifyingglass").frame(width: 42, height: 42).background(
             PrismTheme.surface
           ).clipShape(Circle())
-        }.buttonStyle(.plain)
+        }.buttonStyle(.plainHit)
       }.padding(.horizontal, 22).padding(.top, 12)
       HStack(spacing: 10) {
         Image(systemName: "magnifyingglass").foregroundStyle(PrismTheme.muted)
@@ -73,7 +73,7 @@ struct PeopleView: View {
               Text("Tap to check").font(PrismTheme.body(10)).foregroundStyle(PrismTheme.faint)
             }
           }.padding(.vertical, 12)
-        }.buttonStyle(.plain)
+        }.buttonStyle(.plainHit)
         Divider().overlay(PrismTheme.line)
       }
     }
@@ -100,7 +100,7 @@ struct PeopleView: View {
             Image(systemName: "arrow.right").foregroundStyle(PrismTheme.muted)
           }
         }.padding(.vertical, 14)
-      }.buttonStyle(.plain)
+      }.buttonStyle(.plainHit)
     } else {
       EmptyStateView(
         icon: "at", title: "Search a Prism handle",

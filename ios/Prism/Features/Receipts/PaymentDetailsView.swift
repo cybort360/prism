@@ -178,7 +178,7 @@ struct PaymentDetailsView: View {
       .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
       .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(PrismTheme.line, lineWidth: 0.7))
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.plainHit)
   }
 
   // MARK: TECHNICAL DETAILS (collapsed)
@@ -190,7 +190,7 @@ struct PaymentDetailsView: View {
           Spacer()
           Image(systemName: showTechnical ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(PrismTheme.muted)
         }.padding(.vertical, 15).padding(.horizontal, 16)
-      }.buttonStyle(.plain)
+      }.buttonStyle(.plainHit)
       if showTechnical {
         Divider().overlay(PrismTheme.line)
         VStack(spacing: 0) {
@@ -234,7 +234,7 @@ struct PaymentDetailsView: View {
       Label("Share receipt", systemImage: "square.and.arrow.up")
         .font(PrismTheme.body(14.5, weight: .semibold)).frame(maxWidth: .infinity).frame(height: 50)
     }
-    .buttonStyle(.plain).foregroundStyle(PrismTheme.mintDeep).background(PrismTheme.mintSoft)
+    .buttonStyle(.plainHit).foregroundStyle(PrismTheme.mintDeep).background(PrismTheme.mintSoft)
     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
   }
 

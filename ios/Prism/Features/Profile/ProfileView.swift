@@ -38,7 +38,7 @@ struct ProfileView: View {
               .overlay(Image(systemName: "pencil").font(.system(size: 10, weight: .semibold)).foregroundStyle(PrismTheme.teal))
               .overlay(Circle().stroke(PrismTheme.line, lineWidth: 0.7))
           }
-        }.buttonStyle(.plain)
+        }.buttonStyle(.plainHit)
 
         Text(profileName)
           .font(PrismTheme.display(30))
@@ -223,7 +223,7 @@ struct ProfileView: View {
   }
 
   private func settingsButton<Content: View>(action: @escaping () -> Void, @ViewBuilder content: () -> Content) -> some View {
-    Button(action: action) { content() }.buttonStyle(.plain)
+    Button(action: action) { content() }.buttonStyle(.plainHit)
   }
 
   private func row(_ icon: String, _ title: String, _ value: String, _ badge: String?) -> some View {
@@ -325,7 +325,7 @@ private struct AdvancedAccountView: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plainHit)
                 .foregroundStyle(PrismTheme.ink)
                 .background(PrismTheme.paper)
                 .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))

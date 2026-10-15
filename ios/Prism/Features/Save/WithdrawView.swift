@@ -274,7 +274,7 @@ private struct WithdrawTerminalView: View {
         Button { done() } label: {
           Text(cta).font(PrismTheme.body(15, weight: .semibold)).foregroundStyle(PrismTheme.mintDeep)
             .frame(maxWidth: .infinity).frame(height: 50).background(PrismTheme.mintSoft).clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }.buttonStyle(.plain).padding(.top, 4)
+        }.buttonStyle(.plainHit).padding(.top, 4)
       }
       .padding(.horizontal, 26).padding(.vertical, 28).frame(maxWidth: 330)
       .background(PrismTheme.paper).clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous)).prismCardShadow()

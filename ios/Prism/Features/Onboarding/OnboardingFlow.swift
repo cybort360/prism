@@ -559,7 +559,7 @@ private struct ChoiceCard: View {
       .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(PrismTheme.line, lineWidth: 0.6))
       .prismCardShadow()
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.plainHit)
   }
 }
 
@@ -1068,7 +1068,7 @@ struct DigitPad: View {
             .frame(maxWidth: .infinity)
             .frame(height: 58)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
       }
     }
   }
@@ -1097,6 +1097,6 @@ struct DigitPad: View {
         .frame(maxWidth: .infinity)
         .frame(height: 58)
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.plainHit)
   }
 }

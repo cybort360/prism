@@ -1,5 +1,20 @@
 import SwiftUI
 
+/// Plain button styling (no tint, no system chrome) but with the entire label rect tappable, not just
+/// the drawn text/icon. SwiftUI's `.plain` only hit-tests rendered content, so a stretched label (via
+/// `frame(maxWidth:.infinity)` or a `Spacer`) leaves its empty area dead. Use `.buttonStyle(.plainHit)`
+/// everywhere `.plain` was used so the whole button, row, or field responds to a tap.
+struct PlainHitButtonStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .contentShape(Rectangle())
+      .opacity(configuration.isPressed ? 0.6 : 1)
+  }
+}
+extension ButtonStyle where Self == PlainHitButtonStyle {
+  static var plainHit: PlainHitButtonStyle { .init() }
+}
+
 struct PrismPrimaryButton: View {
   let title: String
   var enabled = true
@@ -15,7 +30,7 @@ struct PrismPrimaryButton: View {
       .frame(maxWidth: .infinity)
       .frame(height: 56)
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.plainHit)
     .foregroundStyle(enabled ? .white : PrismTheme.faint)
     .background(enabled ? PrismTheme.mintDeep : PrismTheme.line.opacity(0.75))
     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -38,7 +53,7 @@ struct PrismSecondaryButton: View {
       .frame(maxWidth: .infinity)
       .frame(height: 52)
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.plainHit)
     .foregroundStyle(PrismTheme.ink)
     .background(PrismTheme.paper)
     .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
@@ -163,7 +178,7 @@ struct PrismHeaderIconButton: View {
           }
         }
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.plainHit)
   }
 }
 
@@ -205,7 +220,7 @@ struct PrismTabBar: View {
           .frame(maxWidth: .infinity, minHeight: 52)
           .accessibilityLabel(tab.title)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
       }
     }
     .padding(.horizontal, 26)
@@ -433,7 +448,7 @@ struct OperationStateOverlay: View {
           .frame(maxWidth: .infinity).frame(height: 50)
           .background(PrismTheme.mintSoft).clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.plainHit)
       .padding(.top, 4)
     }
   }

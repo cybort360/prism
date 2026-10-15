@@ -73,7 +73,7 @@ struct CirclesHomeSection: View {
             } label: {
               CircleRow(summary: summary, detail: circles.details[summary.circleId])
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
           }
         }
         if !circles.closedSummaries.isEmpty { closedSection }
@@ -95,7 +95,7 @@ struct CirclesHomeSection: View {
           .background(PrismTheme.mintSoft)
           .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .accessibilityLabel("Create a new Circle")
       }
     }
@@ -121,7 +121,7 @@ struct CirclesHomeSection: View {
         .padding(.horizontal, 4)
         .contentShape(Rectangle())
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.plainHit)
       .accessibilityLabel("\(circles.closedSummaries.count) closed \(circles.closedSummaries.count == 1 ? "Circle" : "Circles")")
       .accessibilityHint(showClosed ? "Hides closed Circles" : "Shows closed Circles")
 
@@ -132,7 +132,7 @@ struct CirclesHomeSection: View {
           } label: {
             CircleRow(summary: summary, detail: circles.details[summary.circleId])
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.plainHit)
         }
       }
     }
@@ -267,7 +267,7 @@ private struct CircleInvitationCard: View {
             .background(PrismTheme.mintDeep)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .disabled(busy)
         .opacity(busy ? 0.5 : 1)
       }

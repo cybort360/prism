@@ -240,7 +240,7 @@ struct CircleMemberView: View {
       .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
       .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous).stroke(PrismTheme.line, lineWidth: 0.7))
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.plainHit)
     .disabled(busy)
   }
 

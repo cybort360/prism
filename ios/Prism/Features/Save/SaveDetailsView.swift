@@ -39,7 +39,7 @@ struct SaveDetailsView: View {
               Spacer()
               Image(systemName: showAdvanced ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(PrismTheme.faint)
             }
-          }.buttonStyle(.plain)
+          }.buttonStyle(.plainHit)
 
           if showAdvanced {
             VStack(alignment: .leading, spacing: 0) {

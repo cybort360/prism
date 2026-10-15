@@ -99,7 +99,7 @@ struct CircleInviteView: View {
             RoundedRectangle(cornerRadius: 17, style: .continuous)
               .stroke(role == option ? PrismTheme.mintDeep : PrismTheme.line, lineWidth: role == option ? 1.4 : 0.7))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .accessibilityLabel("\(option.title). \(option.summary)")
         .accessibilityValue(role == option ? "Selected" : "Not selected")
         .accessibilityAddTraits(.isButton)
@@ -202,7 +202,7 @@ struct CircleInviteView: View {
       }
       .padding(.vertical, 11)
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.plainHit)
     .disabled(busyId != nil)
     .accessibilityLabel("Invite \(name) as \(role.title)")
   }

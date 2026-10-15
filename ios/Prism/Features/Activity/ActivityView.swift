@@ -45,7 +45,7 @@ struct ActivityView: View {
 
             ForEach(rows) { item in
               Button { open(item) } label: { row(item) }
-                .buttonStyle(.plain)
+                .buttonStyle(.plainHit)
               Divider().overlay(PrismTheme.line)
             }
           }
@@ -85,7 +85,7 @@ struct ActivityView: View {
         .textInputAutocapitalization(.never)
       if !query.isEmpty {
         Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(PrismTheme.faint) }
-          .buttonStyle(.plain)
+          .buttonStyle(.plainHit)
       }
     }
     .padding(.horizontal, 14)
@@ -114,7 +114,7 @@ struct ActivityView: View {
               .clipShape(Capsule())
               .overlay(Capsule().stroke(filter == item ? Color.clear : PrismTheme.line, lineWidth: 0.6))
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.plainHit)
         }
       }
       .padding(.horizontal, 22)

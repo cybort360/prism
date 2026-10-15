@@ -45,7 +45,7 @@ struct PaymentAuthorizationSheet: View {
             .frame(maxWidth: .infinity)
             .frame(height: 52)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .foregroundStyle(PrismTheme.mintDeep)
         .background(PrismTheme.mintSoft)
         .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))

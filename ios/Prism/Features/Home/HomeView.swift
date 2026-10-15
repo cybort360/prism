@@ -73,7 +73,7 @@ struct HomeView: View {
           Text("Hello, \(displayName)").font(PrismTheme.body(16, weight: .semibold))
         }
       }
-      .buttonStyle(.plain)
+      .buttonStyle(.plainHit)
       .accessibilityLabel("Profile and settings")
       .accessibilityHint("Opens your profile and settings")
       Spacer()
@@ -87,7 +87,7 @@ struct HomeView: View {
             Circle().fill(PrismTheme.mint).frame(width: 7, height: 7).offset(x: -3, y: 4)
           }
         }
-      }.buttonStyle(.plain)
+      }.buttonStyle(.plainHit)
     }
   }
   private var displayName: String {
@@ -181,7 +181,7 @@ struct HomeView: View {
           Image(systemName: "chevron.right").foregroundStyle(PrismTheme.faint)
         }
       }
-    }.buttonStyle(.plain)
+    }.buttonStyle(.plainHit)
   }
   private var people: some View {
     VStack(alignment: .leading, spacing: 15) {
@@ -204,7 +204,7 @@ struct HomeView: View {
             Spacer()
             Image(systemName: "arrow.right").foregroundStyle(PrismTheme.faint)
           }
-        }.buttonStyle(.plain)
+        }.buttonStyle(.plainHit)
       } else {
         HStack(spacing: 18) {
           ForEach(Array(localPeople.prefix(5))) { p in
@@ -213,7 +213,7 @@ struct HomeView: View {
                 PrismAvatar(initials: p.initials, size: 47)
                 Text(p.name).font(PrismTheme.body(11)).lineLimit(1)
               }.frame(maxWidth: .infinity)
-            }.buttonStyle(.plain)
+            }.buttonStyle(.plainHit)
           }
         }
       }
@@ -303,7 +303,7 @@ private struct HomeAction: View {
         PrismIconTile(icon: icon)
         Text(title).font(PrismTheme.body(11, weight: .medium)).lineLimit(1)
       }.frame(maxWidth: .infinity)
-    }.buttonStyle(.plain)
+    }.buttonStyle(.plainHit)
   }
 }
 
